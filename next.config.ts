@@ -9,7 +9,9 @@ const securityHeaders = [
       "form-action 'self'",
       "object-src 'none'",
       "frame-ancestors 'none'",
-      "script-src 'self'",
+      // Next.js app bootstrap includes inline runtime snippets unless a nonce-based CSP is implemented.
+      // This keeps production stable while preserving other strict directives.
+      "script-src 'self' 'unsafe-inline'",
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data: blob:",
       "font-src 'self' data:",

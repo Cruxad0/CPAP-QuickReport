@@ -4,6 +4,11 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "CPAP QuickReport Web",
   description: "Local-first CPAP 90-day report generation for clinical handouts",
+  icons: {
+    icon: "/favicon.svg",
+    shortcut: "/favicon.svg",
+    apple: "/favicon.svg"
+  },
   robots: {
     index: false,
     follow: false
