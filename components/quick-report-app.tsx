@@ -119,6 +119,16 @@ async function blobToDataUrl(blob: Blob): Promise<string> {
   });
 }
 
+async function yieldToBrowser(): Promise<void> {
+  await new Promise<void>((resolve) => {
+    if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+      window.requestAnimationFrame(() => resolve());
+      return;
+    }
+    window.setTimeout(() => resolve(), 0);
+  });
+}
+
 export function QuickReportApp() {
   const folderInputRef = useRef<HTMLInputElement>(null);
   const zipInputRef = useRef<HTMLInputElement>(null);
@@ -172,6 +182,8 @@ export function QuickReportApp() {
   }, [sourceFiles]);
 
   const dateOfBirthIso = useMemo(() => normalizeDobInput(dateOfBirthInput), [dateOfBirthInput]);
+  const isPatientNameMissing = patientName.trim().length <= 1;
+  const isDobMissing = !dateOfBirthIso;
   const selectedDob = useMemo(() => (dateOfBirthIso ? parseIsoDate(dateOfBirthIso) : null), [dateOfBirthIso]);
   const dobCalendarCells = useMemo(() => calendarCells(calendarYear, calendarMonth), [calendarMonth, calendarYear]);
   const yearOptions = useMemo(
@@ -180,17 +192,17 @@ export function QuickReportApp() {
   );
 
   const canGenerate =
-    patientName.trim().length > 1 &&
-    Boolean(dateOfBirthIso) &&
+    !isPatientNameMissing &&
+    !isDobMissing &&
     sourceFiles.length > 0 &&
     status !== "working";
   const missingRequiredFields = useMemo(() => {
     const missing: string[] = [];
-    if (patientName.trim().length <= 1) missing.push("Patient name");
-    if (!dateOfBirthIso) missing.push("Date of birth");
+    if (isPatientNameMissing) missing.push("Patient name");
+    if (isDobMissing) missing.push("Date of birth");
     if (sourceFiles.length === 0) missing.push("Data source files");
     return missing;
-  }, [patientName, dateOfBirthIso, sourceFiles.length]);
+  }, [isPatientNameMissing, isDobMissing, sourceFiles.length]);
   const isDataSourceLoading = status === "working" || isSourceLoading || pendingSourceSelection !== null;
 
   const beginSourceSelection = (kind: "folder" | "zip") => {
@@ -266,29 +278,31 @@ export function QuickReportApp() {
     setParseProgress({ phase: "scan", detail: "Loading SD folder...", percent: 4 });
 
     // Yield once so loading overlay paints before indexing a large folder selection.
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await yieldToBrowser();
 
     try {
       const mapped: SourceFile[] = [];
-      for (let i = 0; i < files.length; i += 1) {
-        const file = files[i];
-        mapped.push({
-          name: file.name,
-          path: file.webkitRelativePath || file.name,
-          size: file.size,
-          readText: () => file.text(),
-          readBytes: async () => new Uint8Array(await file.arrayBuffer())
-        });
-
-        if (i > 0 && i % 400 === 0) {
-          const pct = Math.min(45, 5 + Math.round((i / files.length) * 40));
-          setParseProgress({
-            phase: "scan",
-            detail: `Indexing files... ${i + 1}/${files.length}`,
-            percent: pct
+      const chunkSize = 120;
+      for (let start = 0; start < files.length; start += chunkSize) {
+        const end = Math.min(start + chunkSize, files.length);
+        for (let i = start; i < end; i += 1) {
+          const file = files[i];
+          mapped.push({
+            name: file.name,
+            path: file.webkitRelativePath || file.name,
+            size: file.size,
+            readText: () => file.text(),
+            readBytes: async () => new Uint8Array(await file.arrayBuffer())
           });
-          await new Promise((resolve) => setTimeout(resolve, 0));
         }
+
+        const pct = Math.min(45, 5 + Math.round((end / files.length) * 40));
+        setParseProgress({
+          phase: "scan",
+          detail: `Indexing files... ${end}/${files.length}`,
+          percent: pct
+        });
+        await yieldToBrowser();
       }
 
       setSourceKind("folder");
@@ -336,17 +350,29 @@ export function QuickReportApp() {
       const entries = Object.values(archive.files)
         .filter((entry) => !entry.dir)
         .slice(0, 2500);
-
-      const mapped: SourceFile[] = entries.map((entry) => {
-        const sizeMaybe = Number((entry as unknown as { _data?: { uncompressedSize?: number } })._data?.uncompressedSize ?? 0);
-        return {
-          name: entry.name.split("/").pop() ?? entry.name,
-          path: entry.name,
-          size: Number.isFinite(sizeMaybe) ? sizeMaybe : 0,
-          readText: async () => await entry.async("string"),
-          readBytes: async () => await entry.async("uint8array")
-        };
-      });
+      const mapped: SourceFile[] = [];
+      const chunkSize = 80;
+      for (let start = 0; start < entries.length; start += chunkSize) {
+        const end = Math.min(start + chunkSize, entries.length);
+        for (let i = start; i < end; i += 1) {
+          const entry = entries[i];
+          const sizeMaybe = Number((entry as unknown as { _data?: { uncompressedSize?: number } })._data?.uncompressedSize ?? 0);
+          mapped.push({
+            name: entry.name.split("/").pop() ?? entry.name,
+            path: entry.name,
+            size: Number.isFinite(sizeMaybe) ? sizeMaybe : 0,
+            readText: async () => await entry.async("string"),
+            readBytes: async () => await entry.async("uint8array")
+          });
+        }
+        const pct = Math.min(45, 9 + Math.round((end / entries.length) * 36));
+        setParseProgress({
+          phase: "zip",
+          detail: `Indexing ZIP entries... ${end}/${entries.length}`,
+          percent: pct
+        });
+        await yieldToBrowser();
+      }
 
       setSourceKind("zip");
       setSourceFiles(mapped);
@@ -489,30 +515,34 @@ export function QuickReportApp() {
           Powered by{" "}
           <a href="https://notespecialist.com" target="_blank" rel="noopener noreferrer">
             notespecialist.com
-          </a>{" "}
-          AI-powered clinical documentation.
+          </a>
+          {", "}an AI-powered clinical documentation platform.
         </p>
       </section>
 
       <section className="grid">
         <article className="card col-4">
           <h3>Patient</h3>
-          <label htmlFor="patientName">Patient name</label>
+          <label htmlFor="patientName" className="label-row">
+            <span>Patient name</span>
+            {isPatientNameMissing ? <span className="required-flag">Required</span> : null}
+          </label>
           <input
             id="patientName"
-            className="input"
+            className={`input ${isPatientNameMissing ? "input-error" : ""}`}
             value={patientName}
             onChange={(e) => setPatientName(e.target.value)}
             placeholder="First Last"
             autoComplete="off"
           />
 
-          <label htmlFor="dob" style={{ marginTop: 10 }}>
-            Date of birth
+          <label htmlFor="dob" className="label-row" style={{ marginTop: 10 }}>
+            <span>Date of birth</span>
+            {isDobMissing ? <span className="required-flag">Required</span> : null}
           </label>
           <input
             id="dob"
-            className="date-input"
+            className={`date-input ${isDobMissing ? "input-error" : ""}`}
             type="text"
             inputMode="numeric"
             placeholder="MM/DD/YYYY or MM-DD-YYYY"
@@ -674,7 +704,7 @@ export function QuickReportApp() {
               }}
               disabled={status === "working"}
             >
-              Reset
+              Reset / Clear All
             </button>
           </div>
           {!canGenerate && status !== "working" ? (

@@ -109,6 +109,19 @@ label {
   color: var(--muted);
 }
 
+.label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem;
+}
+
+.required-flag {
+  color: var(--error);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
 input,
 button,
 select,
@@ -130,6 +143,16 @@ textarea {
 .date-input:focus {
   outline: 2px solid #9dd6ea;
   border-color: var(--brand-2);
+}
+
+.input-error {
+  border-color: #d36464;
+  background: #fff9f9;
+}
+
+.input-error:focus {
+  outline: 2px solid #f0b7b7;
+  border-color: #c94d4d;
 }
 
 .actions {
