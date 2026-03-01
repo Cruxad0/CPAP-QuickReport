@@ -2,7 +2,9 @@ import { ParseRequest, ParsedRecord, ParseProgress, QuickReportMetrics, SourceFi
 
 const MAX_GENERIC_FILES_TO_SCAN = 500;
 const MAX_FILE_SIZE_BYTES = 8_000_000;
-const MAX_RESVENT_P_TOTAL_BYTES = 120_000_000;
+const MAX_RESVENT_P_TOTAL_BYTES = 24_000_000;
+const MAX_RESVENT_P_FILES = 120;
+const SKIP_P_SCAN_IF_TOTAL_FILES_GT = 12_000;
 const TEXT_EXTENSIONS = new Set(["csv", "txt", "tsv", "json", "xml", "edf", "log"]);
 
 const DATE_PATTERNS = [
@@ -21,6 +23,8 @@ type SourceMeta = {
 type DayBucket = {
   usageSum: number;
   usageCount: number;
+  ahiWeightedSum: number;
+  ahiWeightHours: number;
   ahiSum: number;
   ahiCount: number;
   leakSum: number;
@@ -449,17 +453,27 @@ function pickResventCandidates(files: SourceMeta[], warnings: string[]): {
     .filter((m) => m.file.size > 0 && m.file.size <= MAX_FILE_SIZE_BYTES)
     .sort((a, b) => (a.normalizedPath < b.normalizedPath ? -1 : 1));
 
+  // Keep at most one P-file per day to avoid heavy waveform parsing.
+  const pByDay = new Map<string, SourceMeta>();
+  for (const p of allP) {
+    if (!p.recordDate) continue;
+    const day = toIsoDate(p.recordDate);
+    if (!pByDay.has(day)) pByDay.set(day, p);
+  }
+  const sampledP = [...pByDay.values()].sort((a, b) => (a.normalizedPath < b.normalizedPath ? -1 : 1));
+
   let pBytes = 0;
   const pFiles: SourceMeta[] = [];
-  for (const m of allP) {
+  for (const m of sampledP) {
+    if (pFiles.length >= MAX_RESVENT_P_FILES) break;
     if (pBytes + m.file.size > MAX_RESVENT_P_TOTAL_BYTES) break;
     pFiles.push(m);
     pBytes += m.file.size;
   }
 
-  if (allP.length > pFiles.length) {
+  if (sampledP.length > pFiles.length) {
     warnings.push(
-      `Leak channels were sampled from ${pFiles.length} of ${allP.length} P-files to keep parsing responsive.`
+      `Leak channels were sampled from ${pFiles.length} of ${sampledP.length} daily P-files to keep parsing responsive.`
     );
   }
 
@@ -476,6 +490,8 @@ function createEmptyDayBucket(): DayBucket {
   return {
     usageSum: 0,
     usageCount: 0,
+    ahiWeightedSum: 0,
+    ahiWeightHours: 0,
     ahiSum: 0,
     ahiCount: 0,
     leakSum: 0,
@@ -514,7 +530,9 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
       fallbackWindowDateSet = selected.windowDateSet;
       latestPathDate = selected.latestDate;
 
-      const totalResventWork = selected.configFiles.length + selected.statFiles.length + selected.pFiles.length;
+      const shouldSampleP = meta.length <= SKIP_P_SCAN_IF_TOTAL_FILES_GT;
+      const totalResventWork =
+        selected.configFiles.length + selected.statFiles.length + (shouldSampleP ? selected.pFiles.length : 0);
       let processed = 0;
 
       for (const configFile of selected.configFiles) {
@@ -560,45 +578,51 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
         }
       }
 
-      for (const pFile of selected.pFiles) {
-        processed += 1;
-        const pct = 8 + Math.round((processed / Math.max(1, totalResventWork)) * 62);
-        emit(onProgress, {
-          phase: "parse",
-          detail: `Sampling leak from ${pFile.normalizedPath}`,
-          percent: Math.min(70, pct)
-        });
+      if (shouldSampleP) {
+        for (const pFile of selected.pFiles) {
+          processed += 1;
+          const pct = 8 + Math.round((processed / Math.max(1, totalResventWork)) * 62);
+          emit(onProgress, {
+            phase: "parse",
+            detail: `Sampling leak from ${pFile.normalizedPath}`,
+            percent: Math.min(70, pct)
+          });
 
-        if (pFile.recordDate === null) continue;
+          if (pFile.recordDate === null) continue;
 
-        try {
-          const bytes = await pFile.file.readBytes();
-          const leak = parseResventLeakFromBytes(bytes);
-          if (!leak) continue;
+          try {
+            const bytes = await pFile.file.readBytes();
+            const leak = parseResventLeakFromBytes(bytes);
+            if (!leak) continue;
 
-          const key = toIsoDate(pFile.recordDate);
-          const existing = leakStatsByDay.get(key);
-          if (existing) {
-            existing.sum += leak.sum;
-            existing.count += leak.count;
-            if (leak.max > existing.max) existing.max = leak.max;
-          } else {
-            leakStatsByDay.set(key, { ...leak });
+            const key = toIsoDate(pFile.recordDate);
+            const existing = leakStatsByDay.get(key);
+            if (existing) {
+              existing.sum += leak.sum;
+              existing.count += leak.count;
+              if (leak.max > existing.max) existing.max = leak.max;
+            } else {
+              leakStatsByDay.set(key, { ...leak });
+            }
+          } catch {
+            warnings.push(`Could not read ${pFile.normalizedPath}`);
           }
-        } catch {
-          warnings.push(`Could not read ${pFile.normalizedPath}`);
-        }
 
-        if (processed % 20 === 0) {
-          await new Promise((resolve) => setTimeout(resolve, 0));
+          if (processed % 20 === 0) {
+            await new Promise((resolve) => setTimeout(resolve, 0));
+          }
         }
+      } else if (selected.pFiles.length > 0) {
+        warnings.push("Leak waveform scan was skipped for performance because a very large file set was selected.");
       }
     }
   }
 
-  // Generic text parsing fallback for non-Resvent formats or if Resvent files had little metadata.
-  const genericCandidates = meta.filter(isGenericTextCandidate).slice(0, MAX_GENERIC_FILES_TO_SCAN);
-  if (meta.filter(isGenericTextCandidate).length > MAX_GENERIC_FILES_TO_SCAN) {
+  // Generic text parsing fallback for non-Resvent formats.
+  const runGenericPass = !(maybeResvent && (fallbackWindowDateSet.size > 0 || records.length > 0));
+  const genericTextCandidates = meta.filter(isGenericTextCandidate);
+  const genericCandidates = runGenericPass ? genericTextCandidates.slice(0, MAX_GENERIC_FILES_TO_SCAN) : [];
+  if (runGenericPass && genericTextCandidates.length > MAX_GENERIC_FILES_TO_SCAN) {
     warnings.push(`Input contained many text files; generic parsing was limited to ${MAX_GENERIC_FILES_TO_SCAN} files.`);
   }
 
@@ -652,15 +676,22 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
     if (record.date < windowStart || record.date > windowEnd) continue;
     const key = toIsoDate(record.date);
     const bucket = dayMap.get(key) ?? createEmptyDayBucket();
+    let usageForAhiWeight: number | undefined;
 
     if (typeof record.usageHours === "number" && record.usageHours >= 0 && record.usageHours <= 24) {
       bucket.usageSum += record.usageHours;
       bucket.usageCount += 1;
+      usageForAhiWeight = record.usageHours;
     }
 
     if (typeof record.ahi === "number" && record.ahi >= 0 && record.ahi < 200) {
-      bucket.ahiSum += record.ahi;
-      bucket.ahiCount += 1;
+      if (usageForAhiWeight && usageForAhiWeight > 0) {
+        bucket.ahiWeightedSum += record.ahi * usageForAhiWeight;
+        bucket.ahiWeightHours += usageForAhiWeight;
+      } else {
+        bucket.ahiSum += record.ahi;
+        bucket.ahiCount += 1;
+      }
     }
 
     if (typeof record.leak === "number" && record.leak >= 0 && record.leak < 500) {
@@ -682,10 +713,12 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
     dayMap.set(day, bucket);
   }
 
-  for (const day of fallbackWindowDateSet) {
-    const dayDate = dateFromIso(day);
-    if (dayDate < windowStart || dayDate > windowEnd) continue;
-    if (!dayMap.has(day)) dayMap.set(day, createEmptyDayBucket());
+  if (dayMap.size === 0) {
+    for (const day of fallbackWindowDateSet) {
+      const dayDate = dateFromIso(day);
+      if (dayDate < windowStart || dayDate > windowEnd) continue;
+      if (!dayMap.has(day)) dayMap.set(day, createEmptyDayBucket());
+    }
   }
 
   if (dayMap.size === 0) {
@@ -696,11 +729,15 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
 
   const usageValues = [...dayMap.values()]
     .filter((d) => d.usageCount > 0)
-    .map((d) => d.usageSum / d.usageCount);
+    .map((d) => d.usageSum);
 
   const ahiValues = [...dayMap.values()]
-    .filter((d) => d.ahiCount > 0)
-    .map((d) => d.ahiSum / d.ahiCount);
+    .map((d) => {
+      if (d.ahiWeightHours > 0) return d.ahiWeightedSum / d.ahiWeightHours;
+      if (d.ahiCount > 0) return d.ahiSum / d.ahiCount;
+      return undefined;
+    })
+    .filter((v): v is number => typeof v === "number" && Number.isFinite(v));
 
   const leakValues = [...dayMap.values()]
     .filter((d) => d.leakCount > 0)

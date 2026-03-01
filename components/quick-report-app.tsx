@@ -218,6 +218,11 @@ export function QuickReportApp() {
     a.remove();
   };
 
+  const openPreviewInNewTab = () => {
+    if (!previewUrl) return;
+    window.open(previewUrl, "_blank", "noopener,noreferrer");
+  };
+
   return (
     <main>
       <section className="hero">
@@ -362,6 +367,9 @@ export function QuickReportApp() {
             <div className="actions" style={{ marginTop: 0 }}>
               <button className="btn btn-primary" onClick={triggerDownload}>
                 Export PDF
+              </button>
+              <button className="btn btn-secondary" onClick={openPreviewInNewTab}>
+                Open PDF
               </button>
               <button
                 className="btn btn-secondary"

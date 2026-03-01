@@ -331,21 +331,7 @@ export async function buildPdfReport(report: QuickReportMetrics, headerDataUrl?:
     font: fontBold,
     color: rgbFn(0.12, 0.2, 0.27)
   });
-  state.y -= 30;
-
-  state.page.drawText("Signature:", {
-    x: PAGE_MARGIN,
-    y: state.y - 8,
-    size: 11,
-    font: fontRegular,
-    color: rgbFn(0.1, 0.15, 0.2)
-  });
-  state.page.drawLine({
-    start: { x: PAGE_MARGIN + 64, y: state.y - 5 },
-    end: { x: state.pageWidth - PAGE_MARGIN, y: state.y - 5 },
-    thickness: 1,
-    color: rgbFn(0.12, 0.2, 0.27)
-  });
+  state.y -= 18;
 
   const bytes = await pdfDoc.save();
   const blob = new Blob([bytes], { type: "application/pdf" });
