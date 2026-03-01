@@ -15,6 +15,12 @@ type LoaderSignature = {
   markers: RegExp[];
 };
 
+type LoaderMatch = {
+  id: string;
+  label: string;
+  score: number;
+};
+
 const LOADER_SIGNATURES: LoaderSignature[] = [
   { id: "resvent", label: "Resvent / Hoffrichter", markers: [/(?:^|\/)therapy\/record\//i, /(?:^|\/)therapy\/config\//i] },
   { id: "resmed", label: "ResMed", markers: [/(?:^|\/)datalog\//i, /(?:^|\/)str\.edf$/i, /(?:^|\/)eve\.edf$/i] },
@@ -110,6 +116,12 @@ function parseDateFromString(value: string): Date | null {
     }
   }
   return null;
+}
+
+function extractUsageSuffix(baseName: string, prefix: "stat" | "ev"): string | null {
+  const re = new RegExp(`^${prefix}(\\d{2})(?:\\..*)?$`, "i");
+  const m = re.exec(baseName);
+  return m?.[1] ?? null;
 }
 
 function toIsoDate(dt: Date): string {
@@ -209,11 +221,11 @@ function isResventStatFile(meta: SourceMeta): boolean {
 }
 
 function isResventPFile(meta: SourceMeta): boolean {
-  return meta.recordDate !== null && /^p\d{2}_\d+$/i.test(meta.baseName);
+  return meta.recordDate !== null && /^p\d{2}_\d+(?:\..*)?$/i.test(meta.baseName);
 }
 
 function isResventEvFile(meta: SourceMeta): boolean {
-  return meta.recordDate !== null && /^ev\d{2}$/i.test(meta.baseName);
+  return meta.recordDate !== null && /^ev\d{2}(?:\..*)?$/i.test(meta.baseName);
 }
 
 function inferMachineSettingsFromText(text: string, machine: QuickReportMetrics["machine"]) {
@@ -315,12 +327,70 @@ function detectLikelyLoaders(files: SourceMeta[]): string[] {
   return detected;
 }
 
+function scoreLoader(files: SourceMeta[], sig: LoaderSignature): number {
+  let score = 0;
+  for (const marker of sig.markers) {
+    if (files.some((f) => marker.test(f.normalizedPath))) score += 1;
+  }
+
+  // Add structural confidence by loader family, mirroring OSCAR loader entry points.
+  if (sig.id === "resvent") {
+    if (files.some((f) => /(?:^|\/)therapy\/record\/\d{6}\/\d{2}\/stat(?:\d{1,4})?(?:\..*)?$/i.test(f.normalizedPath))) score += 4;
+    if (files.some((f) => /(?:^|\/)therapy\/record\/\d{6}\/\d{2}\/(?:ev\d{2}|p\d{2}_\d+|w\d{2}_\d+)(?:\..*)?$/i.test(f.normalizedPath))) score += 3;
+    if (files.some((f) => /(?:^|\/)therapy\/config\//i.test(f.normalizedPath))) score += 2;
+  } else if (sig.id === "resmed") {
+    if (files.some((f) => /(?:^|\/)datalog\/.*\/str\.edf$/i.test(f.normalizedPath))) score += 4;
+    if (files.some((f) => /(?:^|\/)datalog\/.*\/(eve|pld|brp|sad)\.edf$/i.test(f.normalizedPath))) score += 2;
+  } else if (sig.id === "sleepstyle") {
+    if (files.some((f) => /(?:^|\/)(summary|detail)\.edf$/i.test(f.normalizedPath))) score += 3;
+  } else if (sig.id === "prisma") {
+    if (files.some((f) => /(?:^|\/)therapy\.pdat$/i.test(f.normalizedPath))) score += 4;
+  } else if (sig.id === "bmc") {
+    if (files.some((f) => /(?:^|\/)p\d{4}\.(?:idx|000)$/i.test(f.normalizedPath))) score += 4;
+  } else if (sig.id === "prs1") {
+    if (files.some((f) => /(?:^|\/)p-series\/p\d{5}\.\d{3}$/i.test(f.normalizedPath))) score += 4;
+  }
+
+  return score;
+}
+
+function rankLoaders(files: SourceMeta[]): LoaderMatch[] {
+  return LOADER_SIGNATURES
+    .map((sig) => ({ id: sig.id, label: sig.label, score: scoreLoader(files, sig) }))
+    .filter((m) => m.score > 0)
+    .sort((a, b) => b.score - a.score || a.label.localeCompare(b.label));
+}
+
 function decodeLikelyTextVariants(bytes: Uint8Array): string[] {
   if (bytes.length === 0) return [];
   const seen = new Set<string>();
   const variants: string[] = [];
 
-  const candidates = [decodeResventText(bytes, false), decodeResventText(bytes, true)];
+  const decoderUtf8 = new TextDecoder("utf-8", { fatal: false });
+  const decoderLatin1 = new TextDecoder("iso-8859-1", { fatal: false });
+  const decoderUtf16Le = new TextDecoder("utf-16le", { fatal: false });
+  const decoderUtf16Be = new TextDecoder("utf-16be", { fatal: false });
+
+  const asciiSanitize = (start: number): string => {
+    let out = "";
+    for (let i = Math.min(start, bytes.length); i < bytes.length; i += 1) {
+      const b = bytes[i];
+      if ((b >= 32 && b <= 126) || b === 9 || b === 10 || b === 13) out += String.fromCharCode(b);
+      else out += "\n";
+    }
+    return out;
+  };
+
+  const candidates = [
+    decodeResventText(bytes, false),
+    decodeResventText(bytes, true),
+    decoderUtf8.decode(bytes),
+    decoderLatin1.decode(bytes),
+    decoderUtf16Le.decode(bytes),
+    decoderUtf16Be.decode(bytes),
+    asciiSanitize(0),
+    asciiSanitize(4)
+  ];
   for (const raw of candidates) {
     const text = raw.replace(/\0/g, "\n");
     const trimmed = text.trim();
@@ -734,7 +804,12 @@ function pickResventCandidates(files: SourceMeta[], warnings: string[]): {
   windowDateSet: Set<string>;
   latestDate: Date;
 } | null {
-  const dated = files.filter((m) => m.recordDate !== null) as Array<SourceMeta & { recordDate: Date }>;
+  const dated: Array<SourceMeta & { recordDate: Date }> = [];
+  for (const m of files) {
+    const rd = extractResventRecordDate(m.normalizedPath);
+    if (!rd) continue;
+    dated.push({ ...m, recordDate: rd });
+  }
   if (dated.length === 0) return null;
 
   const latestDate = dated.reduce((acc, m) => (m.recordDate > acc ? m.recordDate : acc), dated[0].recordDate);
@@ -749,7 +824,7 @@ function pickResventCandidates(files: SourceMeta[], warnings: string[]): {
   const statFiles = inWindow.filter(isResventStatFile).filter((m) => m.file.size <= MAX_FILE_SIZE_BYTES);
   const evByDayUsage = new Map<string, SourceMeta>();
   for (const ev of inWindow.filter(isResventEvFile).filter((m) => m.file.size <= MAX_FILE_SIZE_BYTES)) {
-    const usage = /^ev(\d{2})$/i.exec(ev.baseName)?.[1];
+    const usage = extractUsageSuffix(ev.baseName, "ev");
     if (!usage || !ev.recordDate) continue;
     evByDayUsage.set(`${toIsoDate(ev.recordDate)}:${usage}`, ev);
   }
@@ -837,8 +912,12 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
   const records: ParsedRecord[] = [];
 
   const meta = files.map(toSourceMeta);
-  const likelyLoaders = detectLikelyLoaders(meta);
-  const maybeResvent = meta.some((m) => /(?:^|\/)therapy\/(?:record|config)\//i.test(m.normalizedPath));
+  const loaderRanking = rankLoaders(meta);
+  const likelyLoaders = loaderRanking.map((m) => m.label);
+  const selectedLoader = loaderRanking[0] ?? null;
+  const maybeResvent =
+    selectedLoader?.id === "resvent" ||
+    (selectedLoader === null && meta.some((m) => /(?:^|\/)therapy\/(?:record|config)\//i.test(m.normalizedPath)));
   const leakStatsByDay = new Map<string, LeakStats>();
   let fallbackWindowDateSet = new Set<string>();
   let latestPathDate: Date | null = null;
@@ -890,7 +969,7 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
           if (statFile.recordDate === null) continue;
           const parsed = parseResventStatFromBytes(bytes, statFile.recordDate);
           if (parsed) {
-            const usage = /^stat(\d{2})$/i.exec(statFile.baseName)?.[1];
+            const usage = extractUsageSuffix(statFile.baseName, "stat");
             if (usage && parsed.usageHours && parsed.usageHours > 0) {
               const key = `${toIsoDate(statFile.recordDate)}:${usage}`;
               const evFile = selected.evByDayUsage.get(key);
@@ -953,8 +1032,8 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
     }
   }
 
-  // Generic parsing fallback for non-Resvent or partially decoded vendor formats.
-  const runGenericPass = !(maybeResvent && (fallbackWindowDateSet.size > 0 || records.length > 0));
+  // Generic parsing is always used for non-Resvent loaders, and as a fallback when Resvent parse produced no records.
+  const runGenericPass = selectedLoader?.id !== "resvent" || records.length === 0;
   const genericTextCandidates = meta.filter(isGenericTextCandidate);
   const genericCandidates = runGenericPass ? genericTextCandidates.slice(0, MAX_GENERIC_FILES_TO_SCAN) : [];
   if (runGenericPass && genericTextCandidates.length > MAX_GENERIC_FILES_TO_SCAN) {
@@ -1009,7 +1088,11 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
   }
 
   if (!latest) {
-    const detectedText = likelyLoaders.length > 0 ? ` Detected layouts: ${likelyLoaders.join(", ")}.` : "";
+    const detectedText = selectedLoader
+      ? ` Selected loader: ${selectedLoader.label}.`
+      : likelyLoaders.length > 0
+        ? ` Detected layouts: ${likelyLoaders.join(", ")}.`
+        : "";
     throw new Error(
       `No date-stamped CPAP data was detected. Verify the selected folder is the SD card root and contains importable records.${detectedText}`
     );
@@ -1069,9 +1152,9 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
   }
 
   if (dayMap.size === 0) {
-    if (fallbackWindowDateSet.size > 0) {
+    if (fallbackWindowDateSet.size > 0 && selectedLoader?.id === "resvent") {
       throw new Error(
-        "Data import succeeded but no daily metrics were parsed from THERAPY/RECORD. Verify this export includes STATxx/EVxx files."
+        "Data import succeeded but no daily metrics were parsed from THERAPY/RECORD. Verify this export includes STAT/STATxx and EVxx files."
       );
     }
     throw new Error("Data import succeeded but no records were found in the most recent 90-day date range.");
@@ -1105,7 +1188,10 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
   const avgLeak = leakValues.length > 0 ? leakValues.reduce((a, b) => a + b, 0) / leakValues.length : null;
   const maxLeak = leakMaxValues.length > 0 ? Math.max(...leakMaxValues) : leakValues.length > 0 ? Math.max(...leakValues) : null;
 
-  if (likelyLoaders.length > 0) {
+  if (selectedLoader) {
+    const top = loaderRanking.slice(0, 4).map((m) => `${m.label} (${m.score})`).join(", ");
+    warnings.unshift(`Selected loader: ${selectedLoader.label}. Candidate scores: ${top}.`);
+  } else if (likelyLoaders.length > 0) {
     warnings.unshift(`Detected OSCAR-compatible loader signatures: ${likelyLoaders.join(", ")}.`);
   }
   if (usageValues.length === 0) {
