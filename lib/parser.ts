@@ -204,7 +204,8 @@ function isResventConfigFile(meta: SourceMeta): boolean {
 
 function isResventStatFile(meta: SourceMeta): boolean {
   // OSCAR loader imports only STATxx session files.
-  return meta.recordDate !== null && /^stat\d{2}$/i.test(meta.baseName);
+  // Some cards include STAT (no suffix) or wider numeric suffixes alongside STATxx.
+  return meta.recordDate !== null && /^stat(?:\d{1,4})?$/i.test(meta.baseName);
 }
 
 function isResventPFile(meta: SourceMeta): boolean {
@@ -282,8 +283,12 @@ function parseKeyValueLines(text: string): Map<string, string> {
 
   for (const line of lines) {
     const trimmed = line.trim();
-    if (!trimmed.includes("=")) continue;
-    const idx = trimmed.indexOf("=");
+    const eqIdx = trimmed.indexOf("=");
+    const colonIdx = trimmed.indexOf(":");
+    const hasEq = eqIdx >= 0;
+    const hasColon = colonIdx >= 0;
+    if (!hasEq && !hasColon) continue;
+    const idx = hasEq && hasColon ? Math.min(eqIdx, colonIdx) : hasEq ? eqIdx : colonIdx;
     const key = trimmed.slice(0, idx).trim();
     const value = trimmed.slice(idx + 1).trim();
     if (key.length === 0) continue;
@@ -291,7 +296,7 @@ function parseKeyValueLines(text: string): Map<string, string> {
   }
 
   // Some SD files contain key/value blobs without line breaks; capture those too.
-  const re = /([A-Za-z][A-Za-z0-9_]{1,40})\s*=\s*([^\r\n,;]+)/g;
+  const re = /([A-Za-z][A-Za-z0-9_]{1,40})\s*[:=]\s*([^\r\n,;]+)/g;
   for (const m of cleaned.matchAll(re)) {
     const key = (m[1] ?? "").trim();
     const value = (m[2] ?? "").trim();
@@ -452,6 +457,15 @@ function parseResventStatText(text: string, fallbackDate: Date): ParsedRecord | 
     ahi: ahi !== undefined && ahi >= 0 && ahi < 200 ? ahi : undefined,
     leak: leak !== undefined && leak >= 0 && leak < 500 ? leak : undefined
   };
+}
+
+function parseResventStatFromBytes(bytes: Uint8Array, fallbackDate: Date): ParsedRecord | null {
+  const variants = decodeLikelyTextVariants(bytes);
+  for (const text of variants) {
+    const parsed = parseResventStatText(text, fallbackDate);
+    if (parsed) return parsed;
+  }
+  return null;
 }
 
 function parseGenericDailyKeyValueRecord(text: string, fallbackDate: Date): ParsedRecord | null {
@@ -873,9 +887,8 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
 
         try {
           const bytes = await statFile.file.readBytes();
-          const text = decodeResventText(bytes, true);
-          if (!text || text.trim().length === 0 || statFile.recordDate === null) continue;
-          const parsed = parseResventStatText(text, statFile.recordDate);
+          if (statFile.recordDate === null) continue;
+          const parsed = parseResventStatFromBytes(bytes, statFile.recordDate);
           if (parsed) {
             const usage = /^stat(\d{2})$/i.exec(statFile.baseName)?.[1];
             if (usage && parsed.usageHours && parsed.usageHours > 0) {
