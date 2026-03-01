@@ -134,9 +134,21 @@ textarea {
 
 .actions {
   display: flex;
+  align-items: center;
   flex-wrap: wrap;
   gap: 0.6rem;
   margin-top: 0.9rem;
+}
+
+.link-button {
+  margin-top: 0.45rem;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--brand);
+  text-decoration: underline;
+  cursor: pointer;
+  font-size: 0.84rem;
 }
 
 .btn {

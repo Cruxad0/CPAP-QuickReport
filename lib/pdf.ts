@@ -163,6 +163,56 @@ function drawSectionTitle(
   state.y -= 18;
 }
 
+function drawBottomFooterBlock(
+  pdfDoc: any,
+  state: PdfState,
+  report: QuickReportMetrics,
+  headerImage: any | undefined,
+  fontRegular: any,
+  fontBold: any,
+  rgbFn: PdfLibModule["rgb"]
+) {
+  const requiredHeight = 82;
+  if (state.y - requiredHeight < PAGE_MARGIN) {
+    startNewPage(pdfDoc, state, headerImage, fontBold, rgbFn);
+  }
+
+  const baseY = PAGE_MARGIN + 6;
+  const physicianY = baseY + 52;
+  const signatureY = baseY + 30;
+  const generatedY = baseY + 8;
+
+  state.page.drawText(`Physician: ${report.physicianName}`, {
+    x: PAGE_MARGIN,
+    y: physicianY,
+    size: 11,
+    font: fontBold,
+    color: rgbFn(0.12, 0.2, 0.27)
+  });
+
+  state.page.drawText("Signature:", {
+    x: PAGE_MARGIN,
+    y: signatureY,
+    size: 11,
+    font: fontBold,
+    color: rgbFn(0.12, 0.2, 0.27)
+  });
+  state.page.drawLine({
+    start: { x: PAGE_MARGIN + 74, y: signatureY + 1 },
+    end: { x: state.pageWidth - PAGE_MARGIN, y: signatureY + 1 },
+    color: rgbFn(0.35, 0.43, 0.5),
+    thickness: 0.9
+  });
+
+  state.page.drawText(`Generated: ${report.generatedAtDisplay}`, {
+    x: PAGE_MARGIN,
+    y: generatedY,
+    size: 10,
+    font: fontRegular,
+    color: rgbFn(0.12, 0.22, 0.31)
+  });
+}
+
 type TableRow = [string, string];
 
 function drawTable(
@@ -328,42 +378,7 @@ export async function buildPdfReport(report: QuickReportMetrics, headerDataUrl?:
     rgbFn
   );
 
-  // Keep physician block on the same report flow with two blank lines of spacing.
-  state.y -= 24;
-
-  ensureSpace(pdfDoc, state, 220, headerImage, fontBold, rgbFn);
-  state.page.drawText(`Physician: ${report.physicianName}`, {
-    x: PAGE_MARGIN,
-    y: state.y - 10,
-    size: 11,
-    font: fontBold,
-    color: rgbFn(0.12, 0.2, 0.27)
-  });
-  state.y -= 18;
-
-  state.page.drawText("Signature:", {
-    x: PAGE_MARGIN,
-    y: state.y - 14,
-    size: 11,
-    font: fontBold,
-    color: rgbFn(0.12, 0.2, 0.27)
-  });
-  state.page.drawLine({
-    start: { x: PAGE_MARGIN + 74, y: state.y - 15 },
-    end: { x: state.pageWidth - PAGE_MARGIN, y: state.y - 15 },
-    color: rgbFn(0.35, 0.43, 0.5),
-    thickness: 0.9
-  });
-  state.y -= 34;
-
-  state.page.drawText(`Generated: ${report.generatedAtDisplay}`, {
-    x: PAGE_MARGIN,
-    y: state.y - 10,
-    size: 10,
-    font: fontRegular,
-    color: rgbFn(0.12, 0.22, 0.31)
-  });
-  state.y -= 14;
+  drawBottomFooterBlock(pdfDoc, state, report, headerImage, fontRegular, fontBold, rgbFn);
 
   const bytes = await pdfDoc.save();
   const blob = new Blob([bytes], { type: "application/pdf" });

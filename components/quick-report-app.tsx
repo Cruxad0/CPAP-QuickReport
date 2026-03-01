@@ -43,7 +43,18 @@ function normalizeDobInput(value: string): string | null {
     return toIsoDateParts(Number(us[3]), Number(us[1]), Number(us[2]));
   }
 
+  const usDashed = /^(\d{1,2})-(\d{1,2})-(\d{4})$/.exec(input);
+  if (usDashed) {
+    return toIsoDateParts(Number(usDashed[3]), Number(usDashed[1]), Number(usDashed[2]));
+  }
+
   return null;
+}
+
+function isoToUsDate(isoDate: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(isoDate);
+  if (!m) return isoDate;
+  return `${m[2]}/${m[3]}/${m[1]}`;
 }
 
 async function fileToDataUrl(file: File): Promise<string> {
@@ -68,6 +79,7 @@ export function QuickReportApp() {
   const folderInputRef = useRef<HTMLInputElement>(null);
   const zipInputRef = useRef<HTMLInputElement>(null);
   const headerInputRef = useRef<HTMLInputElement>(null);
+  const calendarInputRef = useRef<HTMLInputElement>(null);
 
   const [patientName, setPatientName] = useState("");
   const [dateOfBirthInput, setDateOfBirthInput] = useState("");
@@ -343,12 +355,29 @@ export function QuickReportApp() {
     window.open(previewUrl, "_blank", "noopener,noreferrer");
   };
 
+  const openCalendarPicker = () => {
+    const input = calendarInputRef.current;
+    if (!input) return;
+    if (typeof input.showPicker === "function") {
+      input.showPicker();
+    } else {
+      input.click();
+    }
+  };
+
   return (
     <main>
       <section className="hero">
-        <h1>CPAP Clinician QuickReport (Web)</h1>
+        <h1>CPAP Clinician QuickReport</h1>
         <p>
           Local-first workflow for any work computer. Files are processed in-browser to produce a 90-day PDF handout.
+        </p>
+        <p className="subtle">
+          Powered by{" "}
+          <a href="https://notespecialist.com" target="_blank" rel="noopener noreferrer">
+            notespecialist.com
+          </a>{" "}
+          AI powered clinical documentation.
         </p>
       </section>
 
@@ -373,15 +402,28 @@ export function QuickReportApp() {
             className="date-input"
             type="text"
             inputMode="numeric"
-            placeholder="MM/DD/YYYY or YYYY-MM-DD"
+            placeholder="MM/DD/YYYY or MM-DD-YYYY"
             value={dateOfBirthInput}
             onChange={(e) => setDateOfBirthInput(e.target.value)}
           />
           {dateOfBirthInput.trim().length > 0 && !dateOfBirthIso ? (
             <p className="subtle" style={{ marginTop: 6, color: "#a11c1c" }}>
-              Enter date as MM/DD/YYYY or YYYY-MM-DD.
+              Enter date as MM/DD/YYYY or MM-DD-YYYY.
             </p>
           ) : null}
+          <button type="button" className="link-button" onClick={openCalendarPicker}>
+            Use calendar popup instead
+          </button>
+          <input
+            ref={calendarInputRef}
+            type="date"
+            style={{ position: "absolute", opacity: 0, pointerEvents: "none", width: 0, height: 0 }}
+            onChange={(e) => {
+              const iso = e.target.value;
+              if (!iso) return;
+              setDateOfBirthInput(isoToUsDate(iso));
+            }}
+          />
 
           <label htmlFor="physician" style={{ marginTop: 10 }}>
             Physician name
