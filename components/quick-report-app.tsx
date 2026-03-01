@@ -87,6 +87,7 @@ export function QuickReportApp() {
   const [report, setReport] = useState<QuickReportMetrics | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewEmbedUrl, setPreviewEmbedUrl] = useState<string | null>(null);
+  const [isPreviewCollapsed, setIsPreviewCollapsed] = useState(false);
   const [downloadName, setDownloadName] = useState("report.pdf");
   const [errors, setErrors] = useState<string[]>([]);
   const [isSourceLoading, setIsSourceLoading] = useState(false);
@@ -148,6 +149,7 @@ export function QuickReportApp() {
       setPreviewUrl(null);
     }
     setPreviewEmbedUrl(null);
+    setIsPreviewCollapsed(false);
   };
 
   const handleFolderSelection: React.ChangeEventHandler<HTMLInputElement> = async (event) => {
@@ -312,6 +314,7 @@ export function QuickReportApp() {
       setDownloadName(filename);
       setPreviewUrl(url);
       setPreviewEmbedUrl(embedUrl);
+      setIsPreviewCollapsed(false);
       setStatus("ready");
       setStatusMessage("Report generated successfully. Review preview and export PDF.");
       setParseProgress({ phase: "done", detail: "Done", percent: 100 });
@@ -517,22 +520,26 @@ export function QuickReportApp() {
               <button
                 className="btn btn-secondary"
                 onClick={() => {
-                  URL.revokeObjectURL(previewUrl);
-                  setPreviewUrl(null);
-                  setPreviewEmbedUrl(null);
+                  setIsPreviewCollapsed((current) => !current);
                 }}
               >
-                Close Preview
+                {isPreviewCollapsed ? "Open Preview" : "Close Preview"}
               </button>
               <span className="subtle">Default filename: {downloadName}</span>
             </div>
-            <iframe
-              key={previewUrl}
-              className="preview-frame"
-              src={previewEmbedUrl ?? previewUrl}
-              title="PDF preview"
-            />
-            <p className="subtle">If preview is blank on this browser, use Open PDF.</p>
+            {!isPreviewCollapsed ? (
+              <>
+                <iframe
+                  key={previewUrl}
+                  className="preview-frame"
+                  src={previewEmbedUrl ?? previewUrl}
+                  title="PDF preview"
+                />
+                <p className="subtle">If preview is blank on this browser, use Open PDF.</p>
+              </>
+            ) : (
+              <p className="subtle">Preview collapsed. Use Open Preview to expand.</p>
+            )}
           </article>
         ) : null}
       </section>

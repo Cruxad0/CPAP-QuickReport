@@ -705,6 +705,25 @@ function sanitizeRecords(records: ParsedRecord[]): ParsedRecord[] {
   });
 }
 
+function recordSignature(record: ParsedRecord): string {
+  const u = typeof record.usageHours === "number" ? record.usageHours.toFixed(3) : "";
+  const a = typeof record.ahi === "number" ? record.ahi.toFixed(3) : "";
+  const l = typeof record.leak === "number" ? record.leak.toFixed(3) : "";
+  return `${toIsoDate(record.date)}|${u}|${a}|${l}`;
+}
+
+function dedupeParsedRecords(records: ParsedRecord[]): ParsedRecord[] {
+  const seen = new Set<string>();
+  const out: ParsedRecord[] = [];
+  for (const record of records) {
+    const key = recordSignature(record);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(record);
+  }
+  return out;
+}
+
 function emit(onProgress: ParseRequest["onProgress"], progress: ParseProgress) {
   if (onProgress) onProgress(progress);
 }
@@ -1064,21 +1083,32 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
       const variants = decodeLikelyTextVariants(bytes);
       if (variants.length === 0) continue;
 
+      let bestVariantRecords: ParsedRecord[] = [];
       for (const text of variants) {
         inferMachineSettingsFromText(text, machine);
         const kv = parseKeyValueLines(text);
         if (kv.size > 0) inferPressureReliefFromMap(kv, machine);
 
+        const variantRecords: ParsedRecord[] = [];
         if (candidate.recordDate) {
           const statLike = parseResventStatText(text, candidate.recordDate);
-          if (statLike) records.push(statLike);
+          if (statLike) variantRecords.push(statLike);
 
           const genericDaily = parseGenericDailyKeyValueRecord(text, candidate.recordDate);
-          if (genericDaily) records.push(genericDaily);
+          if (genericDaily) variantRecords.push(genericDaily);
         }
 
         const parsed = sanitizeRecords(parseRecords(text));
-        records.push(...parsed);
+        variantRecords.push(...parsed);
+
+        const dedupedVariantRecords = dedupeParsedRecords(variantRecords);
+        if (dedupedVariantRecords.length > bestVariantRecords.length) {
+          bestVariantRecords = dedupedVariantRecords;
+        }
+      }
+
+      if (bestVariantRecords.length > 0) {
+        records.push(...bestVariantRecords);
       }
     } catch {
       continue;
@@ -1091,7 +1121,15 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
 
   emit(onProgress, { phase: "compute", detail: "Computing 90-day metrics...", percent: 82 });
 
-  let latest: Date | null = records.length > 0 ? records.reduce((acc, r) => (r.date > acc ? r.date : acc), records[0].date) : null;
+  const dedupedRecords = dedupeParsedRecords(records);
+  if (dedupedRecords.length < records.length) {
+    warnings.push(`Deduplicated ${records.length - dedupedRecords.length} overlapping daily records.`);
+  }
+
+  let latest: Date | null =
+    dedupedRecords.length > 0
+      ? dedupedRecords.reduce((acc, r) => (r.date > acc ? r.date : acc), dedupedRecords[0].date)
+      : null;
   if (latestPathDate && (!latest || latestPathDate > latest)) {
     latest = latestPathDate;
   }
@@ -1117,7 +1155,7 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
 
   const dayMap = new Map<string, DayBucket>();
 
-  for (const record of records) {
+  for (const record of dedupedRecords) {
     if (record.date < windowStart || record.date > windowEnd) continue;
     const key = toIsoDate(record.date);
     const bucket = dayMap.get(key) ?? createEmptyDayBucket();
