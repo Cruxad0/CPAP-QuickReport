@@ -123,7 +123,7 @@ export function QuickReportApp() {
   const folderInputRef = useRef<HTMLInputElement>(null);
   const zipInputRef = useRef<HTMLInputElement>(null);
   const headerInputRef = useRef<HTMLInputElement>(null);
-  const sourceSelectionHandledRef = useRef(false);
+  const sourceSelectionAttemptRef = useRef(0);
 
   const [patientName, setPatientName] = useState("");
   const [dateOfBirthInput, setDateOfBirthInput] = useState("");
@@ -188,21 +188,41 @@ export function QuickReportApp() {
   const isDataSourceLoading = status === "working" || isSourceLoading || pendingSourceSelection !== null;
 
   const beginSourceSelection = (kind: "folder" | "zip") => {
+    const activeInput = kind === "folder" ? folderInputRef.current : zipInputRef.current;
+    if (activeInput) {
+      // Clearing value allows selecting the same folder/file again to trigger onChange.
+      activeInput.value = "";
+    }
+
     setPendingSourceSelection(kind);
     setIsSourceLoading(true);
-    sourceSelectionHandledRef.current = false;
+    const attemptId = sourceSelectionAttemptRef.current + 1;
+    sourceSelectionAttemptRef.current = attemptId;
 
     const onFocusBack = () => {
-      setTimeout(() => {
-        setPendingSourceSelection((current) => {
-          if (current !== kind) return current;
-          if (sourceSelectionHandledRef.current) return null;
+      const startedAt = Date.now();
+      const waitForSelection = () => {
+        if (sourceSelectionAttemptRef.current !== attemptId) return;
+        const input = kind === "folder" ? folderInputRef.current : zipInputRef.current;
+        const hasChosenFiles = (input?.files?.length ?? 0) > 0;
+        if (hasChosenFiles) return;
+
+        // If user cancelled the picker, stop loading state after a short grace period.
+        if (Date.now() - startedAt >= 2200) {
+          setPendingSourceSelection((current) => (current === kind ? null : current));
           setIsSourceLoading(false);
-          return null;
-        });
-      }, 650);
+          return;
+        }
+        window.setTimeout(waitForSelection, 120);
+      };
+      window.setTimeout(waitForSelection, 120);
     };
     window.addEventListener("focus", onFocusBack, { once: true });
+  };
+
+  const clearSourceInputs = () => {
+    if (folderInputRef.current) folderInputRef.current.value = "";
+    if (zipInputRef.current) zipInputRef.current.value = "";
   };
 
   const resetResultState = () => {
@@ -218,10 +238,12 @@ export function QuickReportApp() {
     setPreviewEmbedUrl(null);
     setIsPreviewCollapsed(false);
     setShowCalendarAlt(false);
+    setIsSourceLoading(false);
+    setPendingSourceSelection(null);
   };
 
   const handleFolderSelection: React.ChangeEventHandler<HTMLInputElement> = async (event) => {
-    sourceSelectionHandledRef.current = true;
+    sourceSelectionAttemptRef.current += 1;
     setPendingSourceSelection(null);
     const files = Array.from(event.target.files ?? []);
     if (files.length === 0) {
@@ -287,7 +309,7 @@ export function QuickReportApp() {
   };
 
   const handleZipSelection: React.ChangeEventHandler<HTMLInputElement> = async (event) => {
-    sourceSelectionHandledRef.current = true;
+    sourceSelectionAttemptRef.current += 1;
     setPendingSourceSelection(null);
     const zipFile = event.target.files?.[0];
     if (!zipFile) {
@@ -598,7 +620,7 @@ export function QuickReportApp() {
               }}
               disabled={isDataSourceLoading}
             >
-              Select SD Folder
+              Select SD-CARD
             </button>
             <button
               className="btn btn-secondary"
@@ -639,6 +661,10 @@ export function QuickReportApp() {
               onClick={() => {
                 resetResultState();
                 setSourceFiles([]);
+                setSourceKind("folder");
+                setPatientName("");
+                setDateOfBirthInput("");
+                clearSourceInputs();
               }}
               disabled={status === "working"}
             >
