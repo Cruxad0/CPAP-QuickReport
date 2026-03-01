@@ -130,6 +130,20 @@ function ensureSpace(
   drawHeader(state, headerImage, fontBold, rgbFn);
 }
 
+function startNewPage(
+  pdfDoc: any,
+  state: PdfState,
+  headerImage: any | undefined,
+  fontBold: any,
+  rgbFn: PdfLibModule["rgb"]
+) {
+  state.page = pdfDoc.addPage([PAGE_WIDTH_A4, PAGE_HEIGHT_A4]);
+  state.pageWidth = state.page.getWidth();
+  state.pageHeight = state.page.getHeight();
+  state.y = state.pageHeight - PAGE_MARGIN;
+  drawHeader(state, headerImage, fontBold, rgbFn);
+}
+
 function drawSectionTitle(
   pdfDoc: any,
   state: PdfState,
@@ -262,15 +276,6 @@ export async function buildPdfReport(report: QuickReportMetrics, headerDataUrl?:
   };
   drawHeader(state, headerImage, fontBold, rgbFn);
 
-  state.page.drawText(`Generated: ${report.generatedAtDisplay}`, {
-    x: PAGE_MARGIN,
-    y: state.y - 10,
-    size: 10,
-    font: fontRegular,
-    color: rgbFn(0.12, 0.22, 0.31)
-  });
-  state.y -= 18;
-
   drawTable(
     pdfDoc,
     state,
@@ -323,7 +328,11 @@ export async function buildPdfReport(report: QuickReportMetrics, headerDataUrl?:
     rgbFn
   );
 
-  ensureSpace(pdfDoc, state, 72, headerImage, fontBold, rgbFn);
+  // Requested layout: physician section two page breaks after therapy data.
+  startNewPage(pdfDoc, state, headerImage, fontBold, rgbFn);
+  startNewPage(pdfDoc, state, headerImage, fontBold, rgbFn);
+
+  ensureSpace(pdfDoc, state, 220, headerImage, fontBold, rgbFn);
   state.page.drawText(`Physician: ${report.physicianName}`, {
     x: PAGE_MARGIN,
     y: state.y - 10,
@@ -332,6 +341,30 @@ export async function buildPdfReport(report: QuickReportMetrics, headerDataUrl?:
     color: rgbFn(0.12, 0.2, 0.27)
   });
   state.y -= 18;
+
+  state.page.drawText("Signature:", {
+    x: PAGE_MARGIN,
+    y: state.y - 14,
+    size: 11,
+    font: fontBold,
+    color: rgbFn(0.12, 0.2, 0.27)
+  });
+  state.page.drawLine({
+    start: { x: PAGE_MARGIN + 74, y: state.y - 15 },
+    end: { x: state.pageWidth - PAGE_MARGIN, y: state.y - 15 },
+    color: rgbFn(0.35, 0.43, 0.5),
+    thickness: 0.9
+  });
+  state.y -= 34;
+
+  state.page.drawText(`Generated: ${report.generatedAtDisplay}`, {
+    x: PAGE_MARGIN,
+    y: state.y - 10,
+    size: 10,
+    font: fontRegular,
+    color: rgbFn(0.12, 0.22, 0.31)
+  });
+  state.y -= 14;
 
   const bytes = await pdfDoc.save();
   const blob = new Blob([bytes], { type: "application/pdf" });

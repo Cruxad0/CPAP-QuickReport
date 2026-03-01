@@ -66,6 +66,7 @@ export function QuickReportApp() {
   const [downloadName, setDownloadName] = useState("report.pdf");
   const [errors, setErrors] = useState<string[]>([]);
   const [isSourceLoading, setIsSourceLoading] = useState(false);
+  const [pendingSourceSelection, setPendingSourceSelection] = useState<"folder" | "zip" | null>(null);
 
   useEffect(() => {
     if (folderInputRef.current) {
@@ -94,6 +95,29 @@ export function QuickReportApp() {
     status !== "working";
   const isDataSourceLoading = status === "working" || isSourceLoading;
 
+  const beginSourceSelection = (kind: "folder" | "zip") => {
+    setPendingSourceSelection(kind);
+    setIsSourceLoading(true);
+    setStatus("working");
+    const label = kind === "folder" ? "SD folder" : "ZIP file";
+    setStatusMessage(`Waiting for ${label} selection...`);
+    setParseProgress({ phase: "select", detail: `Waiting for ${label} selection...`, percent: 1 });
+
+    const onFocusBack = () => {
+      setTimeout(() => {
+        setPendingSourceSelection((current) => {
+          if (current !== kind) return current;
+          setIsSourceLoading(false);
+          setStatus("idle");
+          setStatusMessage("Awaiting data source.");
+          setParseProgress({ phase: "idle", detail: "Idle", percent: 0 });
+          return null;
+        });
+      }, 180);
+    };
+    window.addEventListener("focus", onFocusBack, { once: true });
+  };
+
   const resetResultState = () => {
     setReport(null);
     setErrors([]);
@@ -108,8 +132,15 @@ export function QuickReportApp() {
   };
 
   const handleFolderSelection: React.ChangeEventHandler<HTMLInputElement> = async (event) => {
+    setPendingSourceSelection(null);
     const files = Array.from(event.target.files ?? []);
-    if (files.length === 0) return;
+    if (files.length === 0) {
+      setIsSourceLoading(false);
+      setStatus("idle");
+      setStatusMessage("Awaiting data source.");
+      setParseProgress({ phase: "idle", detail: "Idle", percent: 0 });
+      return;
+    }
 
     setIsSourceLoading(true);
     setStatus("working");
@@ -166,8 +197,15 @@ export function QuickReportApp() {
   };
 
   const handleZipSelection: React.ChangeEventHandler<HTMLInputElement> = async (event) => {
+    setPendingSourceSelection(null);
     const zipFile = event.target.files?.[0];
-    if (!zipFile) return;
+    if (!zipFile) {
+      setIsSourceLoading(false);
+      setStatus("idle");
+      setStatusMessage("Awaiting data source.");
+      setParseProgress({ phase: "idle", detail: "Idle", percent: 0 });
+      return;
+    }
 
     setIsSourceLoading(true);
     setStatus("working");
@@ -343,10 +381,24 @@ export function QuickReportApp() {
           </p>
 
           <div className="actions">
-            <button className="btn btn-secondary" onClick={() => folderInputRef.current?.click()} disabled={isDataSourceLoading}>
+            <button
+              className="btn btn-secondary"
+              onClick={() => {
+                beginSourceSelection("folder");
+                folderInputRef.current?.click();
+              }}
+              disabled={isDataSourceLoading}
+            >
               Select SD Folder
             </button>
-            <button className="btn btn-secondary" onClick={() => zipInputRef.current?.click()} disabled={isDataSourceLoading}>
+            <button
+              className="btn btn-secondary"
+              onClick={() => {
+                beginSourceSelection("zip");
+                zipInputRef.current?.click();
+              }}
+              disabled={isDataSourceLoading}
+            >
               Select ZIP Export
             </button>
             <button className="btn btn-danger" onClick={() => setSourceFiles([])} disabled={status === "working" || sourceFiles.length === 0}>
@@ -395,6 +447,11 @@ export function QuickReportApp() {
             <div className="phase">
               {parseProgress.percent}% - {parseProgress.detail}
             </div>
+            {pendingSourceSelection ? (
+              <div className="subtle" style={{ marginTop: 4 }}>
+                {pendingSourceSelection === "folder" ? "Preparing SD folder import..." : "Preparing ZIP import..."}
+              </div>
+            ) : null}
           </div>
         </article>
 

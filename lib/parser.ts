@@ -5,6 +5,34 @@ const MAX_FILE_SIZE_BYTES = 8_000_000;
 const MAX_RESVENT_P_TOTAL_BYTES = 24_000_000;
 const MAX_RESVENT_P_FILES = 120;
 const TEXT_EXTENSIONS = new Set(["csv", "txt", "tsv", "json", "xml", "edf", "log"]);
+const GENERIC_BINARY_EXTENSIONS = new Set(["dat", "pdat", "cfg", "ini", "edf", "000", "idx"]);
+const MAX_GENERIC_BINARY_FILE_BYTES = 1_500_000;
+const GENERIC_NAME_HINT = /(?:^|[_\-.])(stat\d{0,2}|ev\d{0,2}|summary|session|record|therapy|usage|result|detail|event|config|setting)(?:[_\-.]|$)/i;
+
+type LoaderSignature = {
+  id: string;
+  label: string;
+  markers: RegExp[];
+};
+
+const LOADER_SIGNATURES: LoaderSignature[] = [
+  { id: "resvent", label: "Resvent / Hoffrichter", markers: [/(?:^|\/)therapy\/record\//i, /(?:^|\/)therapy\/config\//i] },
+  { id: "resmed", label: "ResMed", markers: [/(?:^|\/)datalog\//i, /(?:^|\/)str\.edf$/i, /(?:^|\/)eve\.edf$/i] },
+  { id: "sleepstyle", label: "Fisher & Paykel SleepStyle", markers: [/(?:^|\/)summary\.edf$/i, /(?:^|\/)detail\.edf$/i] },
+  { id: "prisma", label: "Lowe / Prisma", markers: [/(?:^|\/)therapy\.pdat$/i, /(?:^|\/)therapy\//i] },
+  { id: "weinmann", label: "Weinmann / Loewenstein", markers: [/(?:^|\/)wm_profiles\.xml$/i, /(?:^|\/)somnobalance/i] },
+  { id: "prs1", label: "Philips Respironics System One / DreamStation", markers: [/(?:^|\/)p-series\//i, /(?:^|\/)p[0-9]{5}\.[0-9]{3}$/i] },
+  { id: "mseries", label: "Philips Respironics M-Series", markers: [/(?:^|\/)m-series\//i, /(?:^|\/)therapy\.dat$/i] },
+  { id: "bmc", label: "BMC", markers: [/(?:^|\/)p[0-9]{4}\.idx$/i, /(?:^|\/)p[0-9]{4}\.000$/i] },
+  { id: "intellipap", label: "DeVilbiss IntelliPAP", markers: [/(?:^|\/)smartcode\//i, /(?:^|\/)sl\.edf$/i] },
+  { id: "icon", label: "Fisher & Paykel ICON", markers: [/(?:^|\/)fpicon\//i, /(?:^|\/)icon\.edf$/i] },
+  { id: "yuwell", label: "Yuwell", markers: [/(?:^|\/)yuwell/i, /(?:^|\/)wave\//i] },
+  { id: "dreem", label: "Dreem", markers: [/(?:^|\/)dreem\//i, /(?:^|\/)dreem.*\.(?:csv|json)$/i] },
+  { id: "viatom", label: "Viatom", markers: [/(?:^|\/)viatom/i, /(?:^|\/)oximeter/i] },
+  { id: "vrem", label: "VREM", markers: [/(?:^|\/)vrem/i] },
+  { id: "cms50", label: "CMS50", markers: [/(?:^|\/)spo2\.(?:dat|csv)$/i, /(?:^|\/)cms50/i] },
+  { id: "zeo", label: "Zeo", markers: [/(?:^|\/)zeo/i, /(?:^|\/)zeosleep/i] }
+];
 
 const DATE_PATTERNS = [
   /(\d{4})-(\d{2})-(\d{2})/, // yyyy-mm-dd
@@ -127,17 +155,46 @@ function extractResventRecordDate(path: string): Date | null {
   return Number.isNaN(dt.getTime()) ? null : dt;
 }
 
+function extractGenericPathDate(path: string): Date | null {
+  const normalized = normalizePath(path);
+
+  const ymd = /(?:^|[^\d])((?:19|20)\d{2})(\d{2})(\d{2})(?:[^\d]|$)/.exec(normalized);
+  if (ymd) {
+    const y = Number(ymd[1]);
+    const m = Number(ymd[2]);
+    const d = Number(ymd[3]);
+    const dt = new Date(Date.UTC(y, m - 1, d));
+    if (!Number.isNaN(dt.getTime())) return dt;
+  }
+
+  const y_md = /(?:^|\/)((?:19|20)\d{2})[\/_-](\d{2})[\/_-](\d{2})(?:\/|$)/.exec(normalized);
+  if (y_md) {
+    const y = Number(y_md[1]);
+    const m = Number(y_md[2]);
+    const d = Number(y_md[3]);
+    const dt = new Date(Date.UTC(y, m - 1, d));
+    if (!Number.isNaN(dt.getTime())) return dt;
+  }
+
+  const parsed = parseDateFromString(normalized.replace(/_/g, "/"));
+  if (parsed) return parsed;
+
+  return null;
+}
+
 function toSourceMeta(file: SourceFile): SourceMeta {
   const normalizedPath = normalizePath(file.path);
   const baseName = normalizedPath.split("/").pop() ?? normalizedPath;
   const ext = baseName.includes(".") ? baseName.toLowerCase().split(".").pop() ?? "" : "";
+  const resventDate = extractResventRecordDate(normalizedPath);
+  const genericDate = extractGenericPathDate(normalizedPath);
 
   return {
     file,
     normalizedPath,
     baseName,
     ext,
-    recordDate: extractResventRecordDate(normalizedPath)
+    recordDate: resventDate ?? genericDate
   };
 }
 
@@ -172,8 +229,47 @@ function inferMachineSettingsFromText(text: string, machine: QuickReportMetrics[
     if (m) machine.pressure = m[1].trim();
   }
   if (!machine.pressureRelief) {
-    const m = text.match(/(?:epr|pressure\s*relief|flex|ipr|ps)\s*[:=]\s*([^\n\r]+)/i);
+    const m = text.match(/(?:epr|pressure\s*relief|flex|ipr)\s*[:=]\s*([^\n\r]+)/i);
     if (m) machine.pressureRelief = m[1].trim();
+  }
+}
+
+function inferPressureReliefFromMap(configMap: Map<string, string>, machine: QuickReportMetrics["machine"]) {
+  if (machine.pressureRelief) return;
+
+  const kvLower = new Map<string, string>();
+  for (const [k, v] of configMap.entries()) kvLower.set(k.toLowerCase(), v);
+  const get = (key: string): string | undefined => configMap.get(key) ?? kvLower.get(key.toLowerCase());
+
+  const ipr = safeNumber(get("iPR"));
+  if (ipr !== undefined) {
+    machine.pressureRelief = ipr > 0 ? `IPR: On ${Number(ipr.toFixed(2)).toString()} cmH2O` : "IPR: Off";
+    return;
+  }
+
+  const eprLevel = safeNumber(get("EPRLevel") ?? get("epr_level") ?? get("EPR"));
+  if (eprLevel !== undefined) {
+    machine.pressureRelief = eprLevel > 0 ? `EPR: On ${Number(eprLevel.toFixed(2)).toString()}` : "EPR: Off";
+    return;
+  }
+
+  const flexLevel = safeNumber(get("Flex") ?? get("A-Flex") ?? get("C-Flex"));
+  if (flexLevel !== undefined) {
+    machine.pressureRelief = flexLevel > 0 ? `Flex: On ${Number(flexLevel.toFixed(2)).toString()}` : "Flex: Off";
+    return;
+  }
+
+  for (const [key, value] of kvLower.entries()) {
+    if (!/(?:\bepr\b|\bipr\b|\bflex\b|\bexhale\b)/i.test(key)) continue;
+    const n = safeNumber(value);
+    if (n !== undefined) {
+      machine.pressureRelief = n > 0 ? `${key.toUpperCase()}: On ${Number(n.toFixed(2)).toString()}` : `${key.toUpperCase()}: Off`;
+      return;
+    }
+    if (value.trim().length > 0) {
+      machine.pressureRelief = value.trim();
+      return;
+    }
   }
 }
 
@@ -203,6 +299,32 @@ function parseKeyValueLines(text: string): Map<string, string> {
   }
 
   return out;
+}
+
+function detectLikelyLoaders(files: SourceMeta[]): string[] {
+  const detected: string[] = [];
+  for (const sig of LOADER_SIGNATURES) {
+    const hit = files.some((f) => sig.markers.some((re) => re.test(f.normalizedPath)));
+    if (hit) detected.push(sig.label);
+  }
+  return detected;
+}
+
+function decodeLikelyTextVariants(bytes: Uint8Array): string[] {
+  if (bytes.length === 0) return [];
+  const seen = new Set<string>();
+  const variants: string[] = [];
+
+  const candidates = [decodeResventText(bytes, false), decodeResventText(bytes, true)];
+  for (const raw of candidates) {
+    const text = raw.replace(/\0/g, "\n");
+    const trimmed = text.trim();
+    if (!trimmed || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    variants.push(trimmed);
+  }
+
+  return variants;
 }
 
 function decodeResventText(bytes: Uint8Array, skipHeader = true): string {
@@ -271,10 +393,7 @@ function inferMachineSettingsFromConfigMap(configMap: Map<string, string>, machi
   }
 
   if (!machine.pressureRelief) {
-    const ipr = safeNumber(configMap.get("iPR") ?? configMap.get("epr") ?? configMap.get("EPR"));
-    if (ipr !== undefined) {
-      machine.pressureRelief = ipr > 0 ? `IPR: On ${Number(ipr.toFixed(2)).toString()} cmH2O` : "IPR: Off";
-    }
+    inferPressureReliefFromMap(configMap, machine);
   }
 }
 
@@ -329,6 +448,83 @@ function parseResventStatText(text: string, fallbackDate: Date): ParsedRecord | 
 
   return {
     date: recordDate,
+    usageHours: usageHours !== undefined && usageHours >= 0 && usageHours <= 24 ? usageHours : undefined,
+    ahi: ahi !== undefined && ahi >= 0 && ahi < 200 ? ahi : undefined,
+    leak: leak !== undefined && leak >= 0 && leak < 500 ? leak : undefined
+  };
+}
+
+function parseGenericDailyKeyValueRecord(text: string, fallbackDate: Date): ParsedRecord | null {
+  const kv = parseKeyValueLines(text);
+  if (kv.size === 0) return null;
+
+  const kvLower = new Map<string, string>();
+  for (const [k, v] of kv.entries()) kvLower.set(k.toLowerCase(), v);
+  const get = (key: string): string | undefined => kv.get(key) ?? kvLower.get(key.toLowerCase());
+
+  const usageKeyOrder = [
+    "usagehours",
+    "therapyhours",
+    "hours",
+    "hour",
+    "timeused",
+    "runtime",
+    "secUsed",
+    "secondsused",
+    "minutesused"
+  ];
+
+  let usageHours: number | undefined;
+  for (const key of usageKeyOrder) {
+    const raw = get(key);
+    const n = safeNumber(raw);
+    if (n === undefined) continue;
+    if (/sec/i.test(key)) usageHours = n / 3600;
+    else if (/min/i.test(key)) usageHours = n / 60;
+    else usageHours = n;
+    break;
+  }
+
+  const ahiCandidates = [
+    safeNumber(get("ahi")),
+    safeNumber(get("avgahi")),
+    safeNumber(get("residualahi")),
+    safeNumber(get("ahi95"))
+  ].filter((v): v is number => typeof v === "number" && Number.isFinite(v));
+  let ahi: number | undefined = ahiCandidates.length > 0 ? ahiCandidates[0] : undefined;
+
+  if (ahi === undefined && usageHours && usageHours > 0) {
+    const cntOAI = safeNumber(get("cntOAI"));
+    const cntCAI = safeNumber(get("cntCAI"));
+    const cntHI = safeNumber(get("cntHI"));
+    const cntAI = safeNumber(get("cntAI"));
+    const eventCount =
+      cntAI !== undefined && cntHI !== undefined
+        ? cntAI + cntHI
+        : cntOAI !== undefined || cntCAI !== undefined || cntHI !== undefined
+          ? (cntOAI ?? 0) + (cntCAI ?? 0) + (cntHI ?? 0)
+          : undefined;
+    if (eventCount !== undefined) ahi = eventCount / usageHours;
+  }
+
+  let leak: number | undefined;
+  for (const [key, value] of kvLower.entries()) {
+    if (!/leak/.test(key)) continue;
+    const n = safeNumber(value);
+    if (n === undefined) continue;
+    leak = n;
+    break;
+  }
+
+  const day = new Date(Date.UTC(fallbackDate.getUTCFullYear(), fallbackDate.getUTCMonth(), fallbackDate.getUTCDate()));
+  const hasSignal =
+    (usageHours !== undefined && usageHours >= 0 && usageHours <= 24) ||
+    (ahi !== undefined && ahi >= 0 && ahi < 200) ||
+    (leak !== undefined && leak >= 0 && leak < 500);
+
+  if (!hasSignal) return null;
+  return {
+    date: day,
     usageHours: usageHours !== undefined && usageHours >= 0 && usageHours <= 24 ? usageHours : undefined,
     ahi: ahi !== undefined && ahi >= 0 && ahi < 200 ? ahi : undefined,
     leak: leak !== undefined && leak >= 0 && leak < 500 ? leak : undefined
@@ -512,7 +708,8 @@ function parseResventLeakFromBytes(bytes: Uint8Array): LeakStats | null {
     return { sum, count, max };
   };
 
-  return parseByLayout(true) ?? parseByLayout(false);
+  // Variable layout is safer when channels carry different sample counts.
+  return parseByLayout(false) ?? parseByLayout(true);
 }
 
 function pickResventCandidates(files: SourceMeta[], warnings: string[]): {
@@ -548,7 +745,7 @@ function pickResventCandidates(files: SourceMeta[], warnings: string[]): {
     .filter((m) => m.file.size > 0 && m.file.size <= MAX_FILE_SIZE_BYTES)
     .sort((a, b) => (a.normalizedPath < b.normalizedPath ? -1 : 1));
 
-  // Prioritize one P-file per day first (coverage), then include additional per-day files (fidelity).
+  // Use one representative P-file per day for stable leak summaries and predictable runtime.
   const pByDay = new Map<string, SourceMeta[]>();
   for (const p of allP) {
     if (!p.recordDate) continue;
@@ -563,11 +760,6 @@ function pickResventCandidates(files: SourceMeta[], warnings: string[]): {
     const list = pByDay.get(day);
     if (!list || list.length === 0) continue;
     sampledP.push(list[0]);
-  }
-  for (const day of sortedDays) {
-    const list = pByDay.get(day);
-    if (!list || list.length <= 1) continue;
-    for (let i = 1; i < list.length; i += 1) sampledP.push(list[i]);
   }
 
   let pBytes = 0;
@@ -614,7 +806,12 @@ function finite(value: number): number {
 }
 
 function isGenericTextCandidate(meta: SourceMeta): boolean {
-  return TEXT_EXTENSIONS.has(meta.ext) && meta.file.size <= MAX_FILE_SIZE_BYTES;
+  if (TEXT_EXTENSIONS.has(meta.ext) && meta.file.size <= MAX_FILE_SIZE_BYTES) return true;
+  if (GENERIC_BINARY_EXTENSIONS.has(meta.ext) && meta.file.size <= MAX_GENERIC_BINARY_FILE_BYTES) return true;
+  if ((meta.ext.length === 0 || meta.ext === "dat") && GENERIC_NAME_HINT.test(meta.baseName) && meta.file.size <= MAX_FILE_SIZE_BYTES) {
+    return true;
+  }
+  return false;
 }
 
 export async function buildQuickReportMetrics(request: ParseRequest): Promise<QuickReportMetrics> {
@@ -626,6 +823,7 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
   const records: ParsedRecord[] = [];
 
   const meta = files.map(toSourceMeta);
+  const likelyLoaders = detectLikelyLoaders(meta);
   const maybeResvent = meta.some((m) => /(?:^|\/)therapy\/(?:record|config)\//i.test(m.normalizedPath));
   const leakStatsByDay = new Map<string, LeakStats>();
   let fallbackWindowDateSet = new Set<string>();
@@ -742,12 +940,12 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
     }
   }
 
-  // Generic text parsing fallback for non-Resvent formats.
+  // Generic parsing fallback for non-Resvent or partially decoded vendor formats.
   const runGenericPass = !(maybeResvent && (fallbackWindowDateSet.size > 0 || records.length > 0));
   const genericTextCandidates = meta.filter(isGenericTextCandidate);
   const genericCandidates = runGenericPass ? genericTextCandidates.slice(0, MAX_GENERIC_FILES_TO_SCAN) : [];
   if (runGenericPass && genericTextCandidates.length > MAX_GENERIC_FILES_TO_SCAN) {
-    warnings.push(`Input contained many text files; generic parsing was limited to ${MAX_GENERIC_FILES_TO_SCAN} files.`);
+    warnings.push(`Input contained many candidate files; generic parsing was limited to ${MAX_GENERIC_FILES_TO_SCAN} files.`);
   }
 
   let genericProcessed = 0;
@@ -760,17 +958,30 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
       percent: Math.min(80, pct)
     });
 
-    let text = "";
     try {
-      text = await candidate.file.readText();
+      const bytes = await candidate.file.readBytes();
+      const variants = decodeLikelyTextVariants(bytes);
+      if (variants.length === 0) continue;
+
+      for (const text of variants) {
+        inferMachineSettingsFromText(text, machine);
+        const kv = parseKeyValueLines(text);
+        if (kv.size > 0) inferPressureReliefFromMap(kv, machine);
+
+        if (candidate.recordDate) {
+          const statLike = parseResventStatText(text, candidate.recordDate);
+          if (statLike) records.push(statLike);
+
+          const genericDaily = parseGenericDailyKeyValueRecord(text, candidate.recordDate);
+          if (genericDaily) records.push(genericDaily);
+        }
+
+        const parsed = sanitizeRecords(parseRecords(text));
+        records.push(...parsed);
+      }
     } catch {
       continue;
     }
-
-    if (!text || text.trim().length === 0) continue;
-    inferMachineSettingsFromText(text, machine);
-    const parsed = sanitizeRecords(parseRecords(text));
-    records.push(...parsed);
 
     if (genericProcessed % 25 === 0) {
       await new Promise((resolve) => setTimeout(resolve, 0));
@@ -785,8 +996,9 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
   }
 
   if (!latest) {
+    const detectedText = likelyLoaders.length > 0 ? ` Detected layouts: ${likelyLoaders.join(", ")}.` : "";
     throw new Error(
-      "No date-stamped CPAP data was detected. Verify the selected folder is the SD card root (contains THERAPY/RECORD) or use a compatible export."
+      `No date-stamped CPAP data was detected. Verify the selected folder is the SD card root and contains importable records.${detectedText}`
     );
   }
 
@@ -818,7 +1030,13 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
       }
     }
 
-    if (typeof record.leak === "number" && record.leak >= 0 && record.leak < 500) {
+    const hasWaveLeakForDay = leakStatsByDay.has(key);
+    if (
+      typeof record.leak === "number" &&
+      record.leak >= 0 &&
+      record.leak < 500 &&
+      !(maybeResvent && hasWaveLeakForDay)
+    ) {
       bucket.leakSum += record.leak;
       bucket.leakCount += 1;
       bucket.leakMax = bucket.leakMax === null ? record.leak : Math.max(bucket.leakMax, record.leak);
@@ -874,6 +1092,9 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
   const avgLeak = leakValues.length > 0 ? leakValues.reduce((a, b) => a + b, 0) / leakValues.length : null;
   const maxLeak = leakMaxValues.length > 0 ? Math.max(...leakMaxValues) : leakValues.length > 0 ? Math.max(...leakValues) : null;
 
+  if (likelyLoaders.length > 0) {
+    warnings.unshift(`Detected OSCAR-compatible loader signatures: ${likelyLoaders.join(", ")}.`);
+  }
   if (usageValues.length === 0) {
     warnings.push("Usage-hour fields were not found in the selected data. Compliance metrics are shown as 0.");
   }
