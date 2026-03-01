@@ -1264,6 +1264,7 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
       hour: "numeric",
       minute: "2-digit"
     }),
+    selectedLoader: selectedLoader?.label ?? (likelyLoaders[0] ?? "Not detected"),
     patientName: patientName.trim(),
     dateOfBirth: formatDateHuman(dateOfBirthIso),
     physicianName: physicianName.trim(),

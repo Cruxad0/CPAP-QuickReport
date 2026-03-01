@@ -31,6 +31,7 @@ export interface MachineSettings {
 export interface QuickReportMetrics {
   generatedAtIso: string;
   generatedAtDisplay: string;
+  selectedLoader: string;
   patientName: string;
   dateOfBirth: string;
   physicianName: string;

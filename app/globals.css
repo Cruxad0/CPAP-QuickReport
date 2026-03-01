@@ -151,6 +151,76 @@ textarea {
   font-size: 0.84rem;
 }
 
+.calendar-panel {
+  margin-top: 0.55rem;
+  border: 1px solid #c8d8e6;
+  border-radius: 12px;
+  background: #f8fbff;
+  padding: 0.65rem;
+}
+
+.calendar-toolbar {
+  display: grid;
+  grid-template-columns: auto 1fr 1fr auto;
+  gap: 0.42rem;
+  align-items: center;
+}
+
+.calendar-select {
+  padding-top: 0.45rem;
+  padding-bottom: 0.45rem;
+}
+
+.btn-calendar-nav {
+  min-width: 40px;
+  padding: 0.48rem 0.6rem;
+}
+
+.calendar-grid {
+  margin-top: 0.52rem;
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 0.26rem;
+}
+
+.calendar-weekdays {
+  margin-top: 0.62rem;
+}
+
+.calendar-weekday {
+  text-align: center;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #4f6a80;
+}
+
+.calendar-day {
+  border: 1px solid #ccdae8;
+  border-radius: 8px;
+  background: #fff;
+  color: #173246;
+  min-height: 33px;
+  cursor: pointer;
+}
+
+.calendar-day:hover:not(:disabled) {
+  border-color: #7ec3dc;
+  background: #f0fbff;
+}
+
+.calendar-day:disabled {
+  cursor: default;
+  border-color: #e6eef6;
+  background: #f8fbff;
+}
+
+.calendar-day-selected {
+  background: linear-gradient(135deg, var(--brand) 0%, var(--brand-2) 100%);
+  border-color: #0f7396;
+  color: #fff;
+  font-weight: 700;
+}
+
 .btn {
   border: 1px solid transparent;
   border-radius: 10px;

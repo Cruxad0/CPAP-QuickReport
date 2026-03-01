@@ -6,6 +6,25 @@ import { buildQuickReportMetrics } from "@/lib/parser";
 import { buildPdfReport } from "@/lib/pdf";
 import { DataSourceKind, ParseProgress, QuickReportMetrics, SourceFile } from "@/lib/types";
 
+const MONTH_LABELS = [
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December"
+];
+
+const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MIN_YEAR = 1900;
+const MAX_YEAR = 2100;
+
 function bytesToLabel(size: number): string {
   if (size > 1024 * 1024) return `${(size / (1024 * 1024)).toFixed(2)} MB`;
   if (size > 1024) return `${(size / 1024).toFixed(1)} KB`;
@@ -51,10 +70,35 @@ function normalizeDobInput(value: string): string | null {
   return null;
 }
 
-function isoToUsDate(isoDate: string): string {
+function parseIsoDate(isoDate: string): { year: number; month: number; day: number } | null {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(isoDate);
-  if (!m) return isoDate;
-  return `${m[2]}/${m[3]}/${m[1]}`;
+  if (!m) return null;
+  const year = Number(m[1]);
+  const month = Number(m[2]);
+  const day = Number(m[3]);
+  if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) return null;
+  return { year, month, day };
+}
+
+function toUsDate(year: number, month: number, day: number): string {
+  return `${String(month).padStart(2, "0")}/${String(day).padStart(2, "0")}/${String(year).padStart(4, "0")}`;
+}
+
+function daysInMonth(year: number, month: number): number {
+  return new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
+
+function calendarCells(year: number, month: number): Array<number | null> {
+  const firstWeekday = new Date(Date.UTC(year, month - 1, 1)).getUTCDay();
+  const totalDays = daysInMonth(year, month);
+  const cells: Array<number | null> = [];
+
+  for (let i = 0; i < firstWeekday; i += 1) cells.push(null);
+  for (let d = 1; d <= totalDays; d += 1) cells.push(d);
+  while (cells.length % 7 !== 0) cells.push(null);
+  while (cells.length < 42) cells.push(null);
+
+  return cells;
 }
 
 async function fileToDataUrl(file: File): Promise<string> {
@@ -79,7 +123,7 @@ export function QuickReportApp() {
   const folderInputRef = useRef<HTMLInputElement>(null);
   const zipInputRef = useRef<HTMLInputElement>(null);
   const headerInputRef = useRef<HTMLInputElement>(null);
-  const calendarInputRef = useRef<HTMLInputElement>(null);
+  const sourceSelectionHandledRef = useRef(false);
 
   const [patientName, setPatientName] = useState("");
   const [dateOfBirthInput, setDateOfBirthInput] = useState("");
@@ -104,6 +148,9 @@ export function QuickReportApp() {
   const [errors, setErrors] = useState<string[]>([]);
   const [isSourceLoading, setIsSourceLoading] = useState(false);
   const [pendingSourceSelection, setPendingSourceSelection] = useState<"folder" | "zip" | null>(null);
+  const [showCalendarAlt, setShowCalendarAlt] = useState(false);
+  const [calendarMonth, setCalendarMonth] = useState<number>(new Date().getMonth() + 1);
+  const [calendarYear, setCalendarYear] = useState<number>(new Date().getFullYear());
 
   useEffect(() => {
     if (folderInputRef.current) {
@@ -125,6 +172,12 @@ export function QuickReportApp() {
   }, [sourceFiles]);
 
   const dateOfBirthIso = useMemo(() => normalizeDobInput(dateOfBirthInput), [dateOfBirthInput]);
+  const selectedDob = useMemo(() => (dateOfBirthIso ? parseIsoDate(dateOfBirthIso) : null), [dateOfBirthIso]);
+  const dobCalendarCells = useMemo(() => calendarCells(calendarYear, calendarMonth), [calendarMonth, calendarYear]);
+  const yearOptions = useMemo(
+    () => Array.from({ length: MAX_YEAR - MIN_YEAR + 1 }, (_, i) => MIN_YEAR + i),
+    []
+  );
 
   const canGenerate =
     patientName.trim().length > 1 &&
@@ -137,11 +190,13 @@ export function QuickReportApp() {
   const beginSourceSelection = (kind: "folder" | "zip") => {
     setPendingSourceSelection(kind);
     setIsSourceLoading(true);
+    sourceSelectionHandledRef.current = false;
 
     const onFocusBack = () => {
       setTimeout(() => {
         setPendingSourceSelection((current) => {
           if (current !== kind) return current;
+          if (sourceSelectionHandledRef.current) return null;
           setIsSourceLoading(false);
           return null;
         });
@@ -162,9 +217,11 @@ export function QuickReportApp() {
     }
     setPreviewEmbedUrl(null);
     setIsPreviewCollapsed(false);
+    setShowCalendarAlt(false);
   };
 
   const handleFolderSelection: React.ChangeEventHandler<HTMLInputElement> = async (event) => {
+    sourceSelectionHandledRef.current = true;
     setPendingSourceSelection(null);
     const files = Array.from(event.target.files ?? []);
     if (files.length === 0) {
@@ -230,6 +287,7 @@ export function QuickReportApp() {
   };
 
   const handleZipSelection: React.ChangeEventHandler<HTMLInputElement> = async (event) => {
+    sourceSelectionHandledRef.current = true;
     setPendingSourceSelection(null);
     const zipFile = event.target.files?.[0];
     if (!zipFile) {
@@ -330,7 +388,7 @@ export function QuickReportApp() {
       setStatus("ready");
       setStatusMessage("Report generated successfully. Review preview and export PDF.");
       setParseProgress({ phase: "done", detail: "Done", percent: 100 });
-      if (metrics.warnings.length > 0) setErrors(metrics.warnings);
+      setErrors([]);
     } catch (error) {
       const message = error instanceof Error ? error.message : "An unexpected error occurred.";
       setStatus("error");
@@ -356,13 +414,40 @@ export function QuickReportApp() {
   };
 
   const openCalendarPicker = () => {
-    const input = calendarInputRef.current;
-    if (!input) return;
-    if (typeof input.showPicker === "function") {
-      input.showPicker();
-    } else {
-      input.click();
+    setShowCalendarAlt((current) => {
+      const next = !current;
+      if (next) {
+        const seed = selectedDob ?? {
+          year: new Date().getFullYear(),
+          month: new Date().getMonth() + 1,
+          day: 1
+        };
+        setCalendarYear(seed.year);
+        setCalendarMonth(seed.month);
+      }
+      return next;
+    });
+  };
+
+  const moveCalendarMonth = (offset: number) => {
+    let nextMonth = calendarMonth + offset;
+    let nextYear = calendarYear;
+    while (nextMonth < 1) {
+      nextMonth += 12;
+      nextYear -= 1;
     }
+    while (nextMonth > 12) {
+      nextMonth -= 12;
+      nextYear += 1;
+    }
+    if (nextYear < MIN_YEAR || nextYear > MAX_YEAR) return;
+    setCalendarYear(nextYear);
+    setCalendarMonth(nextMonth);
+  };
+
+  const pickCalendarDate = (day: number) => {
+    setDateOfBirthInput(toUsDate(calendarYear, calendarMonth, day));
+    setShowCalendarAlt(false);
   };
 
   return (
@@ -412,18 +497,72 @@ export function QuickReportApp() {
             </p>
           ) : null}
           <button type="button" className="link-button" onClick={openCalendarPicker}>
-            Use calendar popup instead
+            {showCalendarAlt ? "Hide calendar popup" : "Use calendar popup instead"}
           </button>
-          <input
-            ref={calendarInputRef}
-            type="date"
-            style={{ position: "absolute", opacity: 0, pointerEvents: "none", width: 0, height: 0 }}
-            onChange={(e) => {
-              const iso = e.target.value;
-              if (!iso) return;
-              setDateOfBirthInput(isoToUsDate(iso));
-            }}
-          />
+          {showCalendarAlt ? (
+            <div className="calendar-panel" role="dialog" aria-label="Date of birth calendar picker">
+              <div className="calendar-toolbar">
+                <button type="button" className="btn btn-secondary btn-calendar-nav" onClick={() => moveCalendarMonth(-1)}>
+                  ◀
+                </button>
+                <select
+                  className="input calendar-select"
+                  value={calendarMonth}
+                  onChange={(e) => setCalendarMonth(Number(e.target.value))}
+                  aria-label="Select month"
+                >
+                  {MONTH_LABELS.map((monthLabel, idx) => (
+                    <option key={monthLabel} value={idx + 1}>
+                      {monthLabel}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  className="input calendar-select"
+                  value={calendarYear}
+                  onChange={(e) => setCalendarYear(Number(e.target.value))}
+                  aria-label="Select year"
+                >
+                  {yearOptions.map((year) => (
+                    <option key={year} value={year}>
+                      {year}
+                    </option>
+                  ))}
+                </select>
+                <button type="button" className="btn btn-secondary btn-calendar-nav" onClick={() => moveCalendarMonth(1)}>
+                  ▶
+                </button>
+              </div>
+              <div className="calendar-grid calendar-weekdays">
+                {WEEKDAY_LABELS.map((weekday) => (
+                  <div key={weekday} className="calendar-weekday">
+                    {weekday}
+                  </div>
+                ))}
+              </div>
+              <div className="calendar-grid">
+                {dobCalendarCells.map((day, index) => {
+                  const selected =
+                    Boolean(day) &&
+                    selectedDob &&
+                    selectedDob.year === calendarYear &&
+                    selectedDob.month === calendarMonth &&
+                    selectedDob.day === day;
+                  return (
+                    <button
+                      key={`${calendarYear}-${calendarMonth}-${index}`}
+                      type="button"
+                      className={`calendar-day ${selected ? "calendar-day-selected" : ""}`}
+                      onClick={() => day && pickCalendarDate(day)}
+                      disabled={!day}
+                    >
+                      {day ?? ""}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
 
           <label htmlFor="physician" style={{ marginTop: 10 }}>
             Physician name
@@ -471,9 +610,6 @@ export function QuickReportApp() {
             >
               Select ZIP Export
             </button>
-            <button className="btn btn-danger" onClick={() => setSourceFiles([])} disabled={status === "working" || sourceFiles.length === 0}>
-              Clear Files
-            </button>
           </div>
 
           <input ref={folderInputRef} type="file" multiple onChange={handleFolderSelection} style={{ display: "none" }} />
@@ -499,7 +635,7 @@ export function QuickReportApp() {
               Generate 90-Day PDF
             </button>
             <button
-              className="btn btn-secondary"
+              className="btn btn-danger"
               onClick={() => {
                 resetResultState();
                 setSourceFiles([]);
@@ -526,27 +662,28 @@ export function QuickReportApp() {
         </article>
 
         <article className="card col-12">
-          <div className="actions" style={{ marginTop: 0 }}>
-            {status === "ready" ? <span className="badge badge-ok">Ready</span> : null}
-            {status === "working" ? <span className="badge badge-warn">Working</span> : null}
-            {status === "error" ? <span className="badge badge-error">Error</span> : null}
-            <span className="subtle">{statusMessage}</span>
-          </div>
-
-          {errors.length > 0 ? (
+          {status === "ready" && report ? (
             <ul className="notes">
-              {errors.map((err) => (
-                <li key={err}>{err}</li>
-              ))}
+              <li>Report generated successfully. Review preview and export PDF.</li>
+              <li>
+                Selected loader and Date range: {report.selectedLoader} | {report.dateRangeStart} to {report.dateRangeEnd}
+              </li>
             </ul>
           ) : null}
 
-          {report ? (
-            <ul className="notes">
-              <li>Date range: {report.dateRangeStart} to {report.dateRangeEnd}</li>
-              <li>Days with data: {report.daysWithData} / {report.daysInWindow}</li>
-              <li>Compliance: {report.compliancePercent.toFixed(1)}%</li>
-            </ul>
+          {status === "error" ? (
+            <>
+              <p className="subtle" style={{ marginTop: 0, color: "#a11c1c" }}>
+                Report generation failed.
+              </p>
+              {errors.length > 0 ? (
+                <ul className="notes">
+                  {errors.map((err) => (
+                    <li key={err}>{err}</li>
+                  ))}
+                </ul>
+              ) : null}
+            </>
           ) : null}
         </article>
 
@@ -584,6 +721,32 @@ export function QuickReportApp() {
             )}
           </article>
         ) : null}
+
+        <article className="card col-12">
+          <h3>GNU/OSCAR Copyright and Distribution Notice</h3>
+          <ul className="notes">
+            <li>
+              This app contains parser behavior derived from OSCAR (Open Source CPAP Analysis Reporter), which is GPLv3-licensed software.
+            </li>
+            <li>
+              Attribution from OSCAR repository materials: SleepyHead copyright (C) 2011-2018 Mark Watkins; portions of OSCAR copyright (C) 2019-2022 The OSCAR Team.
+            </li>
+            <li>
+              Distribution requirement: if you distribute this app or modified versions that include GPL-covered OSCAR-derived code, provide corresponding source code and preserve GPLv3 terms and attribution notices.
+            </li>
+            <li>No warranty: this software is provided without warranty, consistent with GNU GPL terms.</li>
+            <li>
+              References:{" "}
+              <a href="https://www.sleepfiles.com/OSCAR/" target="_blank" rel="noopener noreferrer">
+                OSCAR project
+              </a>
+              {" | "}
+              <a href="https://www.gnu.org/licenses/gpl-3.0.html" target="_blank" rel="noopener noreferrer">
+                GNU GPL v3 license text
+              </a>
+            </li>
+          </ul>
+        </article>
       </section>
     </main>
   );
