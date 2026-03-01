@@ -2,8 +2,8 @@ import { ParseRequest, ParsedRecord, ParseProgress, QuickReportMetrics, SourceFi
 
 const MAX_GENERIC_FILES_TO_SCAN = 500;
 const MAX_FILE_SIZE_BYTES = 8_000_000;
-const MAX_RESVENT_P_TOTAL_BYTES = 24_000_000;
-const MAX_RESVENT_P_FILES = 120;
+const MAX_RESVENT_P_TOTAL_BYTES = 96_000_000;
+const MAX_RESVENT_P_FILES = 400;
 const TEXT_EXTENSIONS = new Set(["csv", "txt", "tsv", "json", "xml", "edf", "log"]);
 const GENERIC_BINARY_EXTENSIONS = new Set(["dat", "pdat", "cfg", "ini", "edf", "000", "idx"]);
 const MAX_GENERIC_BINARY_FILE_BYTES = 1_500_000;
@@ -121,6 +121,11 @@ function parseDateFromString(value: string): Date | null {
 function extractUsageSuffix(baseName: string, prefix: "stat" | "ev"): string | null {
   const re = new RegExp(`^${prefix}(\\d{2})(?:\\..*)?$`, "i");
   const m = re.exec(baseName);
+  return m?.[1] ?? null;
+}
+
+function extractResventPUsageSuffix(baseName: string): string | null {
+  const m = /^p(\d{2})_\d+(?:\..*)?$/i.exec(baseName);
   return m?.[1] ?? null;
 }
 
@@ -774,7 +779,7 @@ function parseResventLeakFromBytes(bytes: Uint8Array): LeakStats | null {
         nextPos = cursor;
       }
 
-      const leakSamples = descriptors[leakIndex].samples;
+      const leakSamples = fixedStride ? maxSamples : descriptors[leakIndex].samples;
       for (let i = 0; i < leakSamples; i += 1) {
         const sampleOffset = leakStart + i * 2;
         if (sampleOffset + 2 > bytes.length) break;
@@ -796,8 +801,8 @@ function parseResventLeakFromBytes(bytes: Uint8Array): LeakStats | null {
     return { sum, count, max };
   };
 
-  // Variable layout is safer when channels carry different sample counts.
-  return parseByLayout(false) ?? parseByLayout(true);
+  // OSCAR's Resvent loader behavior is closest to fixed-stride P-file parsing.
+  return parseByLayout(true) ?? parseByLayout(false);
 }
 
 function pickResventCandidates(files: SourceMeta[], warnings: string[]): {
@@ -838,40 +843,35 @@ function pickResventCandidates(files: SourceMeta[], warnings: string[]): {
     evByDayUsage.set(`${toIsoDate(ev.recordDate)}:${usage}`, ev);
   }
 
+  const statUsageSet = new Set(
+    statFiles
+      .map((m) => extractUsageSuffix(m.baseName, "stat"))
+      .filter((v): v is string => v !== null)
+  );
+
   const allP = inWindow
     .filter(isResventPFile)
+    .filter((m) => {
+      if (statUsageSet.size === 0) return true;
+      const usage = extractResventPUsageSuffix(m.baseName);
+      return usage !== null && statUsageSet.has(usage);
+    })
     .filter((m) => m.file.size > 0 && m.file.size <= MAX_FILE_SIZE_BYTES)
-    .sort((a, b) => (a.normalizedPath < b.normalizedPath ? -1 : 1));
-
-  // Use one representative P-file per day for stable leak summaries and predictable runtime.
-  const pByDay = new Map<string, SourceMeta[]>();
-  for (const p of allP) {
-    if (!p.recordDate) continue;
-    const day = toIsoDate(p.recordDate);
-    const list = pByDay.get(day) ?? [];
-    list.push(p);
-    pByDay.set(day, list);
-  }
-  const sortedDays = [...pByDay.keys()].sort();
-  const sampledP: SourceMeta[] = [];
-  for (const day of sortedDays) {
-    const list = pByDay.get(day);
-    if (!list || list.length === 0) continue;
-    sampledP.push(list[0]);
-  }
+    // Keep newest P-files first if caps are reached.
+    .sort((a, b) => (a.normalizedPath > b.normalizedPath ? -1 : 1));
 
   let pBytes = 0;
   const pFiles: SourceMeta[] = [];
-  for (const m of sampledP) {
+  for (const m of allP) {
     if (pFiles.length >= MAX_RESVENT_P_FILES) break;
     if (pBytes + m.file.size > MAX_RESVENT_P_TOTAL_BYTES) break;
     pFiles.push(m);
     pBytes += m.file.size;
   }
 
-  if (sampledP.length > pFiles.length) {
+  if (allP.length > pFiles.length) {
     warnings.push(
-      `Leak channels were sampled from ${pFiles.length} of ${sampledP.length} P-files to keep parsing responsive.`
+      `Leak channels were parsed from ${pFiles.length} of ${allP.length} P-files (newest first) to keep parsing responsive.`
     );
   }
 
@@ -1107,7 +1107,11 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
     );
   }
 
-  const windowEnd = new Date(Date.UTC(latest.getUTCFullYear(), latest.getUTCMonth(), latest.getUTCDate()));
+  const latestDataDay = new Date(Date.UTC(latest.getUTCFullYear(), latest.getUTCMonth(), latest.getUTCDate()));
+  const today = new Date();
+  const yesterday = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));
+  yesterday.setUTCDate(yesterday.getUTCDate() - 1);
+  const windowEnd = latestDataDay > yesterday ? yesterday : latestDataDay;
   const windowStart = new Date(windowEnd);
   windowStart.setUTCDate(windowStart.getUTCDate() - 89);
 

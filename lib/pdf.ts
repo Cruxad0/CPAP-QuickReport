@@ -328,9 +328,8 @@ export async function buildPdfReport(report: QuickReportMetrics, headerDataUrl?:
     rgbFn
   );
 
-  // Requested layout: physician section two page breaks after therapy data.
-  startNewPage(pdfDoc, state, headerImage, fontBold, rgbFn);
-  startNewPage(pdfDoc, state, headerImage, fontBold, rgbFn);
+  // Keep physician block on the same report flow with two blank lines of spacing.
+  state.y -= 24;
 
   ensureSpace(pdfDoc, state, 220, headerImage, fontBold, rgbFn);
   state.page.drawText(`Physician: ${report.physicianName}`, {

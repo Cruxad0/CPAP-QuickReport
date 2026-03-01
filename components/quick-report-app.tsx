@@ -119,18 +119,20 @@ export function QuickReportApp() {
     physicianName.trim().length > 3 &&
     sourceFiles.length > 0 &&
     status !== "working";
-  const isDataSourceLoading = status === "working" || isSourceLoading;
+  const isDataSourceLoading = status === "working" || isSourceLoading || pendingSourceSelection !== null;
 
   const beginSourceSelection = (kind: "folder" | "zip") => {
     setPendingSourceSelection(kind);
+    setIsSourceLoading(true);
 
     const onFocusBack = () => {
       setTimeout(() => {
         setPendingSourceSelection((current) => {
           if (current !== kind) return current;
+          setIsSourceLoading(false);
           return null;
         });
-      }, 180);
+      }, 650);
     };
     window.addEventListener("focus", onFocusBack, { once: true });
   };
