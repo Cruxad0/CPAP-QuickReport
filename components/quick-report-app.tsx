@@ -182,9 +182,15 @@ export function QuickReportApp() {
   const canGenerate =
     patientName.trim().length > 1 &&
     Boolean(dateOfBirthIso) &&
-    physicianName.trim().length > 3 &&
     sourceFiles.length > 0 &&
     status !== "working";
+  const missingRequiredFields = useMemo(() => {
+    const missing: string[] = [];
+    if (patientName.trim().length <= 1) missing.push("Patient name");
+    if (!dateOfBirthIso) missing.push("Date of birth");
+    if (sourceFiles.length === 0) missing.push("Data source files");
+    return missing;
+  }, [patientName, dateOfBirthIso, sourceFiles.length]);
   const isDataSourceLoading = status === "working" || isSourceLoading || pendingSourceSelection !== null;
 
   const beginSourceSelection = (kind: "folder" | "zip") => {
@@ -477,14 +483,14 @@ export function QuickReportApp() {
       <section className="hero">
         <h1>CPAP Clinician QuickReport</h1>
         <p>
-          Local-first workflow for any work computer. Files are processed in-browser to produce a 90-day PDF handout.
+          Local-first workflow for any work computer. Files are processed in your browser to produce a 90-day PDF handout.
         </p>
         <p className="subtle">
           Powered by{" "}
           <a href="https://notespecialist.com" target="_blank" rel="noopener noreferrer">
             notespecialist.com
           </a>{" "}
-          AI powered clinical documentation.
+          AI-powered clinical documentation.
         </p>
       </section>
 
@@ -519,7 +525,7 @@ export function QuickReportApp() {
             </p>
           ) : null}
           <button type="button" className="link-button" onClick={openCalendarPicker}>
-            {showCalendarAlt ? "Hide calendar popup" : "Use calendar popup instead"}
+            {showCalendarAlt ? "Hide calendar picker" : "Use calendar picker instead"}
           </button>
           {showCalendarAlt ? (
             <div className="calendar-panel" role="dialog" aria-label="Date of birth calendar picker">
@@ -601,14 +607,14 @@ export function QuickReportApp() {
             Optional PDF header image
           </label>
           <input id="header-upload" ref={headerInputRef} type="file" accept="image/png,image/jpeg" onChange={handleHeaderUpload} />
-          <p className="subtle">Use clinic branding image if desired. If omitted, a neutral header is used.</p>
+          <p className="subtle">Use a clinic branding image if desired. If omitted, a neutral header is used.</p>
         </article>
 
         <article className={`card col-8 ${isDataSourceLoading ? "card-loading" : ""}`} aria-busy={isDataSourceLoading}>
-          {isDataSourceLoading ? <div className="loading-overlay">Loading data, please wait</div> : null}
+          {isDataSourceLoading ? <div className="loading-overlay">Loading data. Please wait...</div> : null}
           <h3>Data Source</h3>
           <p className="subtle">
-            Import SD card folder (preferred) or ZIP export. Only the most recent 90 days are included in report metrics.
+            Import an SD-card folder (preferred) or a ZIP export. Only the most recent 90 days are included in report metrics.
           </p>
 
           <div className="actions">
@@ -671,6 +677,11 @@ export function QuickReportApp() {
               Reset
             </button>
           </div>
+          {!canGenerate && status !== "working" ? (
+            <p className="subtle" style={{ marginTop: 8 }}>
+              Required to generate: {missingRequiredFields.join(", ")}.
+            </p>
+          ) : null}
 
           <div className="progress-wrap" role="status" aria-live="polite">
             <div className="progress-track">
@@ -687,31 +698,33 @@ export function QuickReportApp() {
           </div>
         </article>
 
-        <article className="card col-12">
-          {status === "ready" && report ? (
-            <ul className="notes">
-              <li>Report generated successfully. Review preview and export PDF.</li>
-              <li>
-                Selected loader and Date range: {report.selectedLoader} | {report.dateRangeStart} to {report.dateRangeEnd}
-              </li>
-            </ul>
-          ) : null}
+        {status === "ready" || status === "error" ? (
+          <article className="card col-12">
+            {status === "ready" && report ? (
+              <ul className="notes">
+                <li>Report generated successfully. Review preview and export PDF.</li>
+                <li>
+                  Selected loader and Date range: {report.selectedLoader} | {report.dateRangeStart} to {report.dateRangeEnd}
+                </li>
+              </ul>
+            ) : null}
 
-          {status === "error" ? (
-            <>
-              <p className="subtle" style={{ marginTop: 0, color: "#a11c1c" }}>
-                Report generation failed.
-              </p>
-              {errors.length > 0 ? (
-                <ul className="notes">
-                  {errors.map((err) => (
-                    <li key={err}>{err}</li>
-                  ))}
-                </ul>
-              ) : null}
-            </>
-          ) : null}
-        </article>
+            {status === "error" ? (
+              <>
+                <p className="subtle" style={{ marginTop: 0, color: "#a11c1c" }}>
+                  Report generation failed.
+                </p>
+                {errors.length > 0 ? (
+                  <ul className="notes">
+                    {errors.map((err) => (
+                      <li key={err}>{err}</li>
+                    ))}
+                  </ul>
+                ) : null}
+              </>
+            ) : null}
+          </article>
+        ) : null}
 
         {previewUrl ? (
           <article className="card col-12 preview-shell">
@@ -748,7 +761,7 @@ export function QuickReportApp() {
           </article>
         ) : null}
 
-        <article className="card col-12">
+        <article className="card col-12 legal-notice">
           <h3>GNU/OSCAR Copyright and Distribution Notice</h3>
           <ul className="notes">
             <li>
@@ -758,7 +771,7 @@ export function QuickReportApp() {
               Attribution from OSCAR repository materials: SleepyHead copyright (C) 2011-2018 Mark Watkins; portions of OSCAR copyright (C) 2019-2022 The OSCAR Team.
             </li>
             <li>
-              Distribution requirement: if you distribute this app or modified versions that include GPL-covered OSCAR-derived code, provide corresponding source code and preserve GPLv3 terms and attribution notices.
+              Distribution requirement: if you distribute this app, or modified versions that include GPL-covered OSCAR-derived code, provide corresponding source code and preserve GPLv3 terms and attribution notices.
             </li>
             <li>No warranty: this software is provided without warranty, consistent with GNU GPL terms.</li>
             <li>

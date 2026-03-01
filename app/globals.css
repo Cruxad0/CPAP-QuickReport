@@ -350,6 +350,23 @@ textarea {
   color: var(--muted);
 }
 
+.legal-notice {
+  background: #f8fafc;
+  border-color: #dde5ec;
+}
+
+.legal-notice h3 {
+  color: #5f6f7e;
+}
+
+.legal-notice .notes li {
+  color: #6f7f8e;
+}
+
+.legal-notice a {
+  color: #5e7286;
+}
+
 @media (max-width: 930px) {
   .col-4,
   .col-8 {
