@@ -31,6 +31,15 @@ async function fileToDataUrl(file: File): Promise<string> {
   });
 }
 
+async function blobToDataUrl(blob: Blob): Promise<string> {
+  return await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(new Error("Could not read generated PDF."));
+    reader.readAsDataURL(blob);
+  });
+}
+
 export function QuickReportApp() {
   const folderInputRef = useRef<HTMLInputElement>(null);
   const zipInputRef = useRef<HTMLInputElement>(null);
@@ -53,8 +62,10 @@ export function QuickReportApp() {
 
   const [report, setReport] = useState<QuickReportMetrics | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewEmbedUrl, setPreviewEmbedUrl] = useState<string | null>(null);
   const [downloadName, setDownloadName] = useState("report.pdf");
   const [errors, setErrors] = useState<string[]>([]);
+  const [isSourceLoading, setIsSourceLoading] = useState(false);
 
   useEffect(() => {
     if (folderInputRef.current) {
@@ -81,7 +92,7 @@ export function QuickReportApp() {
     physicianName.trim().length > 3 &&
     sourceFiles.length > 0 &&
     status !== "working";
-  const isDataSourceLoading = status === "working";
+  const isDataSourceLoading = status === "working" || isSourceLoading;
 
   const resetResultState = () => {
     setReport(null);
@@ -93,29 +104,72 @@ export function QuickReportApp() {
       URL.revokeObjectURL(previewUrl);
       setPreviewUrl(null);
     }
+    setPreviewEmbedUrl(null);
   };
 
-  const handleFolderSelection: React.ChangeEventHandler<HTMLInputElement> = (event) => {
+  const handleFolderSelection: React.ChangeEventHandler<HTMLInputElement> = async (event) => {
     const files = Array.from(event.target.files ?? []);
     if (files.length === 0) return;
 
-    const mapped: SourceFile[] = files.map((file) => ({
-      name: file.name,
-      path: file.webkitRelativePath || file.name,
-      size: file.size,
-      readText: () => file.text(),
-      readBytes: async () => new Uint8Array(await file.arrayBuffer())
-    }));
+    setIsSourceLoading(true);
+    setStatus("working");
+    setStatusMessage("Loading SD folder...");
+    setParseProgress({ phase: "scan", detail: "Loading SD folder...", percent: 4 });
 
-    setSourceKind("folder");
-    setSourceFiles(mapped);
-    resetResultState();
+    // Yield once so loading overlay paints before indexing a large folder selection.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    try {
+      const mapped: SourceFile[] = [];
+      for (let i = 0; i < files.length; i += 1) {
+        const file = files[i];
+        mapped.push({
+          name: file.name,
+          path: file.webkitRelativePath || file.name,
+          size: file.size,
+          readText: () => file.text(),
+          readBytes: async () => new Uint8Array(await file.arrayBuffer())
+        });
+
+        if (i > 0 && i % 400 === 0) {
+          const pct = Math.min(45, 5 + Math.round((i / files.length) * 40));
+          setParseProgress({
+            phase: "scan",
+            detail: `Indexing files... ${i + 1}/${files.length}`,
+            percent: pct
+          });
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        }
+      }
+
+      setSourceKind("folder");
+      setSourceFiles(mapped);
+      setReport(null);
+      setErrors([]);
+      if (previewUrl) {
+        URL.revokeObjectURL(previewUrl);
+        setPreviewUrl(null);
+      }
+      setPreviewEmbedUrl(null);
+      setStatus("idle");
+      setStatusMessage(`Folder loaded: ${mapped.length} files available for parsing.`);
+      setParseProgress({ phase: "ready", detail: "Folder ready", percent: 100 });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not load selected folder.";
+      setStatus("error");
+      setErrors([message]);
+      setStatusMessage("Folder load failed.");
+      setParseProgress({ phase: "error", detail: "Folder load failed", percent: 0 });
+    } finally {
+      setIsSourceLoading(false);
+    }
   };
 
   const handleZipSelection: React.ChangeEventHandler<HTMLInputElement> = async (event) => {
     const zipFile = event.target.files?.[0];
     if (!zipFile) return;
 
+    setIsSourceLoading(true);
     setStatus("working");
     setStatusMessage("Reading ZIP archive locally...");
     setParseProgress({ phase: "zip", detail: "Opening ZIP file...", percent: 8 });
@@ -148,12 +202,15 @@ export function QuickReportApp() {
         URL.revokeObjectURL(previewUrl);
         setPreviewUrl(null);
       }
+      setPreviewEmbedUrl(null);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Could not parse ZIP file.";
       setStatus("error");
       setErrors([message]);
       setStatusMessage("ZIP import failed.");
       setParseProgress({ phase: "error", detail: "ZIP import failed", percent: 0 });
+    } finally {
+      setIsSourceLoading(false);
     }
   };
 
@@ -192,10 +249,12 @@ export function QuickReportApp() {
 
       if (previewUrl) URL.revokeObjectURL(previewUrl);
       const url = URL.createObjectURL(blob);
+      const embedUrl = await blobToDataUrl(blob);
 
       setReport(metrics);
       setDownloadName(filename);
       setPreviewUrl(url);
+      setPreviewEmbedUrl(embedUrl);
       setStatus("ready");
       setStatusMessage("Report generated successfully. Review preview and export PDF.");
       setParseProgress({ phase: "done", detail: "Done", percent: 100 });
@@ -378,15 +437,20 @@ export function QuickReportApp() {
                 onClick={() => {
                   URL.revokeObjectURL(previewUrl);
                   setPreviewUrl(null);
+                  setPreviewEmbedUrl(null);
                 }}
               >
                 Close Preview
               </button>
               <span className="subtle">Default filename: {downloadName}</span>
             </div>
-            <object className="preview-frame" data={previewUrl} type="application/pdf" aria-label="PDF preview">
-              <iframe className="preview-frame" src={previewUrl} title="PDF preview fallback" />
-            </object>
+            <iframe
+              key={previewUrl}
+              className="preview-frame"
+              src={previewEmbedUrl ?? previewUrl}
+              title="PDF preview"
+            />
+            <p className="subtle">If preview is blank on this browser, use Open PDF.</p>
           </article>
         ) : null}
       </section>
