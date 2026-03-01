@@ -36,6 +36,9 @@
     ".next/types/**/*.ts"
   ],
   "exclude": [
-    "node_modules"
+    "node_modules",
+    "OSCAR-code-ref-2",
+    "oscar",
+    "quickreport_changed_files"
   ]
 }

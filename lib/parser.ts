@@ -4,7 +4,6 @@ const MAX_GENERIC_FILES_TO_SCAN = 500;
 const MAX_FILE_SIZE_BYTES = 8_000_000;
 const MAX_RESVENT_P_TOTAL_BYTES = 24_000_000;
 const MAX_RESVENT_P_FILES = 120;
-const SKIP_P_SCAN_IF_TOTAL_FILES_GT = 12_000;
 const TEXT_EXTENSIONS = new Set(["csv", "txt", "tsv", "json", "xml", "edf", "log"]);
 
 const DATE_PATTERNS = [
@@ -48,6 +47,14 @@ const RESVENT_MODE_FROM_FILE = new Map<string, string>([
   ["N_T30", "T30"],
   ["N_PC", "PC"]
 ]);
+
+function formatCmH2O(raw: unknown): string | null {
+  const n = safeNumber(raw);
+  if (n === undefined) return null;
+  const cm = n / 100;
+  if (!Number.isFinite(cm)) return null;
+  return `${Number(cm.toFixed(2)).toString()}`;
+}
 
 function safeNumber(input: unknown): number | undefined {
   if (typeof input === "number" && Number.isFinite(input)) return input;
@@ -139,11 +146,16 @@ function isResventConfigFile(meta: SourceMeta): boolean {
 }
 
 function isResventStatFile(meta: SourceMeta): boolean {
-  return meta.recordDate !== null && /^stat(?:\d{2})?$/i.test(meta.baseName);
+  // OSCAR loader imports only STATxx session files.
+  return meta.recordDate !== null && /^stat\d{2}$/i.test(meta.baseName);
 }
 
 function isResventPFile(meta: SourceMeta): boolean {
   return meta.recordDate !== null && /^p\d{2}_\d+$/i.test(meta.baseName);
+}
+
+function isResventEvFile(meta: SourceMeta): boolean {
+  return meta.recordDate !== null && /^ev\d{2}$/i.test(meta.baseName);
 }
 
 function inferMachineSettingsFromText(text: string, machine: QuickReportMetrics["machine"]) {
@@ -193,18 +205,10 @@ function parseKeyValueLines(text: string): Map<string, string> {
   return out;
 }
 
-function decodeResventText(bytes: Uint8Array): string {
+function decodeResventText(bytes: Uint8Array, skipHeader = true): string {
   if (bytes.length === 0) return "";
-  let start = 0;
-  if (bytes.length > 4) {
-    let printable = 0;
-    for (let i = 0; i < 4; i += 1) {
-      const b = bytes[i];
-      if (b >= 32 && b <= 126) printable += 1;
-    }
-    // Resvent files usually have a 4-byte header before ASCII text.
-    if (printable <= 1) start = 4;
-  }
+  // OSCAR Resvent loader always seeks 4 bytes before reading config/stat/event text files.
+  const start = skipHeader ? Math.min(4, bytes.length) : 0;
   return new TextDecoder("utf-8", { fatal: false }).decode(bytes.subarray(start));
 }
 
@@ -231,7 +235,10 @@ function inferMachineSettingsFromConfigMap(configMap: Map<string, string>, machi
   ]);
 
   const model = configMap.get("models") ?? configMap.get("model");
-  if (!machine.device && model) machine.device = model;
+  const sn = configMap.get("sn") ?? configMap.get("serial");
+  if (!machine.device && model && sn) machine.device = `${model} (${sn})`;
+  else if (!machine.device && model) machine.device = model;
+  else if (!machine.device && sn) machine.device = `Serial ${sn}`;
 
   if (!machine.mode) {
     const modeRaw = configMap.get("VentMode") ?? configMap.get("mode");
@@ -247,17 +254,27 @@ function inferMachineSettingsFromConfigMap(configMap: Map<string, string>, machi
     const epapMin = configMap.get("EPAPMin");
     const ipapMax = configMap.get("IPAPMax");
 
-    if (press) machine.pressure = `${(Number(press) / 100).toFixed(2)} cmH2O`;
-    else if (pMin && pMax) machine.pressure = `${(Number(pMin) / 100).toFixed(2)}-${(Number(pMax) / 100).toFixed(2)} cmH2O`;
-    else if (epap && ipap) machine.pressure = `EPAP ${(Number(epap) / 100).toFixed(2)} / IPAP ${(Number(ipap) / 100).toFixed(2)} cmH2O`;
-    else if (epapMin && ipapMax) {
-      machine.pressure = `EPAP ${(Number(epapMin) / 100).toFixed(2)} - IPAP ${(Number(ipapMax) / 100).toFixed(2)} cmH2O`;
+    const pressText = formatCmH2O(press);
+    const pMinText = formatCmH2O(pMin);
+    const pMaxText = formatCmH2O(pMax);
+    const epapText = formatCmH2O(epap);
+    const ipapText = formatCmH2O(ipap);
+    const epapMinText = formatCmH2O(epapMin);
+    const ipapMaxText = formatCmH2O(ipapMax);
+
+    if (pressText) machine.pressure = `Fixed ${pressText} (cmH2O)`;
+    else if (pMinText && pMaxText) machine.pressure = `${pMinText}-${pMaxText} (cmH2O)`;
+    else if (epapText && ipapText) machine.pressure = `EPAP ${epapText} / IPAP ${ipapText} (cmH2O)`;
+    else if (epapMinText && ipapMaxText) {
+      machine.pressure = `EPAP ${epapMinText} - IPAP ${ipapMaxText} (cmH2O)`;
     }
   }
 
   if (!machine.pressureRelief) {
-    const ipr = configMap.get("iPR") ?? configMap.get("epr") ?? configMap.get("EPR");
-    if (ipr) machine.pressureRelief = ipr;
+    const ipr = safeNumber(configMap.get("iPR") ?? configMap.get("epr") ?? configMap.get("EPR"));
+    if (ipr !== undefined) {
+      machine.pressureRelief = ipr > 0 ? `IPR: On ${Number(ipr.toFixed(2)).toString()} cmH2O` : "IPR: Off";
+    }
   }
 }
 
@@ -265,23 +282,38 @@ function parseResventStatText(text: string, fallbackDate: Date): ParsedRecord | 
   const kv = parseKeyValueLines(text);
   if (kv.size === 0) return null;
 
-  const secStart = safeNumber(kv.get("secStart"));
-  const secUsed = safeNumber(kv.get("secUsed"));
-  const cntAHI = safeNumber(kv.get("cntAHI"));
-  const cntAI = safeNumber(kv.get("cntAI"));
-  const cntHI = safeNumber(kv.get("cntHI"));
+  const kvLower = new Map<string, string>();
+  for (const [k, v] of kv.entries()) kvLower.set(k.toLowerCase(), v);
+  const num = (key: string): number | undefined => safeNumber(kv.get(key) ?? kvLower.get(key.toLowerCase()));
 
-  const startDate = secStart !== undefined ? new Date(secStart * 1000) : fallbackDate;
-  if (Number.isNaN(startDate.getTime())) return null;
+  const secUsed = num("secUsed");
+  const cntAHI = num("cntAHI");
+  const cntOAI = num("cntOAI");
+  const cntCAI = num("cntCAI");
+  const cntAI = num("cntAI");
+  const cntHI = num("cntHI");
+
+  // Keep daily grouping anchored to THERAPY/RECORD/YYYYMM/DD (same basis OSCAR uses to load sessions).
+  const recordDate = new Date(Date.UTC(fallbackDate.getUTCFullYear(), fallbackDate.getUTCMonth(), fallbackDate.getUTCDate()));
+  if (Number.isNaN(recordDate.getTime())) return null;
 
   const usageHours = secUsed !== undefined ? secUsed / 3600 : undefined;
 
   let ahi: number | undefined;
-  if (cntAHI !== undefined) {
-    ahi = cntAHI > 200 ? cntAHI / 100 : cntAHI;
-  } else if (usageHours !== undefined && usageHours > 0 && cntAI !== undefined && cntHI !== undefined) {
-    ahi = (cntAI + cntHI) / usageHours;
-    if (ahi > 200) ahi = ahi / 100;
+  let eventCount: number | undefined;
+  if (cntAI !== undefined && cntHI !== undefined) {
+    eventCount = cntAI + cntHI;
+  } else if (cntOAI !== undefined || cntCAI !== undefined || cntHI !== undefined) {
+    eventCount = (cntOAI ?? 0) + (cntCAI ?? 0) + (cntHI ?? 0);
+  } else if (cntAHI !== undefined) {
+    eventCount = cntAHI;
+  }
+
+  if (usageHours !== undefined && usageHours > 0 && eventCount !== undefined) {
+    ahi = eventCount / usageHours;
+  } else if (cntAHI !== undefined) {
+    // Fallback if only a scalar was supplied.
+    ahi = cntAHI;
   }
 
   let leak: number | undefined;
@@ -296,11 +328,21 @@ function parseResventStatText(text: string, fallbackDate: Date): ParsedRecord | 
   }
 
   return {
-    date: new Date(Date.UTC(startDate.getUTCFullYear(), startDate.getUTCMonth(), startDate.getUTCDate())),
+    date: recordDate,
     usageHours: usageHours !== undefined && usageHours >= 0 && usageHours <= 24 ? usageHours : undefined,
     ahi: ahi !== undefined && ahi >= 0 && ahi < 200 ? ahi : undefined,
     leak: leak !== undefined && leak >= 0 && leak < 500 ? leak : undefined
   };
+}
+
+function countAhiEventsFromEvText(text: string): number | null {
+  if (!text.trim()) return null;
+  let count = 0;
+  for (const m of text.matchAll(/ID\s*=\s*(\d+)/gi)) {
+    const id = Number(m[1]);
+    if (id === 17 || id === 18 || id === 19) count += 1;
+  }
+  return count > 0 ? count : null;
 }
 
 function tryParseDelimited(text: string): ParsedRecord[] {
@@ -476,6 +518,7 @@ function parseResventLeakFromBytes(bytes: Uint8Array): LeakStats | null {
 function pickResventCandidates(files: SourceMeta[], warnings: string[]): {
   configFiles: SourceMeta[];
   statFiles: SourceMeta[];
+  evByDayUsage: Map<string, SourceMeta>;
   pFiles: SourceMeta[];
   windowDateSet: Set<string>;
   latestDate: Date;
@@ -493,20 +536,39 @@ function pickResventCandidates(files: SourceMeta[], warnings: string[]): {
 
   const configFiles = files.filter(isResventConfigFile).filter((m) => m.file.size <= MAX_FILE_SIZE_BYTES);
   const statFiles = inWindow.filter(isResventStatFile).filter((m) => m.file.size <= MAX_FILE_SIZE_BYTES);
+  const evByDayUsage = new Map<string, SourceMeta>();
+  for (const ev of inWindow.filter(isResventEvFile).filter((m) => m.file.size <= MAX_FILE_SIZE_BYTES)) {
+    const usage = /^ev(\d{2})$/i.exec(ev.baseName)?.[1];
+    if (!usage || !ev.recordDate) continue;
+    evByDayUsage.set(`${toIsoDate(ev.recordDate)}:${usage}`, ev);
+  }
 
   const allP = inWindow
     .filter(isResventPFile)
     .filter((m) => m.file.size > 0 && m.file.size <= MAX_FILE_SIZE_BYTES)
     .sort((a, b) => (a.normalizedPath < b.normalizedPath ? -1 : 1));
 
-  // Keep at most one P-file per day to avoid heavy waveform parsing.
-  const pByDay = new Map<string, SourceMeta>();
+  // Prioritize one P-file per day first (coverage), then include additional per-day files (fidelity).
+  const pByDay = new Map<string, SourceMeta[]>();
   for (const p of allP) {
     if (!p.recordDate) continue;
     const day = toIsoDate(p.recordDate);
-    if (!pByDay.has(day)) pByDay.set(day, p);
+    const list = pByDay.get(day) ?? [];
+    list.push(p);
+    pByDay.set(day, list);
   }
-  const sampledP = [...pByDay.values()].sort((a, b) => (a.normalizedPath < b.normalizedPath ? -1 : 1));
+  const sortedDays = [...pByDay.keys()].sort();
+  const sampledP: SourceMeta[] = [];
+  for (const day of sortedDays) {
+    const list = pByDay.get(day);
+    if (!list || list.length === 0) continue;
+    sampledP.push(list[0]);
+  }
+  for (const day of sortedDays) {
+    const list = pByDay.get(day);
+    if (!list || list.length <= 1) continue;
+    for (let i = 1; i < list.length; i += 1) sampledP.push(list[i]);
+  }
 
   let pBytes = 0;
   const pFiles: SourceMeta[] = [];
@@ -519,13 +581,14 @@ function pickResventCandidates(files: SourceMeta[], warnings: string[]): {
 
   if (sampledP.length > pFiles.length) {
     warnings.push(
-      `Leak channels were sampled from ${pFiles.length} of ${sampledP.length} daily P-files to keep parsing responsive.`
+      `Leak channels were sampled from ${pFiles.length} of ${sampledP.length} P-files to keep parsing responsive.`
     );
   }
 
   return {
     configFiles,
     statFiles,
+    evByDayUsage,
     pFiles,
     windowDateSet,
     latestDate
@@ -576,9 +639,7 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
       fallbackWindowDateSet = selected.windowDateSet;
       latestPathDate = selected.latestDate;
 
-      const shouldSampleP = meta.length <= SKIP_P_SCAN_IF_TOTAL_FILES_GT;
-      const totalResventWork =
-        selected.configFiles.length + selected.statFiles.length + (shouldSampleP ? selected.pFiles.length : 0);
+      const totalResventWork = selected.configFiles.length + selected.statFiles.length + selected.pFiles.length;
       let processed = 0;
 
       for (const configFile of selected.configFiles) {
@@ -592,7 +653,7 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
 
         try {
           const bytes = await configFile.file.readBytes();
-          const text = decodeResventText(bytes);
+          const text = decodeResventText(bytes, true);
           if (text.trim().length === 0) continue;
           const kv = parseKeyValueLines(text);
           inferMachineSettingsFromConfigFilename(configFile.normalizedPath, machine);
@@ -614,10 +675,28 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
 
         try {
           const bytes = await statFile.file.readBytes();
-          const text = decodeResventText(bytes);
+          const text = decodeResventText(bytes, true);
           if (!text || text.trim().length === 0 || statFile.recordDate === null) continue;
           const parsed = parseResventStatText(text, statFile.recordDate);
-          if (parsed) records.push(parsed);
+          if (parsed) {
+            const usage = /^stat(\d{2})$/i.exec(statFile.baseName)?.[1];
+            if (usage && parsed.usageHours && parsed.usageHours > 0) {
+              const key = `${toIsoDate(statFile.recordDate)}:${usage}`;
+              const evFile = selected.evByDayUsage.get(key);
+              if (evFile) {
+                try {
+                  const evText = decodeResventText(await evFile.file.readBytes(), true);
+                  const evCount = countAhiEventsFromEvText(evText);
+                  if (evCount !== null) {
+                    parsed.ahi = evCount / parsed.usageHours;
+                  }
+                } catch {
+                  // Keep stat-derived AHI if EV parsing fails.
+                }
+              }
+            }
+            records.push(parsed);
+          }
         } catch {
           warnings.push(`Could not read ${statFile.normalizedPath}`);
         }
@@ -627,42 +706,38 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
         }
       }
 
-      if (shouldSampleP) {
-        for (const pFile of selected.pFiles) {
-          processed += 1;
-          const pct = 8 + Math.round((processed / Math.max(1, totalResventWork)) * 62);
-          emit(onProgress, {
-            phase: "parse",
-            detail: `Sampling leak from ${pFile.normalizedPath}`,
-            percent: Math.min(70, pct)
-          });
+      for (const pFile of selected.pFiles) {
+        processed += 1;
+        const pct = 8 + Math.round((processed / Math.max(1, totalResventWork)) * 62);
+        emit(onProgress, {
+          phase: "parse",
+          detail: `Sampling leak from ${pFile.normalizedPath}`,
+          percent: Math.min(70, pct)
+        });
 
-          if (pFile.recordDate === null) continue;
+        if (pFile.recordDate === null) continue;
 
-          try {
-            const bytes = await pFile.file.readBytes();
-            const leak = parseResventLeakFromBytes(bytes);
-            if (!leak) continue;
+        try {
+          const bytes = await pFile.file.readBytes();
+          const leak = parseResventLeakFromBytes(bytes);
+          if (!leak) continue;
 
-            const key = toIsoDate(pFile.recordDate);
-            const existing = leakStatsByDay.get(key);
-            if (existing) {
-              existing.sum += leak.sum;
-              existing.count += leak.count;
-              if (leak.max > existing.max) existing.max = leak.max;
-            } else {
-              leakStatsByDay.set(key, { ...leak });
-            }
-          } catch {
-            warnings.push(`Could not read ${pFile.normalizedPath}`);
+          const key = toIsoDate(pFile.recordDate);
+          const existing = leakStatsByDay.get(key);
+          if (existing) {
+            existing.sum += leak.sum;
+            existing.count += leak.count;
+            if (leak.max > existing.max) existing.max = leak.max;
+          } else {
+            leakStatsByDay.set(key, { ...leak });
           }
-
-          if (processed % 20 === 0) {
-            await new Promise((resolve) => setTimeout(resolve, 0));
-          }
+        } catch {
+          warnings.push(`Could not read ${pFile.normalizedPath}`);
         }
-      } else if (selected.pFiles.length > 0) {
-        warnings.push("Leak waveform scan was skipped for performance because a very large file set was selected.");
+
+        if (processed % 20 === 0) {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        }
       }
     }
   }
@@ -763,17 +838,12 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
   }
 
   if (dayMap.size === 0) {
-    for (const day of fallbackWindowDateSet) {
-      const dayDate = dateFromIso(day);
-      if (dayDate < windowStart || dayDate > windowEnd) continue;
-      if (!dayMap.has(day)) dayMap.set(day, createEmptyDayBucket());
+    if (fallbackWindowDateSet.size > 0) {
+      throw new Error(
+        "Data import succeeded but no daily metrics were parsed from THERAPY/RECORD. Verify this export includes STATxx/EVxx files."
+      );
     }
-  }
-
-  if (dayMap.size === 0) {
-    throw new Error(
-      "Data import succeeded but no records were found in the most recent 90-day date range."
-    );
+    throw new Error("Data import succeeded but no records were found in the most recent 90-day date range.");
   }
 
   const usageValues = [...dayMap.values()]
