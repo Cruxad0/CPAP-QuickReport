@@ -68,6 +68,26 @@ main {
   border-radius: 14px;
   padding: 1rem;
   box-shadow: 0 8px 28px rgba(10, 32, 46, 0.05);
+  position: relative;
+}
+
+.card-loading {
+  filter: grayscale(0.2);
+}
+
+.loading-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(240, 246, 252, 0.82);
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  font-weight: 700;
+  color: #3c556a;
+  z-index: 3;
+  pointer-events: all;
 }
 
 .col-4 {
@@ -230,6 +250,7 @@ textarea {
 }
 
 .preview-frame {
+  display: block;
   width: 100%;
   min-height: 74vh;
   border: 1px solid #c7d6e4;

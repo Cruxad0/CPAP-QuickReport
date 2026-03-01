@@ -38,6 +38,17 @@ type LeakStats = {
   max: number;
 };
 
+const RESVENT_MODE_FROM_FILE = new Map<string, string>([
+  ["N_CPAP", "CPAP"],
+  ["N_APAP", "APAP"],
+  ["N_S30", "S30"],
+  ["N_AS30", "Auto S30"],
+  ["N_ST30", "ST30"],
+  ["N_AST30", "Auto ST30"],
+  ["N_T30", "T30"],
+  ["N_PC", "PC"]
+]);
+
 function safeNumber(input: unknown): number | undefined {
   if (typeof input === "number" && Number.isFinite(input)) return input;
   if (typeof input !== "string") return undefined;
@@ -155,7 +166,9 @@ function inferMachineSettingsFromText(text: string, machine: QuickReportMetrics[
 }
 
 function parseKeyValueLines(text: string): Map<string, string> {
-  const cleaned = text.replace(/\0/g, "");
+  const cleaned = text
+    .replace(/\0/g, "\n")
+    .replace(/[^\x09\x0A\x0D\x20-\x7E]/g, "");
   const out = new Map<string, string>();
   const lines = cleaned.split(/\r?\n/);
 
@@ -169,7 +182,40 @@ function parseKeyValueLines(text: string): Map<string, string> {
     out.set(key, value);
   }
 
+  // Some SD files contain key/value blobs without line breaks; capture those too.
+  const re = /([A-Za-z][A-Za-z0-9_]{1,40})\s*=\s*([^\r\n,;]+)/g;
+  for (const m of cleaned.matchAll(re)) {
+    const key = (m[1] ?? "").trim();
+    const value = (m[2] ?? "").trim();
+    if (key && value) out.set(key, value);
+  }
+
   return out;
+}
+
+function decodeResventText(bytes: Uint8Array): string {
+  if (bytes.length === 0) return "";
+  let start = 0;
+  if (bytes.length > 4) {
+    let printable = 0;
+    for (let i = 0; i < 4; i += 1) {
+      const b = bytes[i];
+      if (b >= 32 && b <= 126) printable += 1;
+    }
+    // Resvent files usually have a 4-byte header before ASCII text.
+    if (printable <= 1) start = 4;
+  }
+  return new TextDecoder("utf-8", { fatal: false }).decode(bytes.subarray(start));
+}
+
+function inferMachineSettingsFromConfigFilename(path: string, machine: QuickReportMetrics["machine"]) {
+  const base = path.split("/").pop()?.toUpperCase() ?? "";
+  if (!machine.mode && RESVENT_MODE_FROM_FILE.has(base)) {
+    machine.mode = RESVENT_MODE_FROM_FILE.get(base);
+  }
+  if (!machine.device) {
+    machine.device = "Resvent / Hoffrichter (SD Card)";
+  }
 }
 
 function inferMachineSettingsFromConfigMap(configMap: Map<string, string>, machine: QuickReportMetrics["machine"]) {
@@ -545,9 +591,11 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
         });
 
         try {
-          const text = await configFile.file.readText();
+          const bytes = await configFile.file.readBytes();
+          const text = decodeResventText(bytes);
           if (text.trim().length === 0) continue;
           const kv = parseKeyValueLines(text);
+          inferMachineSettingsFromConfigFilename(configFile.normalizedPath, machine);
           inferMachineSettingsFromConfigMap(kv, machine);
           inferMachineSettingsFromText(text, machine);
         } catch {
@@ -565,7 +613,8 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
         });
 
         try {
-          const text = await statFile.file.readText();
+          const bytes = await statFile.file.readBytes();
+          const text = decodeResventText(bytes);
           if (!text || text.trim().length === 0 || statFile.recordDate === null) continue;
           const parsed = parseResventStatText(text, statFile.recordDate);
           if (parsed) records.push(parsed);

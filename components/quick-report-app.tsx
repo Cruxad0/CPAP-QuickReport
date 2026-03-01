@@ -81,6 +81,7 @@ export function QuickReportApp() {
     physicianName.trim().length > 3 &&
     sourceFiles.length > 0 &&
     status !== "working";
+  const isDataSourceLoading = status === "working";
 
   const resetResultState = () => {
     setReport(null);
@@ -275,17 +276,18 @@ export function QuickReportApp() {
           <p className="subtle">Use clinic branding image if desired. If omitted, a neutral header is used.</p>
         </article>
 
-        <article className="card col-8">
+        <article className={`card col-8 ${isDataSourceLoading ? "card-loading" : ""}`} aria-busy={isDataSourceLoading}>
+          {isDataSourceLoading ? <div className="loading-overlay">Loading data, please wait</div> : null}
           <h3>Data Source</h3>
           <p className="subtle">
             Import SD card folder (preferred) or ZIP export. Only the most recent 90 days are included in report metrics.
           </p>
 
           <div className="actions">
-            <button className="btn btn-secondary" onClick={() => folderInputRef.current?.click()}>
+            <button className="btn btn-secondary" onClick={() => folderInputRef.current?.click()} disabled={isDataSourceLoading}>
               Select SD Folder
             </button>
-            <button className="btn btn-secondary" onClick={() => zipInputRef.current?.click()}>
+            <button className="btn btn-secondary" onClick={() => zipInputRef.current?.click()} disabled={isDataSourceLoading}>
               Select ZIP Export
             </button>
             <button className="btn btn-danger" onClick={() => setSourceFiles([])} disabled={status === "working" || sourceFiles.length === 0}>
@@ -382,7 +384,9 @@ export function QuickReportApp() {
               </button>
               <span className="subtle">Default filename: {downloadName}</span>
             </div>
-            <iframe className="preview-frame" src={previewUrl} title="PDF preview" />
+            <object className="preview-frame" data={previewUrl} type="application/pdf" aria-label="PDF preview">
+              <iframe className="preview-frame" src={previewUrl} title="PDF preview fallback" />
+            </object>
           </article>
         ) : null}
       </section>
