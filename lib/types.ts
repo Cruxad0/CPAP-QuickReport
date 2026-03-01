@@ -5,6 +5,7 @@ export interface SourceFile {
   path: string;
   size: number;
   readText: () => Promise<string>;
+  readBytes: () => Promise<Uint8Array>;
 }
 
 export interface ParseProgress {

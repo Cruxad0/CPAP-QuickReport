@@ -102,7 +102,8 @@ export function QuickReportApp() {
       name: file.name,
       path: file.webkitRelativePath || file.name,
       size: file.size,
-      readText: () => file.text()
+      readText: () => file.text(),
+      readBytes: async () => new Uint8Array(await file.arrayBuffer())
     }));
 
     setSourceKind("folder");
@@ -130,7 +131,8 @@ export function QuickReportApp() {
           name: entry.name.split("/").pop() ?? entry.name,
           path: entry.name,
           size: Number.isFinite(sizeMaybe) ? sizeMaybe : 0,
-          readText: async () => await entry.async("string")
+          readText: async () => await entry.async("string"),
+          readBytes: async () => await entry.async("uint8array")
         };
       });
 
