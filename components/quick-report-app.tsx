@@ -12,14 +12,38 @@ function bytesToLabel(size: number): string {
   return `${size} B`;
 }
 
-function getTodayIso() {
-  return new Date().toISOString().slice(0, 10);
+function toIsoDateParts(year: number, month: number, day: number): string | null {
+  if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) return null;
+  if (year < 1900 || year > 2100) return null;
+  if (month < 1 || month > 12) return null;
+  if (day < 1 || day > 31) return null;
+  const dt = new Date(Date.UTC(year, month - 1, day));
+  if (Number.isNaN(dt.getTime())) return null;
+  if (
+    dt.getUTCFullYear() !== year ||
+    dt.getUTCMonth() + 1 !== month ||
+    dt.getUTCDate() !== day
+  ) {
+    return null;
+  }
+  return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
-function defaultDobIso() {
-  const d = new Date();
-  d.setFullYear(d.getFullYear() - 50);
-  return d.toISOString().slice(0, 10);
+function normalizeDobInput(value: string): string | null {
+  const input = value.trim();
+  if (!input) return null;
+
+  const iso = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(input);
+  if (iso) {
+    return toIsoDateParts(Number(iso[1]), Number(iso[2]), Number(iso[3]));
+  }
+
+  const us = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(input);
+  if (us) {
+    return toIsoDateParts(Number(us[3]), Number(us[1]), Number(us[2]));
+  }
+
+  return null;
 }
 
 async function fileToDataUrl(file: File): Promise<string> {
@@ -46,8 +70,8 @@ export function QuickReportApp() {
   const headerInputRef = useRef<HTMLInputElement>(null);
 
   const [patientName, setPatientName] = useState("");
-  const [dateOfBirthIso, setDateOfBirthIso] = useState(defaultDobIso());
-  const [physicianName, setPhysicianName] = useState("Joel Rodriguez Ramos, MD");
+  const [dateOfBirthInput, setDateOfBirthInput] = useState("");
+  const [physicianName, setPhysicianName] = useState("");
   const [sourceKind, setSourceKind] = useState<DataSourceKind>("folder");
   const [sourceFiles, setSourceFiles] = useState<SourceFile[]>([]);
   const [headerDataUrl, setHeaderDataUrl] = useState<string | undefined>(undefined);
@@ -87,9 +111,11 @@ export function QuickReportApp() {
     return `${sourceFiles.length} files selected (${bytesToLabel(total)})`;
   }, [sourceFiles]);
 
+  const dateOfBirthIso = useMemo(() => normalizeDobInput(dateOfBirthInput), [dateOfBirthInput]);
+
   const canGenerate =
     patientName.trim().length > 1 &&
-    dateOfBirthIso.length > 0 &&
+    Boolean(dateOfBirthIso) &&
     physicianName.trim().length > 3 &&
     sourceFiles.length > 0 &&
     status !== "working";
@@ -97,20 +123,11 @@ export function QuickReportApp() {
 
   const beginSourceSelection = (kind: "folder" | "zip") => {
     setPendingSourceSelection(kind);
-    setIsSourceLoading(true);
-    setStatus("working");
-    const label = kind === "folder" ? "SD folder" : "ZIP file";
-    setStatusMessage(`Waiting for ${label} selection...`);
-    setParseProgress({ phase: "select", detail: `Waiting for ${label} selection...`, percent: 1 });
 
     const onFocusBack = () => {
       setTimeout(() => {
         setPendingSourceSelection((current) => {
           if (current !== kind) return current;
-          setIsSourceLoading(false);
-          setStatus("idle");
-          setStatusMessage("Awaiting data source.");
-          setParseProgress({ phase: "idle", detail: "Idle", percent: 0 });
           return null;
         });
       }, 180);
@@ -277,7 +294,7 @@ export function QuickReportApp() {
         sourceKind,
         files: sourceFiles,
         patientName,
-        dateOfBirthIso,
+        dateOfBirthIso: dateOfBirthIso ?? "",
         physicianName,
         onProgress: (p) => setParseProgress(p)
       });
@@ -349,11 +366,17 @@ export function QuickReportApp() {
           <input
             id="dob"
             className="date-input"
-            type="date"
-            max={getTodayIso()}
-            value={dateOfBirthIso}
-            onChange={(e) => setDateOfBirthIso(e.target.value)}
+            type="text"
+            inputMode="numeric"
+            placeholder="MM/DD/YYYY or YYYY-MM-DD"
+            value={dateOfBirthInput}
+            onChange={(e) => setDateOfBirthInput(e.target.value)}
           />
+          {dateOfBirthInput.trim().length > 0 && !dateOfBirthIso ? (
+            <p className="subtle" style={{ marginTop: 6, color: "#a11c1c" }}>
+              Enter date as MM/DD/YYYY or YYYY-MM-DD.
+            </p>
+          ) : null}
 
           <label htmlFor="physician" style={{ marginTop: 10 }}>
             Physician name

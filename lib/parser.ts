@@ -214,10 +214,14 @@ function isResventConfigFile(meta: SourceMeta): boolean {
   return /(?:^|\/)therapy\/config\/[^/]+$/i.test(meta.normalizedPath);
 }
 
-function isResventStatFile(meta: SourceMeta): boolean {
-  // OSCAR loader imports only STATxx session files.
-  // Some cards include STAT (no suffix) or wider numeric suffixes alongside STATxx.
-  return meta.recordDate !== null && /^stat(?:\d{1,4})?$/i.test(meta.baseName);
+function isResventStatUsageFile(meta: SourceMeta): boolean {
+  // OSCAR usage sessions are STATxx.
+  return meta.recordDate !== null && extractUsageSuffix(meta.baseName, "stat") !== null;
+}
+
+function isResventStatSummaryFile(meta: SourceMeta): boolean {
+  // Some cards also include plain STAT daily summary.
+  return meta.recordDate !== null && /^stat(?:\..*)?$/i.test(meta.baseName);
 }
 
 function isResventPFile(meta: SourceMeta): boolean {
@@ -821,7 +825,12 @@ function pickResventCandidates(files: SourceMeta[], warnings: string[]): {
   const windowDateSet = new Set(inWindow.map((m) => toIsoDate(m.recordDate)));
 
   const configFiles = files.filter(isResventConfigFile).filter((m) => m.file.size <= MAX_FILE_SIZE_BYTES);
-  const statFiles = inWindow.filter(isResventStatFile).filter((m) => m.file.size <= MAX_FILE_SIZE_BYTES);
+  const usageStatFiles = inWindow.filter(isResventStatUsageFile).filter((m) => m.file.size <= MAX_FILE_SIZE_BYTES);
+  const summaryStatFiles = inWindow.filter(isResventStatSummaryFile).filter((m) => m.file.size <= MAX_FILE_SIZE_BYTES);
+  const statFiles = usageStatFiles.length > 0 ? usageStatFiles : summaryStatFiles;
+  if (usageStatFiles.length === 0 && summaryStatFiles.length > 0) {
+    warnings.push("STATxx session files were not found; using STAT summary files for daily usage parsing.");
+  }
   const evByDayUsage = new Map<string, SourceMeta>();
   for (const ev of inWindow.filter(isResventEvFile).filter((m) => m.file.size <= MAX_FILE_SIZE_BYTES)) {
     const usage = extractUsageSuffix(ev.baseName, "ev");
