@@ -196,13 +196,6 @@ export function QuickReportApp() {
     !isDobMissing &&
     sourceFiles.length > 0 &&
     status !== "working";
-  const missingRequiredFields = useMemo(() => {
-    const missing: string[] = [];
-    if (isPatientNameMissing) missing.push("Patient name");
-    if (isDobMissing) missing.push("Date of birth");
-    if (sourceFiles.length === 0) missing.push("Data source files");
-    return missing;
-  }, [isPatientNameMissing, isDobMissing, sourceFiles.length]);
   const isDataSourceLoading = status === "working" || isSourceLoading || pendingSourceSelection !== null;
 
   const beginSourceSelection = (kind: "folder" | "zip") => {
@@ -509,7 +502,7 @@ export function QuickReportApp() {
       <section className="hero">
         <h1>CPAP Clinician QuickReport</h1>
         <p>
-          Create a 90-day CPAP PDF report in a few steps. Data is processed in your browser.
+          Create a 90-day CPAP PDF report in a few steps. Data is processed locally.
         </p>
         <p className="subtle">
           Powered by{" "}
@@ -518,15 +511,19 @@ export function QuickReportApp() {
           </a>
           {", "}an AI-powered clinical documentation tool.
         </p>
-        <ol className="hero-steps">
-          <li>Enter the patient name and date of birth.</li>
-          <li>Click <strong>Select SD-CARD</strong> and choose the SD card folder. You can also use a ZIP export.</li>
-          <li>Click <strong>Generate 90-Day PDF</strong>.</li>
-          <li>Review the preview, then click <strong>Export PDF</strong>.</li>
-        </ol>
       </section>
 
       <section className="grid">
+        <article className="card col-12">
+          <h3>How-To Use</h3>
+          <ol className="usage-steps">
+            <li>Enter the patient name and date of birth.</li>
+            <li>Click <strong>Select SD-CARD</strong> and choose the SD card folder. You can also use a ZIP export.</li>
+            <li>Click <strong>Generate 90-Day PDF</strong>.</li>
+            <li>Review the preview, then click <strong>Export PDF</strong> to save.</li>
+          </ol>
+        </article>
+
         <article className="card col-4">
           <h3>Patient</h3>
           <label htmlFor="patientName" className="label-row">
@@ -649,9 +646,7 @@ export function QuickReportApp() {
         <article className={`card col-8 ${isDataSourceLoading ? "card-loading" : ""}`} aria-busy={isDataSourceLoading}>
           {isDataSourceLoading ? <div className="loading-overlay">Loading data. Please wait...</div> : null}
           <h3>Data Source</h3>
-          <p className="subtle">
-            Choose an SD-card folder (recommended) or a ZIP export. The report uses the most recent 90 days.
-          </p>
+          <p className="subtle">Choose an SD-card folder (recommended) or a ZIP export.</p>
 
           <div className="actions">
             <button
@@ -713,12 +708,6 @@ export function QuickReportApp() {
               Reset / Clear All
             </button>
           </div>
-          {!canGenerate && status !== "working" ? (
-            <p className="subtle" style={{ marginTop: 8 }}>
-              To continue, complete: {missingRequiredFields.join(", ")}.
-            </p>
-          ) : null}
-
           <div className="progress-wrap" role="status" aria-live="polite">
             <div className="progress-track">
               <div className="progress-value" style={{ width: `${parseProgress.percent}%` }} />

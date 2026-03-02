@@ -55,14 +55,14 @@ main {
   color: var(--muted);
 }
 
-.hero-steps {
+.usage-steps {
   margin: 0.7rem 0 0;
   padding-left: 1.1rem;
   color: #3f586b;
   font-size: 0.95rem;
 }
 
-.hero-steps li {
+.usage-steps li {
   margin: 0.22rem 0;
 }
 
