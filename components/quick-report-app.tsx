@@ -509,15 +509,21 @@ export function QuickReportApp() {
       <section className="hero">
         <h1>CPAP Clinician QuickReport</h1>
         <p>
-          Local-first workflow for any work computer. Files are processed in your browser to produce a 90-day PDF handout.
+          Create a 90-day CPAP PDF report in a few steps. Data is processed in your browser.
         </p>
         <p className="subtle">
           Powered by{" "}
           <a href="https://notespecialist.com" target="_blank" rel="noopener noreferrer">
             notespecialist.com
           </a>
-          {", "}an AI-powered clinical documentation platform.
+          {", "}an AI-powered clinical documentation tool.
         </p>
+        <ol className="hero-steps">
+          <li>Enter the patient name and date of birth.</li>
+          <li>Click <strong>Select SD-CARD</strong> and choose the SD card folder. You can also use a ZIP export.</li>
+          <li>Click <strong>Generate 90-Day PDF</strong>.</li>
+          <li>Review the preview, then click <strong>Export PDF</strong>.</li>
+        </ol>
       </section>
 
       <section className="grid">
@@ -554,7 +560,7 @@ export function QuickReportApp() {
               Enter date as MM/DD/YYYY or MM-DD-YYYY.
             </p>
           ) : null}
-          <button type="button" className="link-button" onClick={openCalendarPicker}>
+          <button type="button" className="link-button" style={{ marginBottom: 10 }} onClick={openCalendarPicker}>
             {showCalendarAlt ? "Hide calendar picker" : "Use calendar picker instead"}
           </button>
           {showCalendarAlt ? (
@@ -644,7 +650,7 @@ export function QuickReportApp() {
           {isDataSourceLoading ? <div className="loading-overlay">Loading data. Please wait...</div> : null}
           <h3>Data Source</h3>
           <p className="subtle">
-            Import an SD-card folder (preferred) or a ZIP export. Only the most recent 90 days are included in report metrics.
+            Choose an SD-card folder (recommended) or a ZIP export. The report uses the most recent 90 days.
           </p>
 
           <div className="actions">
@@ -709,7 +715,7 @@ export function QuickReportApp() {
           </div>
           {!canGenerate && status !== "working" ? (
             <p className="subtle" style={{ marginTop: 8 }}>
-              Required to generate: {missingRequiredFields.join(", ")}.
+              To continue, complete: {missingRequiredFields.join(", ")}.
             </p>
           ) : null}
 
@@ -722,7 +728,7 @@ export function QuickReportApp() {
             </div>
             {pendingSourceSelection ? (
               <div className="subtle" style={{ marginTop: 4 }}>
-                {pendingSourceSelection === "folder" ? "Preparing SD folder import..." : "Preparing ZIP import..."}
+                {pendingSourceSelection === "folder" ? "Opening SD-CARD folder..." : "Opening ZIP file..."}
               </div>
             ) : null}
           </div>
@@ -732,7 +738,7 @@ export function QuickReportApp() {
           <article className="card col-12">
             {status === "ready" && report ? (
               <ul className="notes">
-                <li>Report generated successfully. Review preview and export PDF.</li>
+                <li>Report is ready. Review the preview, then export the PDF.</li>
                 <li>
                   Selected loader and Date range: {report.selectedLoader} | {report.dateRangeStart} to {report.dateRangeEnd}
                 </li>

@@ -55,6 +55,17 @@ main {
   color: var(--muted);
 }
 
+.hero-steps {
+  margin: 0.7rem 0 0;
+  padding-left: 1.1rem;
+  color: #3f586b;
+  font-size: 0.95rem;
+}
+
+.hero-steps li {
+  margin: 0.22rem 0;
+}
+
 .grid {
   margin-top: 1rem;
   display: grid;
