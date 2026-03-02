@@ -529,7 +529,7 @@ export function QuickReportApp() {
           </label>
           <input
             id="patientName"
-            className={`input ${isPatientNameMissing ? "input-error" : ""}`}
+            className="input"
             value={patientName}
             onChange={(e) => setPatientName(e.target.value)}
             placeholder="First Last"
@@ -542,7 +542,7 @@ export function QuickReportApp() {
           </label>
           <input
             id="dob"
-            className={`date-input ${isDobMissing ? "input-error" : ""}`}
+            className="date-input"
             type="text"
             inputMode="numeric"
             placeholder="MM/DD/YYYY or MM-DD-YYYY"
@@ -622,7 +622,7 @@ export function QuickReportApp() {
             </div>
           ) : null}
 
-          <label htmlFor="physician" style={{ marginTop: 10 }}>
+          <label htmlFor="physician" style={{ marginTop: 18 }}>
             Physician name
           </label>
           <input
@@ -674,7 +674,7 @@ export function QuickReportApp() {
           <input ref={zipInputRef} type="file" accept=".zip" onChange={handleZipSelection} style={{ display: "none" }} />
 
           <p style={{ marginTop: 12 }}>
-            <strong>Source:</strong> {sourceKind.toUpperCase()} | <strong>Status:</strong> {selectedCountLabel}
+            <strong>Status:</strong> {selectedCountLabel}
           </p>
 
           <div className="file-list" aria-live="polite">
