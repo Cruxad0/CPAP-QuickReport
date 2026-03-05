@@ -121,10 +121,6 @@ async function blobToDataUrl(blob: Blob): Promise<string> {
 
 async function yieldToBrowser(): Promise<void> {
   await new Promise<void>((resolve) => {
-    if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
-      window.requestAnimationFrame(() => resolve());
-      return;
-    }
     window.setTimeout(() => resolve(), 0);
   });
 }
@@ -384,8 +380,7 @@ export function QuickReportApp() {
     setPatientName("");
     setDateOfBirthInput("");
     clearSourceInputs();
-
-    setParseProgress({ phase: "reset", detail: "Done", percent: 100 });
+    setParseProgress({ phase: "idle", detail: "Idle", percent: 0 });
     setStatus("idle");
     setStatusMessage("Local data cleared. Attempting to close this tab...");
     await yieldToBrowser();
@@ -419,8 +414,10 @@ export function QuickReportApp() {
 
     try {
       const mapped: SourceFile[] = [];
-      const chunkSize = 120;
+      const chunkSize = 40;
+      let chunkCount = 0;
       for (let start = 0; start < files.length; start += chunkSize) {
+        chunkCount += 1;
         const end = Math.min(start + chunkSize, files.length);
         for (let i = start; i < end; i += 1) {
           const file = files[i];
@@ -433,12 +430,14 @@ export function QuickReportApp() {
           });
         }
 
-        const pct = Math.min(45, 5 + Math.round((end / files.length) * 40));
-        setParseProgress({
-          phase: "scan",
-          detail: `Indexing files... ${end}/${files.length}`,
-          percent: pct
-        });
+        if (chunkCount % 6 === 0 || end === files.length) {
+          const pct = Math.min(45, 5 + Math.round((end / files.length) * 40));
+          setParseProgress({
+            phase: "scan",
+            detail: `Indexing files... ${end}/${files.length}`,
+            percent: pct
+          });
+        }
         await yieldToBrowser();
       }
 
@@ -488,8 +487,10 @@ export function QuickReportApp() {
         .filter((entry) => !entry.dir)
         .slice(0, 2500);
       const mapped: SourceFile[] = [];
-      const chunkSize = 80;
+      const chunkSize = 40;
+      let chunkCount = 0;
       for (let start = 0; start < entries.length; start += chunkSize) {
+        chunkCount += 1;
         const end = Math.min(start + chunkSize, entries.length);
         for (let i = start; i < end; i += 1) {
           const entry = entries[i];
@@ -502,12 +503,14 @@ export function QuickReportApp() {
             readBytes: async () => await entry.async("uint8array")
           });
         }
-        const pct = Math.min(45, 9 + Math.round((end / entries.length) * 36));
-        setParseProgress({
-          phase: "zip",
-          detail: `Indexing ZIP entries... ${end}/${entries.length}`,
-          percent: pct
-        });
+        if (chunkCount % 4 === 0 || end === entries.length) {
+          const pct = Math.min(45, 9 + Math.round((end / entries.length) * 36));
+          setParseProgress({
+            phase: "zip",
+            detail: `Indexing ZIP entries... ${end}/${entries.length}`,
+            percent: pct
+          });
+        }
         await yieldToBrowser();
       }
 
