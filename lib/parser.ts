@@ -725,6 +725,14 @@ function parseResventStatText(text: string, fallbackDate: Date): ParsedRecord | 
     }
   }
 
+  const hasSignal =
+    (usageHours !== undefined && usageHours >= 0 && usageHours <= 24) ||
+    (ahi !== undefined && ahi >= 0 && ahi < 200) ||
+    (residualApneas !== undefined && residualApneas >= 0 && residualApneas < 200) ||
+    (centralApneas !== undefined && centralApneas >= 0 && centralApneas < 200) ||
+    (leak !== undefined && leak >= 0 && leak < 500);
+  if (!hasSignal) return null;
+
   return {
     date: recordDate,
     usageHours: usageHours !== undefined && usageHours >= 0 && usageHours <= 24 ? usageHours : undefined,
@@ -1309,7 +1317,21 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
   // Generic parsing is always executed so all loader families can contribute metrics.
   const runGenericPass = true;
   const genericTextCandidates = meta.filter(isGenericTextCandidate);
-  const genericCandidates = runGenericPass ? selectGenericCandidates(genericTextCandidates, loaderRanking) : [];
+  const genericCandidatesRaw = runGenericPass ? selectGenericCandidates(genericTextCandidates, loaderRanking) : [];
+  const genericCandidates =
+    hasResventStructure
+      ? genericCandidatesRaw.filter(
+          (m) =>
+            !(
+              isResventConfigFile(m) ||
+              isResventStatUsageFile(m) ||
+              isResventStatSummaryFile(m) ||
+              isResventPFile(m) ||
+              isResventEvFile(m)
+            )
+        )
+      : genericCandidatesRaw;
+
   if (runGenericPass && genericTextCandidates.length > MAX_GENERIC_FILES_TO_SCAN) {
     warnings.push(
       `Input contained many candidate files; generic parsing prioritized ${genericCandidates.length} files (cap ${MAX_GENERIC_FILES_TO_SCAN}).`
@@ -1340,10 +1362,12 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
         const variantRecords: ParsedRecord[] = [];
         if (candidate.recordDate) {
           const statLike = parseResventStatText(text, candidate.recordDate);
-          if (statLike) variantRecords.push(statLike);
-
-          const genericDaily = parseGenericDailyKeyValueRecord(text, candidate.recordDate);
-          if (genericDaily) variantRecords.push(genericDaily);
+          if (statLike) {
+            variantRecords.push(statLike);
+          } else {
+            const genericDaily = parseGenericDailyKeyValueRecord(text, candidate.recordDate);
+            if (genericDaily) variantRecords.push(genericDaily);
+          }
         }
 
         const parsed = sanitizeRecords(parseRecords(text));

@@ -24,11 +24,182 @@ const MONTH_LABELS = [
 const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MIN_YEAR = 1900;
 const MAX_YEAR = 2100;
+const IMPORT_LOOKBACK_DAYS = 91;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+type RecentWindowFilterResult = {
+  files: SourceFile[];
+  originalCount: number;
+  filteredOutCount: number;
+  filteredOutBytes: number;
+  latestDateIso: string | null;
+  hadDatedFiles: boolean;
+};
 
 function bytesToLabel(size: number): string {
   if (size > 1024 * 1024) return `${(size / (1024 * 1024)).toFixed(2)} MB`;
   if (size > 1024) return `${(size / 1024).toFixed(1)} KB`;
   return `${size} B`;
+}
+
+function createUtcDateNoon(year: number, month: number, day: number): Date | null {
+  if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) return null;
+  if (year < 1900 || year > 2100) return null;
+  if (month < 1 || month > 12) return null;
+  if (day < 1 || day > 31) return null;
+  const dt = new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
+  if (Number.isNaN(dt.getTime())) return null;
+  if (dt.getUTCFullYear() !== year || dt.getUTCMonth() + 1 !== month || dt.getUTCDate() !== day) return null;
+  return dt;
+}
+
+function extractDateFromPath(path: string): Date | null {
+  const normalized = path.replace(/\\/g, "/");
+
+  const resvent = /(?:^|\/)therapy\/record\/(\d{4})(\d{2})\/(\d{2})(?:\/|$)/i.exec(normalized);
+  if (resvent) {
+    return createUtcDateNoon(Number(resvent[1]), Number(resvent[2]), Number(resvent[3]));
+  }
+
+  const yearMonthDay = /(?:^|\/)((?:19|20)\d{2})[\/_-](\d{2})[\/_-](\d{2})(?:\/|$)/.exec(normalized);
+  if (yearMonthDay) {
+    const dt = createUtcDateNoon(Number(yearMonthDay[1]), Number(yearMonthDay[2]), Number(yearMonthDay[3]));
+    if (dt) return dt;
+  }
+
+  const compact = /(?:^|[^\d])((?:19|20)\d{2})(\d{2})(\d{2})(?:[^\d]|$)/.exec(normalized);
+  if (compact) {
+    const dt = createUtcDateNoon(Number(compact[1]), Number(compact[2]), Number(compact[3]));
+    if (dt) return dt;
+  }
+
+  return null;
+}
+
+function shouldKeepUndatedFile(path: string, size: number): boolean {
+  const normalized = path.replace(/\\/g, "/").toLowerCase();
+
+  if (
+    /(?:^|\/)(?:therapy\/config|config|settings?|profile|profiles|wm_profiles\.xml|summary\.edf|detail\.edf|str\.edf|eve\.edf|pld\.edf|sad\.edf|brp\.edf|crc\.edf)(?:\/|$|[._-])/i.test(
+      normalized
+    )
+  ) {
+    return true;
+  }
+
+  // Keep known OSCAR loader families that may not include explicit dates in every file path.
+  if (
+    /(?:^|\/)(?:p-series\/|p\d{5}\.\d{3}$|p\d{4}\.(?:idx|000)$|therapy\.pdat$|therapy\.dat$|sl\.edf$|icon\.edf$|wm_profiles\.xml$)/i.test(
+      normalized
+    )
+  ) {
+    return true;
+  }
+
+  if (/(?:^|\/)(?:viatom|cms50|zeo|dreem|yuwell|vrem)(?:\/|$)/i.test(normalized)) {
+    return true;
+  }
+
+  // Keep small/medium clinical data files with therapy/usage/event semantics.
+  if (
+    size <= 2_000_000 &&
+    /\.(?:csv|txt|json|xml|dat|edf)$/i.test(normalized) &&
+    /(?:therapy|record|usage|session|event|summary|detail|compliance|result)/i.test(normalized)
+  ) {
+    return true;
+  }
+
+  if (
+    size <= 256 * 1024 &&
+    /(?:^|\/)(?:readme|info|version|manifest|meta|about|catalog|machine(?:[_-]info)?|device(?:[_-]info)?)(?:[._-]|$)/i.test(
+      normalized
+    )
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+function filterSourceFilesToRecentWindow(files: SourceFile[], lookbackDays: number): RecentWindowFilterResult {
+  const datedEntries = files.map((file) => ({
+    file,
+    date: extractDateFromPath(file.path)
+  }));
+
+  const dated = datedEntries.filter((entry): entry is { file: SourceFile; date: Date } => entry.date !== null);
+  if (dated.length === 0) {
+    return {
+      files,
+      originalCount: files.length,
+      filteredOutCount: 0,
+      filteredOutBytes: 0,
+      latestDateIso: null,
+      hadDatedFiles: false
+    };
+  }
+
+  // If date-bearing files are too sparse, avoid risky pruning so all loader families remain compatible.
+  const datedCoverage = dated.length / Math.max(1, files.length);
+  if (datedCoverage < 0.1) {
+    return {
+      files,
+      originalCount: files.length,
+      filteredOutCount: 0,
+      filteredOutBytes: 0,
+      latestDateIso: null,
+      hadDatedFiles: false
+    };
+  }
+
+  const latestMs = dated.reduce((max, entry) => Math.max(max, entry.date.getTime()), dated[0].date.getTime());
+  const windowStartMs = latestMs - (lookbackDays - 1) * DAY_MS;
+
+  let filteredOutCount = 0;
+  let filteredOutBytes = 0;
+  const kept = datedEntries
+    .filter((entry) => {
+      if (entry.date) {
+        const t = entry.date.getTime();
+        const keep = t >= windowStartMs && t <= latestMs;
+        if (!keep) {
+          filteredOutCount += 1;
+          filteredOutBytes += entry.file.size;
+        }
+        return keep;
+      }
+
+      const keepUndated = shouldKeepUndatedFile(entry.file.path, entry.file.size);
+      if (!keepUndated) {
+        filteredOutCount += 1;
+        filteredOutBytes += entry.file.size;
+      }
+      return keepUndated;
+    })
+    .map((entry) => entry.file);
+
+  // Safety fallback: never end up with an empty set due to over-filtering.
+  const outputFiles = kept.length > 0 ? kept : files;
+  const latestDateIso = new Date(latestMs).toISOString().slice(0, 10);
+
+  return {
+    files: outputFiles,
+    originalCount: files.length,
+    filteredOutCount: outputFiles === files ? 0 : filteredOutCount,
+    filteredOutBytes: outputFiles === files ? 0 : filteredOutBytes,
+    latestDateIso,
+    hadDatedFiles: true
+  };
+}
+
+function formatIsoAsUsDate(iso: string): string {
+  const dt = new Date(`${iso}T00:00:00Z`);
+  return dt.toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    timeZone: "UTC"
+  });
 }
 
 function toIsoDateParts(year: number, month: number, day: number): string | null {
@@ -448,8 +619,16 @@ export function QuickReportApp() {
         await yieldToBrowser();
       }
 
+      setParseProgress({
+        phase: "scan",
+        detail: `Keeping recent ${IMPORT_LOOKBACK_DAYS}-day window...`,
+        percent: 50
+      });
+      await yieldToBrowser();
+      const filtered = filterSourceFilesToRecentWindow(mapped, IMPORT_LOOKBACK_DAYS);
+
       setSourceKind("folder");
-      setSourceFiles(mapped);
+      setSourceFiles(filtered.files);
       setReport(null);
       setErrors([]);
       if (previewUrl) {
@@ -458,7 +637,20 @@ export function QuickReportApp() {
       }
       setPreviewEmbedUrl(null);
       setStatus("idle");
-      setStatusMessage(`Folder loaded: ${mapped.length} files available for parsing.`);
+      if (filtered.hadDatedFiles) {
+        const endDateText = filtered.latestDateIso ? formatIsoAsUsDate(filtered.latestDateIso) : "latest dated file";
+        if (filtered.filteredOutCount > 0) {
+          setStatusMessage(
+            `Folder loaded: ${filtered.files.length} files ready (last ${IMPORT_LOOKBACK_DAYS} days through ${endDateText}). Filtered out ${filtered.filteredOutCount} older files (${bytesToLabel(filtered.filteredOutBytes)}).`
+          );
+        } else {
+          setStatusMessage(
+            `Folder loaded: ${filtered.files.length} files ready (last ${IMPORT_LOOKBACK_DAYS} days through ${endDateText}).`
+          );
+        }
+      } else {
+        setStatusMessage(`Folder loaded: ${mapped.length} files ready for parsing.`);
+      }
       setParseProgress({ phase: "ready", detail: "Folder ready", percent: 100 });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Could not load selected folder.";
@@ -521,10 +713,31 @@ export function QuickReportApp() {
         await yieldToBrowser();
       }
 
+      setParseProgress({
+        phase: "zip",
+        detail: `Keeping recent ${IMPORT_LOOKBACK_DAYS}-day window...`,
+        percent: 50
+      });
+      await yieldToBrowser();
+      const filtered = filterSourceFilesToRecentWindow(mapped, IMPORT_LOOKBACK_DAYS);
+
       setSourceKind("zip");
-      setSourceFiles(mapped);
+      setSourceFiles(filtered.files);
       setStatus("idle");
-      setStatusMessage(`ZIP loaded: ${mapped.length} files available for parsing.`);
+      if (filtered.hadDatedFiles) {
+        const endDateText = filtered.latestDateIso ? formatIsoAsUsDate(filtered.latestDateIso) : "latest dated file";
+        if (filtered.filteredOutCount > 0) {
+          setStatusMessage(
+            `ZIP loaded: ${filtered.files.length} files ready (last ${IMPORT_LOOKBACK_DAYS} days through ${endDateText}). Filtered out ${filtered.filteredOutCount} older files (${bytesToLabel(filtered.filteredOutBytes)}).`
+          );
+        } else {
+          setStatusMessage(
+            `ZIP loaded: ${filtered.files.length} files ready (last ${IMPORT_LOOKBACK_DAYS} days through ${endDateText}).`
+          );
+        }
+      } else {
+        setStatusMessage(`ZIP loaded: ${mapped.length} files ready for parsing.`);
+      }
       setParseProgress({ phase: "ready", detail: "ZIP ready", percent: 100 });
       setReport(null);
       setErrors([]);
@@ -798,7 +1011,7 @@ export function QuickReportApp() {
         <article className={`card col-8 ${isDataSourceLoading ? "card-loading" : ""}`} aria-busy={isDataSourceLoading}>
           {isDataSourceLoading ? <div className="loading-overlay">Loading data. Please wait...</div> : null}
           <h3>Data Source</h3>
-          <p className="subtle">Choose an SD-card folder.</p>
+          <p className="subtle">Choose an SD-card folder. The app keeps only the most recent 91 days for processing speed.</p>
 
           <div className="actions">
             <button
