@@ -41,6 +41,7 @@ export interface QuickReportMetrics {
   dateRangeEnd: string;
   daysInWindow: number;
   daysWithData: number;
+  daysWithUsage: number;
   usageDaysPercent: number;
   compliantDays: number;
   compliancePercent: number;

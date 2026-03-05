@@ -1505,7 +1505,9 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
     .filter((v): v is number => typeof v === "number" && Number.isFinite(v));
 
   const daysWithData = dayMap.size;
+  const daysWithUsage = usageValues.length;
   const compliantDays = usageValues.filter((u) => u >= 4).length;
+  const complianceBaseDays = Math.max(1, daysWithUsage);
   const avgUsageHours = usageValues.length > 0 ? usageValues.reduce((a, b) => a + b, 0) / usageValues.length : null;
   const avgAhi = ahiValues.length > 0 ? ahiValues.reduce((a, b) => a + b, 0) / ahiValues.length : null;
   const avgResidualApneas =
@@ -1551,9 +1553,10 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
     dateRangeEnd: formatDateHuman(toIsoDate(windowEnd)),
     daysInWindow: 90,
     daysWithData,
+    daysWithUsage,
     usageDaysPercent: finite((daysWithData / 90) * 100),
     compliantDays,
-    compliancePercent: finite((compliantDays / 90) * 100),
+    compliancePercent: finite((compliantDays / complianceBaseDays) * 100),
     avgUsageHours: avgUsageHours === null ? null : finite(avgUsageHours),
     avgAhi: avgAhi === null ? null : finite(avgAhi),
     avgResidualApneas: avgResidualApneas === null ? null : finite(avgResidualApneas),

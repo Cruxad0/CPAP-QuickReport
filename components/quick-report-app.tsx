@@ -670,7 +670,7 @@ export function QuickReportApp() {
           <h3>How-To Use</h3>
           <ol className="usage-steps">
             <li>Enter the patient name and date of birth.</li>
-            <li>Click <strong>Select SD-CARD</strong> and choose the SD card folder. You can also use a ZIP export.</li>
+            <li>Click <strong>Select SD-CARD</strong> and choose the SD card folder.</li>
             <li>Click <strong>Generate 90-Day PDF</strong>.</li>
             <li>Review the preview, then click <strong>Export PDF</strong> to save.</li>
           </ol>
@@ -798,7 +798,7 @@ export function QuickReportApp() {
         <article className={`card col-8 ${isDataSourceLoading ? "card-loading" : ""}`} aria-busy={isDataSourceLoading}>
           {isDataSourceLoading ? <div className="loading-overlay">Loading data. Please wait...</div> : null}
           <h3>Data Source</h3>
-          <p className="subtle">Choose an SD-card folder (recommended) or a ZIP export.</p>
+          <p className="subtle">Choose an SD-card folder.</p>
 
           <div className="actions">
             <button
@@ -810,16 +810,6 @@ export function QuickReportApp() {
               disabled={isDataSourceLoading}
             >
               Select SD-CARD
-            </button>
-            <button
-              className="btn btn-secondary"
-              onClick={() => {
-                beginSourceSelection("zip");
-                zipInputRef.current?.click();
-              }}
-              disabled={isDataSourceLoading}
-            >
-              Select ZIP Export
             </button>
           </div>
 
