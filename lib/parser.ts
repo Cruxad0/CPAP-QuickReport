@@ -60,6 +60,10 @@ type DayBucket = {
   ahiWeightHours: number;
   ahiSum: number;
   ahiCount: number;
+  residualApneaSum: number;
+  residualApneaCount: number;
+  centralApneaSum: number;
+  centralApneaCount: number;
   leakSum: number;
   leakCount: number;
   leakMax: number | null;
@@ -503,6 +507,8 @@ function parseResventStatText(text: string, fallbackDate: Date): ParsedRecord | 
   const usageHours = secUsed !== undefined ? secUsed / 3600 : undefined;
 
   let ahi: number | undefined;
+  let residualApneas: number | undefined;
+  let centralApneas: number | undefined;
   let eventCount: number | undefined;
   if (cntAI !== undefined && cntHI !== undefined) {
     eventCount = cntAI + cntHI;
@@ -517,6 +523,13 @@ function parseResventStatText(text: string, fallbackDate: Date): ParsedRecord | 
   } else if (cntAHI !== undefined) {
     // Fallback if only a scalar was supplied.
     ahi = cntAHI;
+  }
+
+  if (cntAI !== undefined) {
+    residualApneas = usageHours !== undefined && usageHours > 0 ? cntAI / usageHours : cntAI;
+  }
+  if (cntCAI !== undefined) {
+    centralApneas = usageHours !== undefined && usageHours > 0 ? cntCAI / usageHours : cntCAI;
   }
 
   let leak: number | undefined;
@@ -534,6 +547,8 @@ function parseResventStatText(text: string, fallbackDate: Date): ParsedRecord | 
     date: recordDate,
     usageHours: usageHours !== undefined && usageHours >= 0 && usageHours <= 24 ? usageHours : undefined,
     ahi: ahi !== undefined && ahi >= 0 && ahi < 200 ? ahi : undefined,
+    residualApneas: residualApneas !== undefined && residualApneas >= 0 && residualApneas < 200 ? residualApneas : undefined,
+    centralApneas: centralApneas !== undefined && centralApneas >= 0 && centralApneas < 200 ? centralApneas : undefined,
     leak: leak !== undefined && leak >= 0 && leak < 500 ? leak : undefined
   };
 }
@@ -578,6 +593,19 @@ function parseGenericDailyKeyValueRecord(text: string, fallbackDate: Date): Pars
     break;
   }
 
+  const readRateMetric = (keys: string[]): number | undefined => {
+    for (const key of keys) {
+      const raw = get(key);
+      const n = safeNumber(raw);
+      if (n === undefined) continue;
+      if (/^cnt/i.test(key) && usageHours !== undefined && usageHours > 0) {
+        return n / usageHours;
+      }
+      return n;
+    }
+    return undefined;
+  };
+
   const ahiCandidates = [
     safeNumber(get("ahi")),
     safeNumber(get("avgahi")),
@@ -600,6 +628,23 @@ function parseGenericDailyKeyValueRecord(text: string, fallbackDate: Date): Pars
     if (eventCount !== undefined) ahi = eventCount / usageHours;
   }
 
+  const residualApneas = readRateMetric([
+    "residualApneas",
+    "residual_apneas",
+    "residualAI",
+    "residual_ahi",
+    "apneaIndex",
+    "AI",
+    "cntAI"
+  ]);
+  const centralApneas = readRateMetric([
+    "centralApneas",
+    "central_apneas",
+    "centralAI",
+    "CAI",
+    "cntCAI"
+  ]);
+
   let leak: number | undefined;
   for (const [key, value] of kvLower.entries()) {
     if (!/leak/.test(key)) continue;
@@ -613,6 +658,8 @@ function parseGenericDailyKeyValueRecord(text: string, fallbackDate: Date): Pars
   const hasSignal =
     (usageHours !== undefined && usageHours >= 0 && usageHours <= 24) ||
     (ahi !== undefined && ahi >= 0 && ahi < 200) ||
+    (residualApneas !== undefined && residualApneas >= 0 && residualApneas < 200) ||
+    (centralApneas !== undefined && centralApneas >= 0 && centralApneas < 200) ||
     (leak !== undefined && leak >= 0 && leak < 500);
 
   if (!hasSignal) return null;
@@ -620,6 +667,10 @@ function parseGenericDailyKeyValueRecord(text: string, fallbackDate: Date): Pars
     date: day,
     usageHours: usageHours !== undefined && usageHours >= 0 && usageHours <= 24 ? usageHours : undefined,
     ahi: ahi !== undefined && ahi >= 0 && ahi < 200 ? ahi : undefined,
+    residualApneas:
+      residualApneas !== undefined && residualApneas >= 0 && residualApneas < 200 ? residualApneas : undefined,
+    centralApneas:
+      centralApneas !== undefined && centralApneas >= 0 && centralApneas < 200 ? centralApneas : undefined,
     leak: leak !== undefined && leak >= 0 && leak < 500 ? leak : undefined
   };
 }
@@ -644,6 +695,8 @@ function tryParseDelimited(text: string): ParsedRecord[] {
   const dateIdx = headers.findIndex((h) => /date|day/.test(h));
   const usageIdx = headers.findIndex((h) => /usage|hours|therapy/.test(h));
   const ahiIdx = headers.findIndex((h) => /ahi/.test(h));
+  const residualIdx = headers.findIndex((h) => /(residual|apnea\s*index|(?:^|[^a-z])ai(?:[^a-z]|$))/i.test(h) && !/cai|oai|uai|ahi/i.test(h));
+  const centralIdx = headers.findIndex((h) => /(central|(?:^|[^a-z])cai(?:[^a-z]|$))/i.test(h));
   const leakIdx = headers.findIndex((h) => /leak/.test(h));
 
   if (dateIdx < 0) return [];
@@ -658,6 +711,8 @@ function tryParseDelimited(text: string): ParsedRecord[] {
       date,
       usageHours: usageIdx >= 0 ? safeNumber(row[usageIdx]) : undefined,
       ahi: ahiIdx >= 0 ? safeNumber(row[ahiIdx]) : undefined,
+      residualApneas: residualIdx >= 0 ? safeNumber(row[residualIdx]) : undefined,
+      centralApneas: centralIdx >= 0 ? safeNumber(row[centralIdx]) : undefined,
       leak: leakIdx >= 0 ? safeNumber(row[leakIdx]) : undefined
     });
   }
@@ -676,12 +731,16 @@ function tryParseFreeText(text: string): ParsedRecord[] {
 
     const usageMatch = line.match(/(?:usage|therapy\s*hours|hours)\D*(-?\d+(?:\.\d+)?)/i);
     const ahiMatch = line.match(/ahi\D*(-?\d+(?:\.\d+)?)/i);
+    const residualMatch = line.match(/(?:residual\s*apnea(?:s)?|residual\s*ahi|apnea\s*index|(?:^|[^a-z])ai(?:[^a-z]|$))\D*(-?\d+(?:\.\d+)?)/i);
+    const centralMatch = line.match(/(?:central\s*apnea(?:s)?|central\s*index|(?:^|[^a-z])cai(?:[^a-z]|$))\D*(-?\d+(?:\.\d+)?)/i);
     const leakMatch = line.match(/leak(?:age)?\D*(-?\d+(?:\.\d+)?)/i);
 
     out.push({
       date,
       usageHours: usageMatch ? safeNumber(usageMatch[1]) : undefined,
       ahi: ahiMatch ? safeNumber(ahiMatch[1]) : undefined,
+      residualApneas: residualMatch ? safeNumber(residualMatch[1]) : undefined,
+      centralApneas: centralMatch ? safeNumber(centralMatch[1]) : undefined,
       leak: leakMatch ? safeNumber(leakMatch[1]) : undefined
     });
   }
@@ -700,6 +759,8 @@ function sanitizeRecords(records: ParsedRecord[]): ParsedRecord[] {
     const hasSignal =
       (typeof r.usageHours === "number" && r.usageHours >= 0 && r.usageHours <= 24) ||
       (typeof r.ahi === "number" && r.ahi >= 0 && r.ahi < 200) ||
+      (typeof r.residualApneas === "number" && r.residualApneas >= 0 && r.residualApneas < 200) ||
+      (typeof r.centralApneas === "number" && r.centralApneas >= 0 && r.centralApneas < 200) ||
       (typeof r.leak === "number" && r.leak >= 0 && r.leak < 500);
     return hasSignal;
   });
@@ -708,8 +769,10 @@ function sanitizeRecords(records: ParsedRecord[]): ParsedRecord[] {
 function recordSignature(record: ParsedRecord): string {
   const u = typeof record.usageHours === "number" ? record.usageHours.toFixed(3) : "";
   const a = typeof record.ahi === "number" ? record.ahi.toFixed(3) : "";
+  const r = typeof record.residualApneas === "number" ? record.residualApneas.toFixed(3) : "";
+  const c = typeof record.centralApneas === "number" ? record.centralApneas.toFixed(3) : "";
   const l = typeof record.leak === "number" ? record.leak.toFixed(3) : "";
-  return `${toIsoDate(record.date)}|${u}|${a}|${l}`;
+  return `${toIsoDate(record.date)}|${u}|${a}|${r}|${c}|${l}`;
 }
 
 function dedupeParsedRecords(records: ParsedRecord[]): ParsedRecord[] {
@@ -912,6 +975,10 @@ function createEmptyDayBucket(): DayBucket {
     ahiWeightHours: 0,
     ahiSum: 0,
     ahiCount: 0,
+    residualApneaSum: 0,
+    residualApneaCount: 0,
+    centralApneaSum: 0,
+    centralApneaCount: 0,
     leakSum: 0,
     leakCount: 0,
     leakMax: null
@@ -1177,6 +1244,16 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
       }
     }
 
+    if (typeof record.residualApneas === "number" && record.residualApneas >= 0 && record.residualApneas < 200) {
+      bucket.residualApneaSum += record.residualApneas;
+      bucket.residualApneaCount += 1;
+    }
+
+    if (typeof record.centralApneas === "number" && record.centralApneas >= 0 && record.centralApneas < 200) {
+      bucket.centralApneaSum += record.centralApneas;
+      bucket.centralApneaCount += 1;
+    }
+
     const hasWaveLeakForDay = leakStatsByDay.has(key);
     if (
       typeof record.leak === "number" &&
@@ -1223,6 +1300,14 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
     })
     .filter((v): v is number => typeof v === "number" && Number.isFinite(v));
 
+  const residualApneaValues = [...dayMap.values()]
+    .filter((d) => d.residualApneaCount > 0)
+    .map((d) => d.residualApneaSum / d.residualApneaCount);
+
+  const centralApneaValues = [...dayMap.values()]
+    .filter((d) => d.centralApneaCount > 0)
+    .map((d) => d.centralApneaSum / d.centralApneaCount);
+
   const leakValues = [...dayMap.values()]
     .filter((d) => d.leakCount > 0)
     .map((d) => d.leakSum / d.leakCount);
@@ -1235,6 +1320,10 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
   const compliantDays = usageValues.filter((u) => u >= 4).length;
   const avgUsageHours = usageValues.length > 0 ? usageValues.reduce((a, b) => a + b, 0) / usageValues.length : 0;
   const avgAhi = ahiValues.length > 0 ? ahiValues.reduce((a, b) => a + b, 0) / ahiValues.length : 0;
+  const avgResidualApneas =
+    residualApneaValues.length > 0 ? residualApneaValues.reduce((a, b) => a + b, 0) / residualApneaValues.length : null;
+  const avgCentralApneas =
+    centralApneaValues.length > 0 ? centralApneaValues.reduce((a, b) => a + b, 0) / centralApneaValues.length : null;
   const ahi95th = ahiValues.length > 0 ? percentile(ahiValues, 95) : 0;
   const avgLeak = leakValues.length > 0 ? leakValues.reduce((a, b) => a + b, 0) / leakValues.length : null;
   const maxLeak = leakMaxValues.length > 0 ? Math.max(...leakMaxValues) : leakValues.length > 0 ? Math.max(...leakValues) : null;
@@ -1277,6 +1366,8 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
     compliancePercent: finite((compliantDays / 90) * 100),
     avgUsageHours: finite(avgUsageHours),
     avgAhi: finite(avgAhi),
+    avgResidualApneas: avgResidualApneas === null ? null : finite(avgResidualApneas),
+    avgCentralApneas: avgCentralApneas === null ? null : finite(avgCentralApneas),
     ahi95th: finite(ahi95th),
     avgLeak: avgLeak === null ? null : finite(avgLeak),
     maxLeak: maxLeak === null ? null : finite(maxLeak),

@@ -18,6 +18,8 @@ export interface ParsedRecord {
   date: Date;
   usageHours?: number;
   ahi?: number;
+  residualApneas?: number;
+  centralApneas?: number;
   leak?: number;
 }
 
@@ -44,6 +46,8 @@ export interface QuickReportMetrics {
   compliancePercent: number;
   avgUsageHours: number;
   avgAhi: number;
+  avgResidualApneas: number | null;
+  avgCentralApneas: number | null;
   ahi95th: number;
   avgLeak: number | null;
   maxLeak: number | null;

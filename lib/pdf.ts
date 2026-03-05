@@ -364,10 +364,12 @@ export async function buildPdfReport(report: QuickReportMetrics, headerDataUrl?:
       ["Date range", `${report.dateRangeStart} to ${report.dateRangeEnd}`],
       ["Days with data", `${report.daysWithData} / ${report.daysInWindow}`],
       ["Usage days (% of range)", `${report.usageDaysPercent.toFixed(1)}%`],
-      ["Compliant days (>= 4h)", `${report.compliantDays}`],
+      ["Compliant days (>= 4h)", `${report.compliantDays} / ${report.daysInWindow}`],
       ["Compliance (% of range)", `${report.compliancePercent.toFixed(1)}%`],
       ["Average usage", `${valueText(report.avgUsageHours)} h`],
       ["Average AHI", valueText(report.avgAhi)],
+      ["Residual apneas (avg)", report.avgResidualApneas === null ? "n/a" : valueText(report.avgResidualApneas)],
+      ["Central apneas (avg)", report.avgCentralApneas === null ? "n/a" : valueText(report.avgCentralApneas)],
       ["95th AHI", valueText(report.ahi95th)],
       ["Average leak", report.avgLeak === null ? "n/a" : `${valueText(report.avgLeak)} L/min`],
       ["Max leak", report.maxLeak === null ? "n/a" : `${valueText(report.maxLeak)} L/min`]
