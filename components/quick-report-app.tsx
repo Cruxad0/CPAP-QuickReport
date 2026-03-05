@@ -129,6 +129,109 @@ async function yieldToBrowser(): Promise<void> {
   });
 }
 
+function expireSiteCookies() {
+  if (typeof document === "undefined") return;
+  const cookiePairs = document.cookie ? document.cookie.split(";") : [];
+  const host = window.location.hostname;
+  const hostParts = host.split(".");
+  const candidateDomains = new Set<string>([host]);
+  for (let i = 0; i < hostParts.length - 1; i += 1) {
+    const domain = hostParts.slice(i).join(".");
+    if (domain.includes(".")) candidateDomains.add(domain);
+  }
+
+  for (const pair of cookiePairs) {
+    const eq = pair.indexOf("=");
+    const name = (eq >= 0 ? pair.slice(0, eq) : pair).trim();
+    if (!name) continue;
+    document.cookie = `${name}=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/`;
+    for (const domain of candidateDomains) {
+      document.cookie = `${name}=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/;domain=${domain}`;
+      document.cookie = `${name}=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/;domain=.${domain}`;
+    }
+  }
+}
+
+async function clearIndexedDbSiteData(): Promise<void> {
+  if (typeof indexedDB === "undefined") return;
+  const idbWithDatabases = indexedDB as IDBFactory & {
+    databases?: () => Promise<Array<{ name?: string }>>;
+  };
+  if (typeof idbWithDatabases.databases !== "function") return;
+  const dbs = await idbWithDatabases.databases();
+  for (const db of dbs) {
+    if (!db.name) continue;
+    await new Promise<void>((resolve) => {
+      const req = indexedDB.deleteDatabase(db.name as string);
+      req.onsuccess = () => resolve();
+      req.onerror = () => resolve();
+      req.onblocked = () => resolve();
+    });
+  }
+}
+
+async function clearSiteData(): Promise<void> {
+  try {
+    window.localStorage?.clear();
+  } catch {
+    // Best effort only.
+  }
+  try {
+    window.sessionStorage?.clear();
+  } catch {
+    // Best effort only.
+  }
+
+  expireSiteCookies();
+
+  try {
+    if ("caches" in window) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map((key) => caches.delete(key)));
+    }
+  } catch {
+    // Best effort only.
+  }
+
+  try {
+    await clearIndexedDbSiteData();
+  } catch {
+    // Best effort only.
+  }
+
+  try {
+    if ("serviceWorker" in navigator) {
+      const registrations = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(registrations.map((registration) => registration.unregister()));
+    }
+  } catch {
+    // Best effort only.
+  }
+}
+
+function attemptCloseCurrentTab(): boolean {
+  try {
+    window.close();
+    return !!window.closed;
+  } catch {
+    return false;
+  }
+}
+
+function clearUnloadSafeSiteData() {
+  try {
+    window.localStorage?.clear();
+  } catch {
+    // Best effort only.
+  }
+  try {
+    window.sessionStorage?.clear();
+  } catch {
+    // Best effort only.
+  }
+  expireSiteCookies();
+}
+
 export function QuickReportApp() {
   const folderInputRef = useRef<HTMLInputElement>(null);
   const zipInputRef = useRef<HTMLInputElement>(null);
@@ -167,6 +270,16 @@ export function QuickReportApp() {
       folderInputRef.current.setAttribute("webkitdirectory", "");
       folderInputRef.current.setAttribute("directory", "");
     }
+  }, []);
+
+  useEffect(() => {
+    const handleUnload = () => clearUnloadSafeSiteData();
+    window.addEventListener("pagehide", handleUnload);
+    window.addEventListener("beforeunload", handleUnload);
+    return () => {
+      window.removeEventListener("pagehide", handleUnload);
+      window.removeEventListener("beforeunload", handleUnload);
+    };
   }, []);
 
   useEffect(() => {
@@ -251,6 +364,37 @@ export function QuickReportApp() {
     setShowCalendarAlt(false);
     setIsSourceLoading(false);
     setPendingSourceSelection(null);
+  };
+
+  const handleResetClearAll = async () => {
+    if (status === "working") return;
+    sourceSelectionAttemptRef.current += 1;
+
+    setStatus("working");
+    setStatusMessage("Clearing local data...");
+    setParseProgress({ phase: "reset", detail: "Clearing local cache and storage...", percent: 12 });
+    setIsSourceLoading(true);
+    await yieldToBrowser();
+
+    await clearSiteData();
+
+    resetResultState();
+    setSourceFiles([]);
+    setSourceKind("folder");
+    setPatientName("");
+    setDateOfBirthInput("");
+    clearSourceInputs();
+
+    setParseProgress({ phase: "reset", detail: "Done", percent: 100 });
+    setStatus("idle");
+    setStatusMessage("Local data cleared. Attempting to close this tab...");
+    await yieldToBrowser();
+
+    const closed = attemptCloseCurrentTab();
+    if (!closed) {
+      setStatus("idle");
+      setStatusMessage("Local data cleared. Please close this tab/browser manually.");
+    }
   };
 
   const handleFolderSelection: React.ChangeEventHandler<HTMLInputElement> = async (event) => {
@@ -500,16 +644,30 @@ export function QuickReportApp() {
   return (
     <main>
       <section className="hero">
-        <h1>CPAP Clinician QuickReport</h1>
-        <p>
-          Create a 90-day CPAP PDF report in a few steps. Data is processed locally.
-        </p>
-        <p className="subtle">
-          Powered by{" "}
-          <a href="https://notespecialist.com" target="_blank" rel="noopener noreferrer">
-            notespecialist.com
-          </a>
-          {", "}an AI-powered clinical documentation tool.
+        <div className="hero-row">
+          <div className="hero-copy">
+            <h1>CPAP Clinician QuickReport</h1>
+            <p>Create a 90-day CPAP PDF report in a few steps. Data is processed locally.</p>
+            <p className="subtle">
+              Powered by{" "}
+              <a href="https://notespecialist.com" target="_blank" rel="noopener noreferrer">
+                notespecialist.com
+              </a>
+              {", "}an AI-powered clinical documentation tool.
+            </p>
+          </div>
+          <div className="hero-badge-wrap" aria-hidden="true">
+            <img
+              className="hero-hipaa-badge"
+              src="/hipaa-compliant-badge.jpeg"
+              alt="HIPAA Compliant"
+              loading="lazy"
+              decoding="async"
+            />
+          </div>
+        </div>
+        <p className="subtle hero-hipaa-note">
+          HIPAA compliance requires organizational safeguards, role-based access, audit controls, and vendor BAAs.
         </p>
       </section>
 
@@ -695,14 +853,7 @@ export function QuickReportApp() {
             </button>
             <button
               className="btn btn-danger"
-              onClick={() => {
-                resetResultState();
-                setSourceFiles([]);
-                setSourceKind("folder");
-                setPatientName("");
-                setDateOfBirthInput("");
-                clearSourceInputs();
-              }}
+              onClick={handleResetClearAll}
               disabled={status === "working"}
             >
               Reset / Clear All

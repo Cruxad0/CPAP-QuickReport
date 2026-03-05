@@ -43,6 +43,35 @@ main {
   box-shadow: 0 14px 40px rgba(13, 40, 58, 0.07);
 }
 
+.hero-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.hero-copy {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.hero-badge-wrap {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+}
+
+.hero-hipaa-badge {
+  width: min(230px, 32vw);
+  max-width: 100%;
+  height: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  display: block;
+}
+
 .hero h1 {
   margin: 0;
   color: var(--brand);
@@ -53,6 +82,10 @@ main {
 .hero p {
   margin: 0.45rem 0 0;
   color: var(--muted);
+}
+
+.hero-hipaa-note {
+  margin-top: 0.7rem;
 }
 
 .usage-steps {
@@ -392,6 +425,20 @@ textarea {
 }
 
 @media (max-width: 930px) {
+  .hero-row {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .hero-badge-wrap {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .hero-hipaa-badge {
+    width: min(220px, 68vw);
+  }
+
   .col-4,
   .col-8 {
     grid-column: span 12;
