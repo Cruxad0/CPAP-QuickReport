@@ -1,6 +1,7 @@
 import { ParseRequest, ParsedRecord, ParseProgress, QuickReportMetrics, SourceFile } from "@/lib/types";
 
-const MAX_GENERIC_FILES_TO_SCAN = 500;
+const MAX_GENERIC_FILES_TO_SCAN = 2500;
+const MAX_GENERIC_TOTAL_BYTES = 220_000_000;
 const MAX_FILE_SIZE_BYTES = 8_000_000;
 const MAX_RESVENT_P_TOTAL_BYTES = 96_000_000;
 const MAX_RESVENT_P_FILES = 400;
@@ -21,6 +22,11 @@ type LoaderMatch = {
   score: number;
 };
 
+type DateWindow = {
+  start: Date;
+  end: Date;
+};
+
 const LOADER_SIGNATURES: LoaderSignature[] = [
   { id: "resvent", label: "Resvent / Hoffrichter", markers: [/(?:^|\/)therapy\/record\//i, /(?:^|\/)therapy\/config\//i] },
   { id: "resmed", label: "ResMed", markers: [/(?:^|\/)datalog\//i, /(?:^|\/)str\.edf$/i, /(?:^|\/)eve\.edf$/i] },
@@ -29,7 +35,11 @@ const LOADER_SIGNATURES: LoaderSignature[] = [
   { id: "weinmann", label: "Weinmann / Loewenstein", markers: [/(?:^|\/)wm_profiles\.xml$/i, /(?:^|\/)somnobalance/i] },
   { id: "prs1", label: "Philips Respironics System One / DreamStation", markers: [/(?:^|\/)p-series\//i, /(?:^|\/)p[0-9]{5}\.[0-9]{3}$/i] },
   { id: "mseries", label: "Philips Respironics M-Series", markers: [/(?:^|\/)m-series\//i, /(?:^|\/)therapy\.dat$/i] },
-  { id: "bmc", label: "BMC", markers: [/(?:^|\/)p[0-9]{4}\.idx$/i, /(?:^|\/)p[0-9]{4}\.000$/i] },
+  {
+    id: "bmc",
+    label: "Apex / BMC / Luna",
+    markers: [/(?:^|\/)p[0-9]{4}\.idx$/i, /(?:^|\/)p[0-9]{4}\.000$/i, /(?:^|\/)(?:luna|apex|bmc)/i]
+  },
   { id: "intellipap", label: "DeVilbiss IntelliPAP", markers: [/(?:^|\/)smartcode\//i, /(?:^|\/)sl\.edf$/i] },
   { id: "icon", label: "Fisher & Paykel ICON", markers: [/(?:^|\/)fpicon\//i, /(?:^|\/)icon\.edf$/i] },
   { id: "yuwell", label: "Yuwell", markers: [/(?:^|\/)yuwell/i, /(?:^|\/)wave\//i] },
@@ -340,6 +350,12 @@ function detectLikelyLoaders(files: SourceMeta[]): string[] {
   return detected;
 }
 
+function hasLoaderSignature(files: SourceMeta[], loaderId: string): boolean {
+  const sig = LOADER_SIGNATURES.find((s) => s.id === loaderId);
+  if (!sig) return false;
+  return files.some((f) => sig.markers.some((re) => re.test(f.normalizedPath)));
+}
+
 function scoreLoader(files: SourceMeta[], sig: LoaderSignature): number {
   let score = 0;
   for (const marker of sig.markers) {
@@ -372,6 +388,138 @@ function rankLoaders(files: SourceMeta[]): LoaderMatch[] {
     .map((sig) => ({ id: sig.id, label: sig.label, score: scoreLoader(files, sig) }))
     .filter((m) => m.score > 0)
     .sort((a, b) => b.score - a.score || a.label.localeCompare(b.label));
+}
+
+function resolveRecentWindow(latestDate: Date): DateWindow {
+  const latestDataDay = new Date(Date.UTC(latestDate.getUTCFullYear(), latestDate.getUTCMonth(), latestDate.getUTCDate()));
+  const today = new Date();
+  const yesterday = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));
+  yesterday.setUTCDate(yesterday.getUTCDate() - 1);
+  const windowEnd = latestDataDay > yesterday ? yesterday : latestDataDay;
+  const windowStart = new Date(windowEnd);
+  windowStart.setUTCDate(windowStart.getUTCDate() - 89);
+  return { start: windowStart, end: windowEnd };
+}
+
+function loaderPriorityPatterns(loaderIds: string[]): RegExp[] {
+  const patterns: RegExp[] = [
+    /(?:^|\/)(?:therapy|record|datalog|summary|detail|session|usage|result|events?)\//i,
+    /(?:^|\/)(?:stat\d{0,4}|ev\d{0,4}|summary|detail|session|usage|result|report|compliance)(?:\..*)?$/i,
+    /(?:^|\/)(?:str|eve|pld|sad|brp|crc)\.edf$/i
+  ];
+
+  for (const id of loaderIds) {
+    switch (id) {
+      case "resvent":
+        patterns.push(
+          /(?:^|\/)therapy\/record\/\d{6}\/\d{2}\/(?:stat\d{0,4}|ev\d{2}|p\d{2}_\d+|w\d{2}_\d+)(?:\..*)?$/i,
+          /(?:^|\/)therapy\/config\//i
+        );
+        break;
+      case "resmed":
+        patterns.push(
+          /(?:^|\/)datalog\/.*\/(?:str|eve|pld|sad|brp|crc)\.edf$/i,
+          /(?:^|\/)(?:settings|summary)\.edf$/i
+        );
+        break;
+      case "prs1":
+      case "mseries":
+        patterns.push(
+          /(?:^|\/)p-series\/p\d{5}\.\d{3}$/i,
+          /(?:^|\/)p\d{5}\.\d{3}$/i,
+          /(?:^|\/)(?:summary|compliance)\.(?:txt|csv|xml)$/i
+        );
+        break;
+      case "bmc":
+        patterns.push(/(?:^|\/)p\d{4}\.(?:idx|000)$/i, /(?:^|\/)record\//i);
+        break;
+      case "sleepstyle":
+      case "icon":
+      case "intellipap":
+        patterns.push(/(?:^|\/)(?:summary|detail|sl|icon)\.edf$/i);
+        break;
+      case "prisma":
+      case "weinmann":
+        patterns.push(/(?:^|\/)(?:therapy\.pdat|wm_profiles\.xml)$/i, /(?:^|\/)therapy\//i);
+        break;
+      case "viatom":
+      case "cms50":
+      case "vrem":
+      case "dreem":
+      case "yuwell":
+      case "zeo":
+        patterns.push(/(?:^|\/).*\.(?:csv|txt|json|xml|dat)$/i);
+        break;
+    }
+  }
+
+  return patterns;
+}
+
+function scoreGenericCandidate(meta: SourceMeta, window: DateWindow | null, priorityPatterns: RegExp[]): number {
+  let score = 0;
+  const path = meta.normalizedPath;
+  const name = meta.baseName;
+
+  if (meta.recordDate && window) {
+    if (meta.recordDate >= window.start && meta.recordDate <= window.end) {
+      score += 120;
+    } else {
+      const dayDistance = Math.abs(meta.recordDate.getTime() - window.end.getTime()) / (24 * 3600 * 1000);
+      if (dayDistance <= 365) score += Math.max(0, 45 - Math.floor(dayDistance / 10));
+    }
+  }
+
+  if (/^stat\d{0,4}(?:\..*)?$/i.test(name)) score += 95;
+  if (/^ev\d{0,4}(?:\..*)?$/i.test(name)) score += 70;
+  if (/^p\d{2}_\d+(?:\..*)?$/i.test(name)) score += 55;
+  if (/(?:summary|detail|session|usage|compliance|result)/i.test(name)) score += 35;
+  if (/(?:record|therapy|datalog|p-series)/i.test(path)) score += 25;
+
+  for (const pattern of priorityPatterns) {
+    if (pattern.test(path)) score += 35;
+  }
+
+  if (TEXT_EXTENSIONS.has(meta.ext)) score += 20;
+  else if (GENERIC_BINARY_EXTENSIONS.has(meta.ext)) score += 14;
+  else if (meta.ext === "") score += 6;
+
+  if (meta.file.size > 0 && meta.file.size <= 512_000) score += 18;
+  else if (meta.file.size <= 2_000_000) score += 12;
+  else if (meta.file.size <= MAX_FILE_SIZE_BYTES) score += 6;
+
+  return score;
+}
+
+function selectGenericCandidates(allCandidates: SourceMeta[], loaderRanking: LoaderMatch[]): SourceMeta[] {
+  const loaderIds = loaderRanking.slice(0, 5).map((l) => l.id);
+  const latestDated = allCandidates
+    .filter((m): m is SourceMeta & { recordDate: Date } => m.recordDate !== null)
+    .reduce<Date | null>((acc, m) => (acc === null || m.recordDate > acc ? m.recordDate : acc), null);
+
+  const window = latestDated ? resolveRecentWindow(latestDated) : null;
+  const priorityPatterns = loaderPriorityPatterns(loaderIds);
+
+  const ranked = allCandidates
+    .map((m) => ({ meta: m, score: scoreGenericCandidate(m, window, priorityPatterns) }))
+    .filter((x) => x.score > 0)
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      const aDate = a.meta.recordDate?.getTime() ?? 0;
+      const bDate = b.meta.recordDate?.getTime() ?? 0;
+      if (bDate !== aDate) return bDate - aDate;
+      return a.meta.file.size - b.meta.file.size;
+    });
+
+  let totalBytes = 0;
+  const out: SourceMeta[] = [];
+  for (const item of ranked) {
+    if (out.length >= MAX_GENERIC_FILES_TO_SCAN) break;
+    if (totalBytes + item.meta.file.size > MAX_GENERIC_TOTAL_BYTES) break;
+    out.push(item.meta);
+    totalBytes += item.meta.file.size;
+  }
+  return out;
 }
 
 function decodeLikelyTextVariants(bytes: Uint8Array): string[] {
@@ -1010,16 +1158,15 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
   const loaderRanking = rankLoaders(meta);
   const likelyLoaders = loaderRanking.map((m) => m.label);
   const selectedLoader = loaderRanking[0] ?? null;
-  const maybeResvent =
-    selectedLoader?.id === "resvent" ||
-    (selectedLoader === null && meta.some((m) => /(?:^|\/)therapy\/(?:record|config)\//i.test(m.normalizedPath)));
+  const hasResventStructure =
+    hasLoaderSignature(meta, "resvent") || meta.some((m) => /(?:^|\/)therapy\/(?:record|config)\//i.test(m.normalizedPath));
   const leakStatsByDay = new Map<string, LeakStats>();
   let fallbackWindowDateSet = new Set<string>();
   let latestPathDate: Date | null = null;
 
   emit(onProgress, { phase: "scan", detail: "Scanning files...", percent: 8 });
 
-  if (maybeResvent) {
+  if (hasResventStructure) {
     const selected = pickResventCandidates(meta, warnings);
     if (selected) {
       fallbackWindowDateSet = selected.windowDateSet;
@@ -1127,12 +1274,14 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
     }
   }
 
-  // Generic parsing is always used for non-Resvent loaders, and as a fallback when Resvent parse produced no records.
-  const runGenericPass = selectedLoader?.id !== "resvent" || records.length === 0;
+  // Generic parsing is always executed so all loader families can contribute metrics.
+  const runGenericPass = true;
   const genericTextCandidates = meta.filter(isGenericTextCandidate);
-  const genericCandidates = runGenericPass ? genericTextCandidates.slice(0, MAX_GENERIC_FILES_TO_SCAN) : [];
+  const genericCandidates = runGenericPass ? selectGenericCandidates(genericTextCandidates, loaderRanking) : [];
   if (runGenericPass && genericTextCandidates.length > MAX_GENERIC_FILES_TO_SCAN) {
-    warnings.push(`Input contained many candidate files; generic parsing was limited to ${MAX_GENERIC_FILES_TO_SCAN} files.`);
+    warnings.push(
+      `Input contained many candidate files; generic parsing prioritized ${genericCandidates.length} files (cap ${MAX_GENERIC_FILES_TO_SCAN}).`
+    );
   }
 
   let genericProcessed = 0;
@@ -1181,7 +1330,7 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
       continue;
     }
 
-    if (genericProcessed % 25 === 0) {
+    if (genericProcessed % 10 === 0) {
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
   }
@@ -1212,13 +1361,7 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
     );
   }
 
-  const latestDataDay = new Date(Date.UTC(latest.getUTCFullYear(), latest.getUTCMonth(), latest.getUTCDate()));
-  const today = new Date();
-  const yesterday = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));
-  yesterday.setUTCDate(yesterday.getUTCDate() - 1);
-  const windowEnd = latestDataDay > yesterday ? yesterday : latestDataDay;
-  const windowStart = new Date(windowEnd);
-  windowStart.setUTCDate(windowStart.getUTCDate() - 89);
+  const { start: windowStart, end: windowEnd } = resolveRecentWindow(latest);
 
   const dayMap = new Map<string, DayBucket>();
 
@@ -1259,7 +1402,7 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
       typeof record.leak === "number" &&
       record.leak >= 0 &&
       record.leak < 500 &&
-      !(maybeResvent && hasWaveLeakForDay)
+      !(hasResventStructure && hasWaveLeakForDay)
     ) {
       bucket.leakSum += record.leak;
       bucket.leakCount += 1;
@@ -1280,7 +1423,7 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
   }
 
   if (dayMap.size === 0) {
-    if (fallbackWindowDateSet.size > 0 && selectedLoader?.id === "resvent") {
+    if (fallbackWindowDateSet.size > 0 && hasResventStructure) {
       throw new Error(
         "Data import succeeded but no daily metrics were parsed from THERAPY/RECORD. Verify this export includes STAT/STATxx and EVxx files."
       );
