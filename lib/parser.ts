@@ -1475,9 +1475,9 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
 
   const usageValues = [...dayMap.values()]
     .filter((d) => d.usageCount > 0)
-    // Use per-day mean usage across records to avoid double-counting the same day
-    // when multiple files carry overlapping summaries.
-    .map((d) => Math.min(24, d.usageSum / d.usageCount))
+    // Clinical usage is noon-to-noon total per day (sum sessions in that day).
+    // Cap to 24h/day to guard against malformed duplicate inputs.
+    .map((d) => Math.min(24, d.usageSum))
     .filter((v) => Number.isFinite(v) && v >= 0 && v <= 24);
 
   const ahiValues = [...dayMap.values()]
