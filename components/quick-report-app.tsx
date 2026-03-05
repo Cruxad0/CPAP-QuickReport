@@ -1138,7 +1138,7 @@ export function QuickReportApp() {
 
         <article className="card col-12 legal-notice">
           <details className="legal-disclosure">
-            <summary>GNU/OSCAR Copyright and Distribution Notice</summary>
+            <summary>{"\u00A0\u00A0GNU/OSCAR Copyright and Distribution Notice"}</summary>
             <ul className="notes">
               <li>
                 This app contains parser behavior derived from OSCAR (Open Source CPAP Analysis Reporter), which is GPLv3-licensed software.

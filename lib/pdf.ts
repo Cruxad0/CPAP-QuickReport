@@ -3,7 +3,7 @@ import { QuickReportMetrics } from "@/lib/types";
 const PAGE_WIDTH_A4 = 595.28;
 const PAGE_HEIGHT_A4 = 841.89;
 const PAGE_MARGIN = 18; // 0.25 in
-const NO_DATA_FALLBACK = "No data available or extracted";
+const NO_DATA_FALLBACK = "Data point not available";
 
 type PdfLibModule = {
   PDFDocument: {
@@ -31,6 +31,13 @@ function filenameDateStamp(date = new Date()): string {
 
 function valueText(value: number | null | undefined, digits = 2): string {
   return typeof value === "number" && Number.isFinite(value) ? value.toFixed(digits) : NO_DATA_FALLBACK;
+}
+
+function textValue(value: string | null | undefined): string {
+  const text = value?.trim();
+  if (!text) return NO_DATA_FALLBACK;
+  if (/^not detected from input files$/i.test(text)) return NO_DATA_FALLBACK;
+  return text;
 }
 
 function splitLines(text: string, font: any, fontSize: number, maxWidth: number): string[] {
@@ -183,7 +190,8 @@ function drawBottomFooterBlock(
   const signatureY = baseY + 30;
   const generatedY = baseY + 8;
 
-  state.page.drawText(`Physician: ${report.physicianName}`, {
+  const physicianNameText = report.physicianName?.trim() ?? "";
+  state.page.drawText(`Physician:${physicianNameText ? ` ${physicianNameText}` : ""}`, {
     x: PAGE_MARGIN,
     y: physicianY,
     size: 11,
@@ -332,8 +340,8 @@ export async function buildPdfReport(report: QuickReportMetrics, headerDataUrl?:
     state,
     "Patient Details",
     [
-      ["Patient", report.patientName],
-      ["Date of birth", report.dateOfBirth]
+      ["Patient", textValue(report.patientName)],
+      ["Date of birth", textValue(report.dateOfBirth)]
     ],
     headerImage,
     fontRegular,
@@ -346,10 +354,10 @@ export async function buildPdfReport(report: QuickReportMetrics, headerDataUrl?:
     state,
     "Machine Settings",
     [
-      ["Device", report.machine.device ?? NO_DATA_FALLBACK],
-      ["Mode", report.machine.mode ?? NO_DATA_FALLBACK],
-      ["Pressure", report.machine.pressure ?? NO_DATA_FALLBACK],
-      ["Pressure relief", report.machine.pressureRelief ?? NO_DATA_FALLBACK]
+      ["Device", textValue(report.machine.device)],
+      ["Mode", textValue(report.machine.mode)],
+      ["Pressure", textValue(report.machine.pressure)],
+      ["Pressure relief", textValue(report.machine.pressureRelief)]
     ],
     headerImage,
     fontRegular,
