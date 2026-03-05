@@ -54,6 +54,7 @@ const DATE_PATTERNS = [
   /(\d{4})-(\d{2})-(\d{2})/, // yyyy-mm-dd
   /(\d{2})\/(\d{2})\/(\d{4})/ // mm/dd/yyyy
 ];
+const CLINICAL_DAY_CUTOFF_HOUR = 12;
 
 type SourceMeta = {
   file: SourceFile;
@@ -111,7 +112,37 @@ function safeNumber(input: unknown): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
+function createUtcDateNoon(year: number, month: number, day: number): Date {
+  return new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
+}
+
 function parseDateFromString(value: string): Date | null {
+  const isoDateTime = /(\d{4})-(\d{2})-(\d{2})[ T](\d{1,2}):(\d{2})(?::(\d{2}))?/;
+  const usDateTime = /(\d{2})\/(\d{2})\/(\d{4})[ T](\d{1,2}):(\d{2})(?::(\d{2}))?/;
+  const isoDateTimeMatch = isoDateTime.exec(value);
+  if (isoDateTimeMatch) {
+    const y = Number(isoDateTimeMatch[1]);
+    const mon = Number(isoDateTimeMatch[2]);
+    const d = Number(isoDateTimeMatch[3]);
+    const h = Number(isoDateTimeMatch[4]);
+    const min = Number(isoDateTimeMatch[5]);
+    const sec = Number(isoDateTimeMatch[6] ?? "0");
+    const dt = new Date(Date.UTC(y, mon - 1, d, h, min, sec));
+    if (!Number.isNaN(dt.getTime())) return dt;
+  }
+
+  const usDateTimeMatch = usDateTime.exec(value);
+  if (usDateTimeMatch) {
+    const mon = Number(usDateTimeMatch[1]);
+    const d = Number(usDateTimeMatch[2]);
+    const y = Number(usDateTimeMatch[3]);
+    const h = Number(usDateTimeMatch[4]);
+    const min = Number(usDateTimeMatch[5]);
+    const sec = Number(usDateTimeMatch[6] ?? "0");
+    const dt = new Date(Date.UTC(y, mon - 1, d, h, min, sec));
+    if (!Number.isNaN(dt.getTime())) return dt;
+  }
+
   for (const pattern of DATE_PATTERNS) {
     const m = pattern.exec(value);
     if (!m) continue;
@@ -119,13 +150,13 @@ function parseDateFromString(value: string): Date | null {
       const y = Number(m[1]);
       const mon = Number(m[2]);
       const d = Number(m[3]);
-      const dt = new Date(Date.UTC(y, mon - 1, d));
+      const dt = createUtcDateNoon(y, mon, d);
       if (!Number.isNaN(dt.getTime())) return dt;
     } else {
       const mon = Number(m[1]);
       const d = Number(m[2]);
       const y = Number(m[3]);
-      const dt = new Date(Date.UTC(y, mon - 1, d));
+      const dt = createUtcDateNoon(y, mon, d);
       if (!Number.isNaN(dt.getTime())) return dt;
     }
   }
@@ -147,8 +178,13 @@ function toIsoDate(dt: Date): string {
   return dt.toISOString().slice(0, 10);
 }
 
-function dateFromIso(isoDate: string): Date {
-  return new Date(`${isoDate}T00:00:00Z`);
+function toClinicalDay(date: Date): Date {
+  const shifted = new Date(date.getTime() - CLINICAL_DAY_CUTOFF_HOUR * 60 * 60 * 1000);
+  return createUtcDateNoon(shifted.getUTCFullYear(), shifted.getUTCMonth() + 1, shifted.getUTCDate());
+}
+
+function toClinicalIsoDate(date: Date): string {
+  return toIsoDate(toClinicalDay(date));
 }
 
 function percentile(values: number[], p: number): number {
@@ -182,7 +218,7 @@ function extractResventRecordDate(path: string): Date | null {
   const y = Number(m[1]);
   const mon = Number(m[2]);
   const day = Number(m[3]);
-  const dt = new Date(Date.UTC(y, mon - 1, day));
+  const dt = createUtcDateNoon(y, mon, day);
   return Number.isNaN(dt.getTime()) ? null : dt;
 }
 
@@ -194,7 +230,7 @@ function extractGenericPathDate(path: string): Date | null {
     const y = Number(ymd[1]);
     const m = Number(ymd[2]);
     const d = Number(ymd[3]);
-    const dt = new Date(Date.UTC(y, m - 1, d));
+    const dt = createUtcDateNoon(y, m, d);
     if (!Number.isNaN(dt.getTime())) return dt;
   }
 
@@ -203,7 +239,7 @@ function extractGenericPathDate(path: string): Date | null {
     const y = Number(y_md[1]);
     const m = Number(y_md[2]);
     const d = Number(y_md[3]);
-    const dt = new Date(Date.UTC(y, m - 1, d));
+    const dt = createUtcDateNoon(y, m, d);
     if (!Number.isNaN(dt.getTime())) return dt;
   }
 
@@ -391,11 +427,9 @@ function rankLoaders(files: SourceMeta[]): LoaderMatch[] {
 }
 
 function resolveRecentWindow(latestDate: Date): DateWindow {
-  const latestDataDay = new Date(Date.UTC(latestDate.getUTCFullYear(), latestDate.getUTCMonth(), latestDate.getUTCDate()));
-  const today = new Date();
-  const yesterday = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));
-  yesterday.setUTCDate(yesterday.getUTCDate() - 1);
-  const windowEnd = latestDataDay > yesterday ? yesterday : latestDataDay;
+  const latestDataDay = toClinicalDay(latestDate);
+  const todayClinicalDay = toClinicalDay(new Date());
+  const windowEnd = latestDataDay > todayClinicalDay ? todayClinicalDay : latestDataDay;
   const windowStart = new Date(windowEnd);
   windowStart.setUTCDate(windowStart.getUTCDate() - 89);
   return { start: windowStart, end: windowEnd };
@@ -649,7 +683,7 @@ function parseResventStatText(text: string, fallbackDate: Date): ParsedRecord | 
   const cntHI = num("cntHI");
 
   // Keep daily grouping anchored to THERAPY/RECORD/YYYYMM/DD (same basis OSCAR uses to load sessions).
-  const recordDate = new Date(Date.UTC(fallbackDate.getUTCFullYear(), fallbackDate.getUTCMonth(), fallbackDate.getUTCDate()));
+  const recordDate = createUtcDateNoon(fallbackDate.getUTCFullYear(), fallbackDate.getUTCMonth() + 1, fallbackDate.getUTCDate());
   if (Number.isNaN(recordDate.getTime())) return null;
 
   const usageHours = secUsed !== undefined ? secUsed / 3600 : undefined;
@@ -802,7 +836,7 @@ function parseGenericDailyKeyValueRecord(text: string, fallbackDate: Date): Pars
     break;
   }
 
-  const day = new Date(Date.UTC(fallbackDate.getUTCFullYear(), fallbackDate.getUTCMonth(), fallbackDate.getUTCDate()));
+  const day = createUtcDateNoon(fallbackDate.getUTCFullYear(), fallbackDate.getUTCMonth() + 1, fallbackDate.getUTCDate());
   const hasSignal =
     (usageHours !== undefined && usageHours >= 0 && usageHours <= 24) ||
     (ahi !== undefined && ahi >= 0 && ahi < 200) ||
@@ -1052,12 +1086,10 @@ function pickResventCandidates(files: SourceMeta[], warnings: string[]): {
   if (dated.length === 0) return null;
 
   const latestDate = dated.reduce((acc, m) => (m.recordDate > acc ? m.recordDate : acc), dated[0].recordDate);
-  const windowEnd = new Date(Date.UTC(latestDate.getUTCFullYear(), latestDate.getUTCMonth(), latestDate.getUTCDate()));
-  const windowStart = new Date(windowEnd);
-  windowStart.setUTCDate(windowStart.getUTCDate() - 89);
+  const { start: windowStart, end: windowEnd } = resolveRecentWindow(latestDate);
 
   const inWindow = dated.filter((m) => m.recordDate >= windowStart && m.recordDate <= windowEnd);
-  const windowDateSet = new Set(inWindow.map((m) => toIsoDate(m.recordDate)));
+  const windowDateSet = new Set(inWindow.map((m) => toClinicalIsoDate(m.recordDate)));
 
   const configFiles = files.filter(isResventConfigFile).filter((m) => m.file.size <= MAX_FILE_SIZE_BYTES);
   const usageStatFiles = inWindow.filter(isResventStatUsageFile).filter((m) => m.file.size <= MAX_FILE_SIZE_BYTES);
@@ -1070,7 +1102,7 @@ function pickResventCandidates(files: SourceMeta[], warnings: string[]): {
   for (const ev of inWindow.filter(isResventEvFile).filter((m) => m.file.size <= MAX_FILE_SIZE_BYTES)) {
     const usage = extractUsageSuffix(ev.baseName, "ev");
     if (!usage || !ev.recordDate) continue;
-    evByDayUsage.set(`${toIsoDate(ev.recordDate)}:${usage}`, ev);
+    evByDayUsage.set(`${toClinicalIsoDate(ev.recordDate)}:${usage}`, ev);
   }
 
   const statUsageSet = new Set(
@@ -1213,7 +1245,7 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
           if (parsed) {
             const usage = extractUsageSuffix(statFile.baseName, "stat");
             if (usage && parsed.usageHours && parsed.usageHours > 0) {
-              const key = `${toIsoDate(statFile.recordDate)}:${usage}`;
+              const key = `${toClinicalIsoDate(statFile.recordDate)}:${usage}`;
               const evFile = selected.evByDayUsage.get(key);
               if (evFile) {
                 try {
@@ -1254,7 +1286,7 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
           const leak = parseResventLeakFromBytes(bytes);
           if (!leak) continue;
 
-          const key = toIsoDate(pFile.recordDate);
+          const key = toClinicalIsoDate(pFile.recordDate);
           const existing = leakStatsByDay.get(key);
           if (existing) {
             existing.sum += leak.sum;
@@ -1344,10 +1376,19 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
 
   let latest: Date | null =
     dedupedRecords.length > 0
-      ? dedupedRecords.reduce((acc, r) => (r.date > acc ? r.date : acc), dedupedRecords[0].date)
+      ? dedupedRecords.reduce(
+          (acc, r) => {
+            const clinicalDay = toClinicalDay(r.date);
+            return clinicalDay > acc ? clinicalDay : acc;
+          },
+          toClinicalDay(dedupedRecords[0].date)
+        )
       : null;
-  if (latestPathDate && (!latest || latestPathDate > latest)) {
-    latest = latestPathDate;
+  if (latestPathDate) {
+    const latestPathClinical = toClinicalDay(latestPathDate);
+    if (!latest || latestPathClinical > latest) {
+      latest = latestPathClinical;
+    }
   }
 
   if (!latest) {
@@ -1362,12 +1403,14 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
   }
 
   const { start: windowStart, end: windowEnd } = resolveRecentWindow(latest);
+  const windowStartIso = toIsoDate(windowStart);
+  const windowEndIso = toIsoDate(windowEnd);
 
   const dayMap = new Map<string, DayBucket>();
 
   for (const record of dedupedRecords) {
-    if (record.date < windowStart || record.date > windowEnd) continue;
-    const key = toIsoDate(record.date);
+    const key = toClinicalIsoDate(record.date);
+    if (key < windowStartIso || key > windowEndIso) continue;
     const bucket = dayMap.get(key) ?? createEmptyDayBucket();
     let usageForAhiWeight: number | undefined;
 
@@ -1413,8 +1456,7 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
   }
 
   for (const [day, stats] of leakStatsByDay.entries()) {
-    const dayDate = dateFromIso(day);
-    if (dayDate < windowStart || dayDate > windowEnd) continue;
+    if (day < windowStartIso || day > windowEndIso) continue;
     const bucket = dayMap.get(day) ?? createEmptyDayBucket();
     bucket.leakSum += stats.sum / stats.count;
     bucket.leakCount += 1;

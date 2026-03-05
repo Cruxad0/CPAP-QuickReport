@@ -70,6 +70,13 @@ function normalizeDobInput(value: string): string | null {
   return null;
 }
 
+function formatDobTyping(value: string): string {
+  const digits = value.replace(/\D/g, "").slice(0, 8);
+  if (digits.length <= 2) return digits;
+  if (digits.length <= 4) return `${digits.slice(0, 2)}/${digits.slice(2)}`;
+  return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
+}
+
 function parseIsoDate(isoDate: string): { year: number; month: number; day: number } | null {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(isoDate);
   if (!m) return null;
@@ -693,13 +700,13 @@ export function QuickReportApp() {
             className="date-input"
             type="text"
             inputMode="numeric"
-            placeholder="MM/DD/YYYY or MM-DD-YYYY"
+            placeholder="MM/DD/YYYY"
             value={dateOfBirthInput}
-            onChange={(e) => setDateOfBirthInput(e.target.value)}
+            onChange={(e) => setDateOfBirthInput(formatDobTyping(e.target.value))}
           />
           {dateOfBirthInput.trim().length > 0 && !dateOfBirthIso ? (
             <p className="subtle" style={{ marginTop: 6, color: "#a11c1c" }}>
-              Enter date as MM/DD/YYYY or MM-DD-YYYY.
+              Enter date as MM/DD/YYYY.
             </p>
           ) : null}
           <button type="button" className="link-button" style={{ marginBottom: 10 }} onClick={openCalendarPicker}>
