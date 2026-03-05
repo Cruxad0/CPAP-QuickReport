@@ -992,7 +992,8 @@ export function QuickReportApp() {
             </div>
           ) : null}
 
-          <label htmlFor="physician" style={{ marginTop: 30 }}>
+          <h4 className="subsection-title">Office / Branding</h4>
+          <label htmlFor="physician" style={{ marginTop: 12 }}>
             Physician name
           </label>
           <input
