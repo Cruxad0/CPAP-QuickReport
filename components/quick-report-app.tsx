@@ -644,30 +644,14 @@ export function QuickReportApp() {
   return (
     <main>
       <section className="hero">
-        <div className="hero-row">
-          <div className="hero-copy">
-            <h1>CPAP Clinician QuickReport</h1>
-            <p>Create a 90-day CPAP PDF report in a few steps. Data is processed locally.</p>
-            <p className="subtle">
-              Powered by{" "}
-              <a href="https://notespecialist.com" target="_blank" rel="noopener noreferrer">
-                notespecialist.com
-              </a>
-              {", "}an AI-powered clinical documentation tool.
-            </p>
-          </div>
-          <div className="hero-badge-wrap" aria-hidden="true">
-            <img
-              className="hero-hipaa-badge"
-              src="/hipaa-compliant-badge.jpeg"
-              alt="HIPAA Compliant"
-              loading="lazy"
-              decoding="async"
-            />
-          </div>
-        </div>
-        <p className="subtle hero-hipaa-note">
-          HIPAA compliance requires organizational safeguards, role-based access, audit controls, and vendor BAAs.
+        <h1>CPAP Clinician QuickReport</h1>
+        <p>Create a 90-day CPAP PDF report in a few steps. Data is processed locally and never stored.</p>
+        <p className="subtle">
+          Powered by{" "}
+          <a href="https://notespecialist.com" target="_blank" rel="noopener noreferrer">
+            notespecialist.com
+          </a>
+          {", "}an AI-powered clinical documentation tool.
         </p>
       </section>
 
