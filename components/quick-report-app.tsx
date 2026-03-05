@@ -26,6 +26,7 @@ const MIN_YEAR = 1900;
 const MAX_YEAR = 2100;
 const IMPORT_LOOKBACK_DAYS = 91;
 const DAY_MS = 24 * 60 * 60 * 1000;
+const SOURCE_SELECTION_CANCEL_TIMEOUT_MS = 20000;
 
 type RecentWindowFilterResult = {
   files: SourceFile[];
@@ -505,8 +506,9 @@ export function QuickReportApp() {
         const hasChosenFiles = (input?.files?.length ?? 0) > 0;
         if (hasChosenFiles) return;
 
-        // If user cancelled the picker, stop loading state after a short grace period.
-        if (Date.now() - startedAt >= 2200) {
+        // Use a longer timeout so large SD-card selections do not briefly clear
+        // the loading overlay before onChange starts.
+        if (Date.now() - startedAt >= SOURCE_SELECTION_CANCEL_TIMEOUT_MS) {
           setPendingSourceSelection((current) => (current === kind ? null : current));
           setIsSourceLoading(false);
           return;
@@ -990,7 +992,7 @@ export function QuickReportApp() {
             </div>
           ) : null}
 
-          <label htmlFor="physician" style={{ marginTop: 18 }}>
+          <label htmlFor="physician" style={{ marginTop: 30 }}>
             Physician name
           </label>
           <input
@@ -1011,7 +1013,7 @@ export function QuickReportApp() {
         <article className={`card col-8 ${isDataSourceLoading ? "card-loading" : ""}`} aria-busy={isDataSourceLoading}>
           {isDataSourceLoading ? <div className="loading-overlay">Loading data. Please wait...</div> : null}
           <h3>Data Source</h3>
-          <p className="subtle">Choose an SD-card folder. The app keeps only the most recent 91 days for processing speed.</p>
+          <p className="subtle">Choose an SD-card folder. The webapp keeps only the most recent 90 days NIMV data locally in browser.</p>
 
           <div className="actions">
             <button
@@ -1135,29 +1137,31 @@ export function QuickReportApp() {
         ) : null}
 
         <article className="card col-12 legal-notice">
-          <h3>GNU/OSCAR Copyright and Distribution Notice</h3>
-          <ul className="notes">
-            <li>
-              This app contains parser behavior derived from OSCAR (Open Source CPAP Analysis Reporter), which is GPLv3-licensed software.
-            </li>
-            <li>
-              Attribution from OSCAR repository materials: SleepyHead copyright (C) 2011-2018 Mark Watkins; portions of OSCAR copyright (C) 2019-2022 The OSCAR Team.
-            </li>
-            <li>
-              Distribution requirement: if you distribute this app, or modified versions that include GPL-covered OSCAR-derived code, provide corresponding source code and preserve GPLv3 terms and attribution notices.
-            </li>
-            <li>No warranty: this software is provided without warranty, consistent with GNU GPL terms.</li>
-            <li>
-              References:{" "}
-              <a href="https://www.sleepfiles.com/OSCAR/" target="_blank" rel="noopener noreferrer">
-                OSCAR project
-              </a>
-              {" | "}
-              <a href="https://www.gnu.org/licenses/gpl-3.0.html" target="_blank" rel="noopener noreferrer">
-                GNU GPL v3 license text
-              </a>
-            </li>
-          </ul>
+          <details className="legal-disclosure">
+            <summary>GNU/OSCAR Copyright and Distribution Notice</summary>
+            <ul className="notes">
+              <li>
+                This app contains parser behavior derived from OSCAR (Open Source CPAP Analysis Reporter), which is GPLv3-licensed software.
+              </li>
+              <li>
+                Attribution from OSCAR repository materials: SleepyHead copyright (C) 2011-2018 Mark Watkins; portions of OSCAR copyright (C) 2019-2022 The OSCAR Team.
+              </li>
+              <li>
+                Distribution requirement: if you distribute this app, or modified versions that include GPL-covered OSCAR-derived code, provide corresponding source code and preserve GPLv3 terms and attribution notices.
+              </li>
+              <li>No warranty: this software is provided without warranty, consistent with GNU GPL terms.</li>
+              <li>
+                References:{" "}
+                <a href="https://www.sleepfiles.com/OSCAR/" target="_blank" rel="noopener noreferrer">
+                  OSCAR project
+                </a>
+                {" | "}
+                <a href="https://www.gnu.org/licenses/gpl-3.0.html" target="_blank" rel="noopener noreferrer">
+                  GNU GPL v3 license text
+                </a>
+              </li>
+            </ul>
+          </details>
         </article>
       </section>
     </main>

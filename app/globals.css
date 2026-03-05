@@ -412,16 +412,37 @@ textarea {
   border-color: #dde5ec;
 }
 
-.legal-notice h3 {
-  color: #5f6f7e;
-}
-
 .legal-notice .notes li {
   color: #6f7f8e;
 }
 
 .legal-notice a {
   color: #5e7286;
+}
+
+.legal-disclosure summary {
+  cursor: pointer;
+  color: #5f6f7e;
+  font-size: 0.9rem;
+  font-weight: 600;
+  list-style: none;
+}
+
+.legal-disclosure summary::-webkit-details-marker {
+  display: none;
+}
+
+.legal-disclosure summary::before {
+  content: "▸ ";
+  display: inline-block;
+}
+
+.legal-disclosure[open] summary::before {
+  content: "▾ ";
+}
+
+.legal-disclosure .notes {
+  margin-top: 0.55rem;
 }
 
 @media (max-width: 930px) {
