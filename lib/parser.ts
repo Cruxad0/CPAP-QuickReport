@@ -1461,13 +1461,15 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
 
   const daysWithData = dayMap.size;
   const compliantDays = usageValues.filter((u) => u >= 4).length;
-  const avgUsageHours = usageValues.length > 0 ? usageValues.reduce((a, b) => a + b, 0) / usageValues.length : 0;
-  const avgAhi = ahiValues.length > 0 ? ahiValues.reduce((a, b) => a + b, 0) / ahiValues.length : 0;
+  const avgUsageHours = usageValues.length > 0 ? usageValues.reduce((a, b) => a + b, 0) / usageValues.length : null;
+  const avgAhi = ahiValues.length > 0 ? ahiValues.reduce((a, b) => a + b, 0) / ahiValues.length : null;
   const avgResidualApneas =
     residualApneaValues.length > 0 ? residualApneaValues.reduce((a, b) => a + b, 0) / residualApneaValues.length : null;
   const avgCentralApneas =
     centralApneaValues.length > 0 ? centralApneaValues.reduce((a, b) => a + b, 0) / centralApneaValues.length : null;
-  const ahi95th = ahiValues.length > 0 ? percentile(ahiValues, 95) : 0;
+  const ahi95th = ahiValues.length > 0 ? percentile(ahiValues, 95) : null;
+  const residualApneas95th = residualApneaValues.length > 0 ? percentile(residualApneaValues, 95) : null;
+  const centralApneas95th = centralApneaValues.length > 0 ? percentile(centralApneaValues, 95) : null;
   const avgLeak = leakValues.length > 0 ? leakValues.reduce((a, b) => a + b, 0) / leakValues.length : null;
   const maxLeak = leakMaxValues.length > 0 ? Math.max(...leakMaxValues) : leakValues.length > 0 ? Math.max(...leakValues) : null;
 
@@ -1507,11 +1509,13 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
     usageDaysPercent: finite((daysWithData / 90) * 100),
     compliantDays,
     compliancePercent: finite((compliantDays / 90) * 100),
-    avgUsageHours: finite(avgUsageHours),
-    avgAhi: finite(avgAhi),
+    avgUsageHours: avgUsageHours === null ? null : finite(avgUsageHours),
+    avgAhi: avgAhi === null ? null : finite(avgAhi),
     avgResidualApneas: avgResidualApneas === null ? null : finite(avgResidualApneas),
     avgCentralApneas: avgCentralApneas === null ? null : finite(avgCentralApneas),
-    ahi95th: finite(ahi95th),
+    ahi95th: ahi95th === null ? null : finite(ahi95th),
+    residualApneas95th: residualApneas95th === null ? null : finite(residualApneas95th),
+    centralApneas95th: centralApneas95th === null ? null : finite(centralApneas95th),
     avgLeak: avgLeak === null ? null : finite(avgLeak),
     maxLeak: maxLeak === null ? null : finite(maxLeak),
     machine,

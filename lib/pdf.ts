@@ -3,6 +3,7 @@ import { QuickReportMetrics } from "@/lib/types";
 const PAGE_WIDTH_A4 = 595.28;
 const PAGE_HEIGHT_A4 = 841.89;
 const PAGE_MARGIN = 18; // 0.25 in
+const NO_DATA_FALLBACK = "No data available or extracted";
 
 type PdfLibModule = {
   PDFDocument: {
@@ -28,8 +29,8 @@ function filenameDateStamp(date = new Date()): string {
   return `${mm}${dd}${yyyy}`;
 }
 
-function valueText(value: number, digits = 2): string {
-  return Number.isFinite(value) ? value.toFixed(digits) : "n/a";
+function valueText(value: number | null | undefined, digits = 2): string {
+  return typeof value === "number" && Number.isFinite(value) ? value.toFixed(digits) : NO_DATA_FALLBACK;
 }
 
 function splitLines(text: string, font: any, fontSize: number, maxWidth: number): string[] {
@@ -345,10 +346,10 @@ export async function buildPdfReport(report: QuickReportMetrics, headerDataUrl?:
     state,
     "Machine Settings",
     [
-      ["Device", report.machine.device ?? "n/a"],
-      ["Mode", report.machine.mode ?? "n/a"],
-      ["Pressure", report.machine.pressure ?? "n/a"],
-      ["Pressure relief", report.machine.pressureRelief ?? "n/a"]
+      ["Device", report.machine.device ?? NO_DATA_FALLBACK],
+      ["Mode", report.machine.mode ?? NO_DATA_FALLBACK],
+      ["Pressure", report.machine.pressure ?? NO_DATA_FALLBACK],
+      ["Pressure relief", report.machine.pressureRelief ?? NO_DATA_FALLBACK]
     ],
     headerImage,
     fontRegular,
@@ -366,13 +367,15 @@ export async function buildPdfReport(report: QuickReportMetrics, headerDataUrl?:
       ["Usage days (% of range)", `${report.usageDaysPercent.toFixed(1)}%`],
       ["Compliant days (>= 4h)", `${report.compliantDays} / ${report.daysInWindow}`],
       ["Compliance (% of range)", `${report.compliancePercent.toFixed(1)}%`],
-      ["Average usage", `${valueText(report.avgUsageHours)} h`],
-      ["Average AHI", valueText(report.avgAhi)],
-      ["Residual apneas (avg)", report.avgResidualApneas === null ? "n/a" : valueText(report.avgResidualApneas)],
-      ["Central apneas (avg)", report.avgCentralApneas === null ? "n/a" : valueText(report.avgCentralApneas)],
+      ["Average usage per day", report.avgUsageHours === null ? NO_DATA_FALLBACK : `${valueText(report.avgUsageHours)} h`],
+      ["AHI (avg)", valueText(report.avgAhi)],
+      ["Residual apneas (avg)", valueText(report.avgResidualApneas)],
+      ["Central apneas (avg)", valueText(report.avgCentralApneas)],
       ["95th AHI", valueText(report.ahi95th)],
-      ["Average leak", report.avgLeak === null ? "n/a" : `${valueText(report.avgLeak)} L/min`],
-      ["Max leak", report.maxLeak === null ? "n/a" : `${valueText(report.maxLeak)} L/min`]
+      ["Residual apneas (95th)", valueText(report.residualApneas95th)],
+      ["Central apneas (95th)", valueText(report.centralApneas95th)],
+      ["Leak (avg)", report.avgLeak === null ? NO_DATA_FALLBACK : `${valueText(report.avgLeak)} L/min`],
+      ["Max leak", report.maxLeak === null ? NO_DATA_FALLBACK : `${valueText(report.maxLeak)} L/min`]
     ],
     headerImage,
     fontRegular,

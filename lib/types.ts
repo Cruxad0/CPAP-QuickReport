@@ -44,11 +44,13 @@ export interface QuickReportMetrics {
   usageDaysPercent: number;
   compliantDays: number;
   compliancePercent: number;
-  avgUsageHours: number;
-  avgAhi: number;
+  avgUsageHours: number | null;
+  avgAhi: number | null;
   avgResidualApneas: number | null;
   avgCentralApneas: number | null;
-  ahi95th: number;
+  ahi95th: number | null;
+  residualApneas95th: number | null;
+  centralApneas95th: number | null;
   avgLeak: number | null;
   maxLeak: number | null;
   machine: MachineSettings;
