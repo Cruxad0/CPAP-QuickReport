@@ -87,8 +87,13 @@ type PdfState = {
   pageHeight: number;
 };
 
-function drawDefaultHeader(state: PdfState, fontBold: any, rgbFn: PdfLibModule["rgb"]) {
-  state.page.drawText("CPAP 90-Day Quick Report", {
+function headerModeText(mode: string | undefined): string {
+  const normalized = mode?.trim();
+  return normalized && normalized.length > 0 ? normalized : "CPAP";
+}
+
+function drawDefaultHeader(state: PdfState, reportDays: number, reportMode: string | undefined, fontBold: any, rgbFn: PdfLibModule["rgb"]) {
+  state.page.drawText(`${headerModeText(reportMode)} ${reportDays}-Day Quick Report`, {
     x: PAGE_MARGIN,
     y: state.y - 16,
     size: 18,
@@ -105,7 +110,14 @@ function drawDefaultHeader(state: PdfState, fontBold: any, rgbFn: PdfLibModule["
   state.y -= 10;
 }
 
-function drawHeader(state: PdfState, headerImage: any | undefined, fontBold: any, rgbFn: PdfLibModule["rgb"]) {
+function drawHeader(
+  state: PdfState,
+  reportDays: number,
+  reportMode: string | undefined,
+  headerImage: any | undefined,
+  fontBold: any,
+  rgbFn: PdfLibModule["rgb"]
+) {
   if (headerImage) {
     const maxWidth = state.pageWidth - PAGE_MARGIN * 2;
     const ratio = headerImage.height / headerImage.width;
@@ -119,13 +131,15 @@ function drawHeader(state: PdfState, headerImage: any | undefined, fontBold: any
     state.y -= height + 6;
     return;
   }
-  drawDefaultHeader(state, fontBold, rgbFn);
+  drawDefaultHeader(state, reportDays, reportMode, fontBold, rgbFn);
 }
 
 function ensureSpace(
   pdfDoc: any,
   state: PdfState,
   neededHeight: number,
+  reportDays: number,
+  reportMode: string | undefined,
   headerImage: any | undefined,
   fontBold: any,
   rgbFn: PdfLibModule["rgb"]
@@ -135,12 +149,14 @@ function ensureSpace(
   state.pageWidth = state.page.getWidth();
   state.pageHeight = state.page.getHeight();
   state.y = state.pageHeight - PAGE_MARGIN;
-  drawHeader(state, headerImage, fontBold, rgbFn);
+  drawHeader(state, reportDays, reportMode, headerImage, fontBold, rgbFn);
 }
 
 function startNewPage(
   pdfDoc: any,
   state: PdfState,
+  reportDays: number,
+  reportMode: string | undefined,
   headerImage: any | undefined,
   fontBold: any,
   rgbFn: PdfLibModule["rgb"]
@@ -149,18 +165,20 @@ function startNewPage(
   state.pageWidth = state.page.getWidth();
   state.pageHeight = state.page.getHeight();
   state.y = state.pageHeight - PAGE_MARGIN;
-  drawHeader(state, headerImage, fontBold, rgbFn);
+  drawHeader(state, reportDays, reportMode, headerImage, fontBold, rgbFn);
 }
 
 function drawSectionTitle(
   pdfDoc: any,
   state: PdfState,
   title: string,
+  reportDays: number,
+  reportMode: string | undefined,
   headerImage: any | undefined,
   fontBold: any,
   rgbFn: PdfLibModule["rgb"]
 ) {
-  ensureSpace(pdfDoc, state, 30, headerImage, fontBold, rgbFn);
+  ensureSpace(pdfDoc, state, 30, reportDays, reportMode, headerImage, fontBold, rgbFn);
   state.page.drawText(title, {
     x: PAGE_MARGIN,
     y: state.y - 12,
@@ -182,7 +200,7 @@ function drawBottomFooterBlock(
 ) {
   const requiredHeight = 82;
   if (state.y - requiredHeight < PAGE_MARGIN) {
-    startNewPage(pdfDoc, state, headerImage, fontBold, rgbFn);
+    startNewPage(pdfDoc, state, report.daysInWindow, report.machine.mode, headerImage, fontBold, rgbFn);
   }
 
   const baseY = PAGE_MARGIN + 6;
@@ -280,6 +298,8 @@ function machineSettingRows(report: QuickReportMetrics): TableRow[] {
 function drawTable(
   pdfDoc: any,
   state: PdfState,
+  reportDays: number,
+  reportMode: string | undefined,
   title: string,
   rows: TableRow[],
   headerImage: any | undefined,
@@ -294,10 +314,10 @@ function drawTable(
   const insetX = 8;
   const insetY = 6;
 
-  drawSectionTitle(pdfDoc, state, title, headerImage, fontBold, rgbFn);
+  drawSectionTitle(pdfDoc, state, title, reportDays, reportMode, headerImage, fontBold, rgbFn);
 
   const headerHeight = 22;
-  ensureSpace(pdfDoc, state, headerHeight + 12, headerImage, fontBold, rgbFn);
+  ensureSpace(pdfDoc, state, headerHeight + 12, reportDays, reportMode, headerImage, fontBold, rgbFn);
   state.page.drawRectangle({
     x: PAGE_MARGIN,
     y: state.y - headerHeight,
@@ -329,7 +349,7 @@ function drawTable(
     const lineCount = Math.max(labelLines.length, valueLines.length);
     const rowHeight = insetY * 2 + lineCount * lineHeight;
 
-    ensureSpace(pdfDoc, state, rowHeight + 10, headerImage, fontBold, rgbFn);
+    ensureSpace(pdfDoc, state, rowHeight + 10, reportDays, reportMode, headerImage, fontBold, rgbFn);
     const fill = idx % 2 === 0 ? rgbFn(0.965, 0.98, 0.99) : rgbFn(1, 1, 1);
 
     state.page.drawRectangle({
@@ -386,11 +406,13 @@ export async function buildPdfReport(report: QuickReportMetrics, headerDataUrl?:
     pageWidth: PAGE_WIDTH_A4,
     pageHeight: PAGE_HEIGHT_A4
   };
-  drawHeader(state, headerImage, fontBold, rgbFn);
+  drawHeader(state, report.daysInWindow, report.machine.mode, headerImage, fontBold, rgbFn);
 
   drawTable(
     pdfDoc,
     state,
+    report.daysInWindow,
+    report.machine.mode,
     "Patient Details",
     [
       ["Patient", textValue(report.patientName)],
@@ -405,6 +427,8 @@ export async function buildPdfReport(report: QuickReportMetrics, headerDataUrl?:
   drawTable(
     pdfDoc,
     state,
+    report.daysInWindow,
+    report.machine.mode,
     "Machine Settings",
     machineSettingRows(report),
     headerImage,
@@ -416,6 +440,8 @@ export async function buildPdfReport(report: QuickReportMetrics, headerDataUrl?:
   drawTable(
     pdfDoc,
     state,
+    report.daysInWindow,
+    report.machine.mode,
     `Therapy Summary (Last ${report.daysInWindow} Days)`,
     [
       ["Date range", `${report.dateRangeStart} to ${report.dateRangeEnd}`],
