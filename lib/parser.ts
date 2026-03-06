@@ -822,7 +822,7 @@ function inferMachineSettingsFromConfigFilename(path: string, machine: QuickRepo
     machine.mode = RESVENT_MODE_FROM_FILE.get(base);
   }
   if (!machine.device) {
-    machine.device = "Resvent / Hoffrichter (SD Card)";
+    machine.device = "Resvent / Hoffrichter";
   }
 }
 
@@ -1962,6 +1962,10 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
 
   if (!machine.mode && (machine.epap || machine.ipap || machine.respiratoryRate)) {
     machine.mode = "BiPAP";
+  }
+
+  if (machine.device) {
+    machine.device = machine.device.replace(/\s*\(\s*sd\s*card\s*\)\s*$/i, "").trim();
   }
 
   const report: QuickReportMetrics = {
