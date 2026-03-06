@@ -75,9 +75,15 @@ type DayBucket = {
   residualApneaCount: number;
   centralApneaSum: number;
   centralApneaCount: number;
+  reraSum: number;
+  reraCount: number;
   leakSum: number;
   leakCount: number;
   leakMax: number | null;
+  pressureAvgSum: number;
+  pressureAvgCount: number;
+  pressure95Sum: number;
+  pressure95Count: number;
 };
 
 type LeakStats = {
@@ -110,6 +116,25 @@ function safeNumber(input: unknown): number | undefined {
   if (typeof input !== "string") return undefined;
   const n = Number.parseFloat(input.replace(/,/g, "").trim());
   return Number.isFinite(n) ? n : undefined;
+}
+
+function normalizePressureNumber(raw: number | undefined): number | undefined {
+  if (raw === undefined || !Number.isFinite(raw)) return undefined;
+  if (raw < 0) return undefined;
+  if (raw <= 80) return raw;
+  if (raw <= 8000) return raw / 100;
+  return undefined;
+}
+
+function pressureText(value: number | undefined): string | undefined {
+  const n = normalizePressureNumber(value);
+  if (n === undefined) return undefined;
+  return `${Number(n.toFixed(2)).toString()} cmH2O`;
+}
+
+function isLikelyAutoMode(mode: string | undefined): boolean {
+  if (!mode) return false;
+  return /\b(auto|apap|autoset|vauto|autobilevel|auto[-\s]*bipap|asv|autosv)\b/i.test(mode);
 }
 
 function createUtcDateNoon(year: number, month: number, day: number): Date {
@@ -294,15 +319,99 @@ function inferMachineSettingsFromText(text: string, machine: QuickReportMetrics[
   }
   if (!machine.mode) {
     const m = text.match(/(?:mode|therapy mode)\s*[:=]\s*([^\n\r]+)/i);
-    if (m) machine.mode = m[1].trim();
-  }
-  if (!machine.pressure) {
-    const m = text.match(/(?:pressure|min\s*pressure|max\s*pressure|ipap|epap)\s*[:=]\s*([^\n\r]+)/i);
-    if (m) machine.pressure = m[1].trim();
+    if (m) {
+      machine.mode = m[1].trim();
+      if (isLikelyAutoMode(machine.mode)) machine.pressureIsAuto = true;
+    }
   }
   if (!machine.pressureRelief) {
     const m = text.match(/(?:epr|pressure\s*relief|flex|ipr)\s*[:=]\s*([^\n\r]+)/i);
     if (m) machine.pressureRelief = m[1].trim();
+  }
+
+  const minMatch = text.match(/(?:^|\b)(?:min(?:imum)?\s*(?:pressure|ipap|epap)|pmin|epapmin|ipapmin)\s*[:=]?\s*(-?\d+(?:\.\d+)?)/im);
+  const maxMatch = text.match(/(?:^|\b)(?:max(?:imum)?\s*(?:pressure|ipap|epap)|pmax|epapmax|ipapmax)\s*[:=]?\s*(-?\d+(?:\.\d+)?)/im);
+  const avgPressureMatch = text.match(/(?:avg|average|mean)\s*(?:mask\s*)?(?:pressure|ipap|epap)\s*[:=]?\s*(-?\d+(?:\.\d+)?)/i);
+  const p95PressureMatch = text.match(/(?:95(?:th|%)|p95)\s*(?:mask\s*)?(?:pressure|ipap|epap)\s*[:=]?\s*(-?\d+(?:\.\d+)?)/i);
+
+  const minPressure = normalizePressureNumber(minMatch ? safeNumber(minMatch[1]) : undefined);
+  const maxPressure = normalizePressureNumber(maxMatch ? safeNumber(maxMatch[1]) : undefined);
+  const avgPressure = normalizePressureNumber(avgPressureMatch ? safeNumber(avgPressureMatch[1]) : undefined);
+  const pressure95th = normalizePressureNumber(p95PressureMatch ? safeNumber(p95PressureMatch[1]) : undefined);
+
+  if (!machine.pressureMin && minPressure !== undefined) machine.pressureMin = pressureText(minPressure);
+  if (!machine.pressureMax && maxPressure !== undefined) machine.pressureMax = pressureText(maxPressure);
+  if (avgPressure !== undefined && machine.pressureAvg === undefined) machine.pressureAvg = avgPressure;
+  if (pressure95th !== undefined && machine.pressure95th === undefined) machine.pressure95th = pressure95th;
+
+  if (minPressure !== undefined || maxPressure !== undefined) {
+    machine.pressureIsAuto = true;
+    if (!machine.pressure && minPressure !== undefined && maxPressure !== undefined) {
+      machine.pressure = `${Number(minPressure.toFixed(2)).toString()}-${Number(maxPressure.toFixed(2)).toString()} (cmH2O)`;
+    }
+  } else if (!machine.pressure) {
+    const fixedPressureMatch = text.match(/(?:set\s*pressure|fixed\s*pressure|cpap\s*pressure|pressure)\s*[:=]\s*(-?\d+(?:\.\d+)?)/i);
+    const fixedPressure = normalizePressureNumber(fixedPressureMatch ? safeNumber(fixedPressureMatch[1]) : undefined);
+    if (fixedPressure !== undefined) machine.pressure = `Fixed ${Number(fixedPressure.toFixed(2)).toString()} (cmH2O)`;
+  }
+
+  inferPressureSettingsFromMap(parseKeyValueLines(text), machine);
+}
+
+function inferPressureSettingsFromMap(configMap: Map<string, string>, machine: QuickReportMetrics["machine"]) {
+  const kvLower = new Map<string, string>();
+  for (const [k, v] of configMap.entries()) kvLower.set(k.toLowerCase(), v);
+
+  const readByExactKey = (keys: string[]): number | undefined => {
+    for (const key of keys) {
+      const raw = kvLower.get(key.toLowerCase());
+      const normalized = normalizePressureNumber(safeNumber(raw));
+      if (normalized !== undefined) return normalized;
+    }
+    return undefined;
+  };
+
+  const readByPattern = (patterns: RegExp[]): number | undefined => {
+    for (const [key, value] of kvLower.entries()) {
+      if (!patterns.some((pattern) => pattern.test(key))) continue;
+      const normalized = normalizePressureNumber(safeNumber(value));
+      if (normalized !== undefined) return normalized;
+    }
+    return undefined;
+  };
+
+  const minPressure =
+    readByExactKey(["pmin", "minpressure", "pressuremin", "min_pressure", "epapmin", "ipapmin", "min_epap", "min_ipap"]) ??
+    readByPattern([/(?:^|_)(?:min|minimum).*(?:press|ipap|epap)/i, /(?:press|ipap|epap).*(?:min|minimum)(?:$|_)/i]);
+
+  const maxPressure =
+    readByExactKey(["pmax", "maxpressure", "pressuremax", "max_pressure", "epapmax", "ipapmax", "max_epap", "max_ipap"]) ??
+    readByPattern([/(?:^|_)(?:max|maximum).*(?:press|ipap|epap)/i, /(?:press|ipap|epap).*(?:max|maximum)(?:$|_)/i]);
+
+  const avgPressure =
+    readByExactKey(["avgpressure", "averagepressure", "meanpressure", "pressureavg", "pressure_mean", "avg_press", "avgpressurecmh2o"]) ??
+    readByPattern([/(?:avg|average|mean).*(?:press|ipap|epap)/i, /(?:press|ipap|epap).*(?:avg|average|mean)/i]);
+
+  const pressure95th =
+    readByExactKey(["pressure95", "pressure_95", "p95", "p95pressure", "ipap95", "epap95"]) ??
+    readByPattern([/(?:95|p95).*(?:press|ipap|epap)/i, /(?:press|ipap|epap).*(?:95|p95)/i]);
+
+  if (!machine.pressureMin && minPressure !== undefined) machine.pressureMin = pressureText(minPressure);
+  if (!machine.pressureMax && maxPressure !== undefined) machine.pressureMax = pressureText(maxPressure);
+  if (machine.pressureAvg === undefined && avgPressure !== undefined) machine.pressureAvg = avgPressure;
+  if (machine.pressure95th === undefined && pressure95th !== undefined) machine.pressure95th = pressure95th;
+
+  if (minPressure !== undefined || maxPressure !== undefined) {
+    machine.pressureIsAuto = true;
+  }
+
+  if (!machine.pressure && minPressure === undefined && maxPressure === undefined) {
+    const fixed =
+      readByExactKey(["press", "pressure", "setpressure", "cpappressure", "epap", "ipap"]) ??
+      readByPattern([/(?:^|_)(?:set|fixed).*(?:press|ipap|epap)/i]);
+    if (fixed !== undefined) {
+      machine.pressure = `Fixed ${Number(fixed.toFixed(2)).toString()} (cmH2O)`;
+    }
   }
 }
 
@@ -437,7 +546,10 @@ function resolveRecentWindow(latestDate: Date, lookbackDays: number): DateWindow
   const normalizedLookbackDays = normalizeLookbackDays(lookbackDays);
   const latestDataDay = toClinicalDay(latestDate);
   const todayClinicalDay = toClinicalDay(new Date());
-  const windowEnd = latestDataDay > todayClinicalDay ? todayClinicalDay : latestDataDay;
+  const latestAllowedDay = new Date(todayClinicalDay);
+  // Exclude the current day from query windows and end at today - 1 day.
+  latestAllowedDay.setUTCDate(latestAllowedDay.getUTCDate() - 1);
+  const windowEnd = latestDataDay > latestAllowedDay ? latestAllowedDay : latestDataDay;
   const windowStart = new Date(windowEnd);
   windowStart.setUTCDate(windowStart.getUTCDate() - (normalizedLookbackDays - 1));
   return { start: windowStart, end: windowEnd };
@@ -623,6 +735,8 @@ function inferMachineSettingsFromConfigFilename(path: string, machine: QuickRepo
 }
 
 function inferMachineSettingsFromConfigMap(configMap: Map<string, string>, machine: QuickReportMetrics["machine"]) {
+  if (isLikelyAutoMode(machine.mode)) machine.pressureIsAuto = true;
+
   const ventModeMap = new Map<string, string>([
     ["1", "CPAP"],
     ["3", "APAP"],
@@ -642,7 +756,10 @@ function inferMachineSettingsFromConfigMap(configMap: Map<string, string>, machi
 
   if (!machine.mode) {
     const modeRaw = configMap.get("VentMode") ?? configMap.get("mode");
-    if (modeRaw) machine.mode = ventModeMap.get(modeRaw) ?? modeRaw;
+    if (modeRaw) {
+      machine.mode = ventModeMap.get(modeRaw) ?? modeRaw;
+      if (isLikelyAutoMode(machine.mode)) machine.pressureIsAuto = true;
+    }
   }
 
   if (!machine.pressure) {
@@ -662,13 +779,24 @@ function inferMachineSettingsFromConfigMap(configMap: Map<string, string>, machi
     const epapMinText = formatCmH2O(epapMin);
     const ipapMaxText = formatCmH2O(ipapMax);
 
-    if (pressText) machine.pressure = `Fixed ${pressText} (cmH2O)`;
-    else if (pMinText && pMaxText) machine.pressure = `${pMinText}-${pMaxText} (cmH2O)`;
+    if (pressText) {
+      machine.pressure = `Fixed ${pressText} (cmH2O)`;
+    } else if (pMinText && pMaxText) {
+      machine.pressure = `${pMinText}-${pMaxText} (cmH2O)`;
+      machine.pressureMin = `${pMinText} cmH2O`;
+      machine.pressureMax = `${pMaxText} cmH2O`;
+      machine.pressureIsAuto = true;
+    }
     else if (epapText && ipapText) machine.pressure = `EPAP ${epapText} / IPAP ${ipapText} (cmH2O)`;
     else if (epapMinText && ipapMaxText) {
       machine.pressure = `EPAP ${epapMinText} - IPAP ${ipapMaxText} (cmH2O)`;
+      machine.pressureMin = `EPAP ${epapMinText} cmH2O`;
+      machine.pressureMax = `IPAP ${ipapMaxText} cmH2O`;
+      machine.pressureIsAuto = true;
     }
   }
+
+  inferPressureSettingsFromMap(configMap, machine);
 
   if (!machine.pressureRelief) {
     inferPressureReliefFromMap(configMap, machine);
@@ -689,6 +817,7 @@ function parseResventStatText(text: string, fallbackDate: Date): ParsedRecord | 
   const cntCAI = num("cntCAI");
   const cntAI = num("cntAI");
   const cntHI = num("cntHI");
+  const cntRERA = num("cntRERA");
 
   // Keep daily grouping anchored to THERAPY/RECORD/YYYYMM/DD (same basis OSCAR uses to load sessions).
   const recordDate = createUtcDateNoon(fallbackDate.getUTCFullYear(), fallbackDate.getUTCMonth() + 1, fallbackDate.getUTCDate());
@@ -699,6 +828,9 @@ function parseResventStatText(text: string, fallbackDate: Date): ParsedRecord | 
   let ahi: number | undefined;
   let residualApneas: number | undefined;
   let centralApneas: number | undefined;
+  let reraIndex: number | undefined;
+  let pressureAvg: number | undefined;
+  let pressure95th: number | undefined;
   let eventCount: number | undefined;
   if (cntAI !== undefined && cntHI !== undefined) {
     eventCount = cntAI + cntHI;
@@ -721,6 +853,20 @@ function parseResventStatText(text: string, fallbackDate: Date): ParsedRecord | 
   if (cntCAI !== undefined) {
     centralApneas = usageHours !== undefined && usageHours > 0 ? cntCAI / usageHours : cntCAI;
   }
+  if (cntRERA !== undefined) {
+    reraIndex = usageHours !== undefined && usageHours > 0 ? cntRERA / usageHours : cntRERA;
+  }
+
+  for (const [key, value] of kvLower.entries()) {
+    const normalized = normalizePressureNumber(safeNumber(value));
+    if (normalized === undefined) continue;
+    if (pressureAvg === undefined && /(?:avg|average|mean).*(?:press|ipap|epap)|(?:press|ipap|epap).*(?:avg|average|mean)/i.test(key)) {
+      pressureAvg = normalized;
+    }
+    if (pressure95th === undefined && /(?:95|p95).*(?:press|ipap|epap)|(?:press|ipap|epap).*(?:95|p95)/i.test(key)) {
+      pressure95th = normalized;
+    }
+  }
 
   let leak: number | undefined;
   for (const [key, value] of kv.entries()) {
@@ -738,7 +884,10 @@ function parseResventStatText(text: string, fallbackDate: Date): ParsedRecord | 
     (ahi !== undefined && ahi >= 0 && ahi < 200) ||
     (residualApneas !== undefined && residualApneas >= 0 && residualApneas < 200) ||
     (centralApneas !== undefined && centralApneas >= 0 && centralApneas < 200) ||
-    (leak !== undefined && leak >= 0 && leak < 500);
+    (reraIndex !== undefined && reraIndex >= 0 && reraIndex < 200) ||
+    (leak !== undefined && leak >= 0 && leak < 500) ||
+    (pressureAvg !== undefined && pressureAvg >= 0 && pressureAvg <= 80) ||
+    (pressure95th !== undefined && pressure95th >= 0 && pressure95th <= 80);
   if (!hasSignal) return null;
 
   return {
@@ -747,7 +896,10 @@ function parseResventStatText(text: string, fallbackDate: Date): ParsedRecord | 
     ahi: ahi !== undefined && ahi >= 0 && ahi < 200 ? ahi : undefined,
     residualApneas: residualApneas !== undefined && residualApneas >= 0 && residualApneas < 200 ? residualApneas : undefined,
     centralApneas: centralApneas !== undefined && centralApneas >= 0 && centralApneas < 200 ? centralApneas : undefined,
-    leak: leak !== undefined && leak >= 0 && leak < 500 ? leak : undefined
+    reraIndex: reraIndex !== undefined && reraIndex >= 0 && reraIndex < 200 ? reraIndex : undefined,
+    leak: leak !== undefined && leak >= 0 && leak < 500 ? leak : undefined,
+    pressureAvg: pressureAvg !== undefined && pressureAvg >= 0 && pressureAvg <= 80 ? pressureAvg : undefined,
+    pressure95th: pressure95th !== undefined && pressure95th >= 0 && pressure95th <= 80 ? pressure95th : undefined
   };
 }
 
@@ -842,6 +994,32 @@ function parseGenericDailyKeyValueRecord(text: string, fallbackDate: Date): Pars
     "CAI",
     "cntCAI"
   ]);
+  const reraIndex = readRateMetric([
+    "rera",
+    "reraindex",
+    "rera_index",
+    "rerai",
+    "cntRERA",
+    "cnt_rera"
+  ]);
+
+  const pressureAvg = (() => {
+    for (const [key, value] of kvLower.entries()) {
+      if (!/(?:avg|average|mean).*(?:press|ipap|epap)|(?:press|ipap|epap).*(?:avg|average|mean)/i.test(key)) continue;
+      const n = normalizePressureNumber(safeNumber(value));
+      if (n !== undefined) return n;
+    }
+    return undefined;
+  })();
+
+  const pressure95th = (() => {
+    for (const [key, value] of kvLower.entries()) {
+      if (!/(?:95|p95).*(?:press|ipap|epap)|(?:press|ipap|epap).*(?:95|p95)/i.test(key)) continue;
+      const n = normalizePressureNumber(safeNumber(value));
+      if (n !== undefined) return n;
+    }
+    return undefined;
+  })();
 
   let leak: number | undefined;
   for (const [key, value] of kvLower.entries()) {
@@ -858,7 +1036,10 @@ function parseGenericDailyKeyValueRecord(text: string, fallbackDate: Date): Pars
     (ahi !== undefined && ahi >= 0 && ahi < 200) ||
     (residualApneas !== undefined && residualApneas >= 0 && residualApneas < 200) ||
     (centralApneas !== undefined && centralApneas >= 0 && centralApneas < 200) ||
-    (leak !== undefined && leak >= 0 && leak < 500);
+    (reraIndex !== undefined && reraIndex >= 0 && reraIndex < 200) ||
+    (leak !== undefined && leak >= 0 && leak < 500) ||
+    (pressureAvg !== undefined && pressureAvg >= 0 && pressureAvg <= 80) ||
+    (pressure95th !== undefined && pressure95th >= 0 && pressure95th <= 80);
 
   if (!hasSignal) return null;
   return {
@@ -869,7 +1050,10 @@ function parseGenericDailyKeyValueRecord(text: string, fallbackDate: Date): Pars
       residualApneas !== undefined && residualApneas >= 0 && residualApneas < 200 ? residualApneas : undefined,
     centralApneas:
       centralApneas !== undefined && centralApneas >= 0 && centralApneas < 200 ? centralApneas : undefined,
-    leak: leak !== undefined && leak >= 0 && leak < 500 ? leak : undefined
+    reraIndex: reraIndex !== undefined && reraIndex >= 0 && reraIndex < 200 ? reraIndex : undefined,
+    leak: leak !== undefined && leak >= 0 && leak < 500 ? leak : undefined,
+    pressureAvg: pressureAvg !== undefined && pressureAvg >= 0 && pressureAvg <= 80 ? pressureAvg : undefined,
+    pressure95th: pressure95th !== undefined && pressure95th >= 0 && pressure95th <= 80 ? pressure95th : undefined
   };
 }
 
@@ -895,7 +1079,10 @@ function tryParseDelimited(text: string): ParsedRecord[] {
   const ahiIdx = headers.findIndex((h) => /ahi/.test(h));
   const residualIdx = headers.findIndex((h) => /(residual|apnea\s*index|(?:^|[^a-z])ai(?:[^a-z]|$))/i.test(h) && !/cai|oai|uai|ahi/i.test(h));
   const centralIdx = headers.findIndex((h) => /(central|(?:^|[^a-z])cai(?:[^a-z]|$))/i.test(h));
+  const reraIdx = headers.findIndex((h) => /(?:^|[^a-z])rera(?:[^a-z]|$)|rera\s*index/.test(h));
   const leakIdx = headers.findIndex((h) => /leak/.test(h));
+  const pressureAvgIdx = headers.findIndex((h) => /(?:avg|average|mean).*(?:press|ipap|epap)|(?:press|ipap|epap).*(?:avg|average|mean)/.test(h));
+  const pressure95Idx = headers.findIndex((h) => /(?:95|p95).*(?:press|ipap|epap)|(?:press|ipap|epap).*(?:95|p95)/.test(h));
 
   if (dateIdx < 0) return [];
 
@@ -911,7 +1098,10 @@ function tryParseDelimited(text: string): ParsedRecord[] {
       ahi: ahiIdx >= 0 ? safeNumber(row[ahiIdx]) : undefined,
       residualApneas: residualIdx >= 0 ? safeNumber(row[residualIdx]) : undefined,
       centralApneas: centralIdx >= 0 ? safeNumber(row[centralIdx]) : undefined,
-      leak: leakIdx >= 0 ? safeNumber(row[leakIdx]) : undefined
+      reraIndex: reraIdx >= 0 ? safeNumber(row[reraIdx]) : undefined,
+      leak: leakIdx >= 0 ? safeNumber(row[leakIdx]) : undefined,
+      pressureAvg: pressureAvgIdx >= 0 ? normalizePressureNumber(safeNumber(row[pressureAvgIdx])) : undefined,
+      pressure95th: pressure95Idx >= 0 ? normalizePressureNumber(safeNumber(row[pressure95Idx])) : undefined
     });
   }
 
@@ -931,7 +1121,10 @@ function tryParseFreeText(text: string): ParsedRecord[] {
     const ahiMatch = line.match(/ahi\D*(-?\d+(?:\.\d+)?)/i);
     const residualMatch = line.match(/(?:residual\s*apnea(?:s)?|residual\s*ahi|apnea\s*index|(?:^|[^a-z])ai(?:[^a-z]|$))\D*(-?\d+(?:\.\d+)?)/i);
     const centralMatch = line.match(/(?:central\s*apnea(?:s)?|central\s*index|(?:^|[^a-z])cai(?:[^a-z]|$))\D*(-?\d+(?:\.\d+)?)/i);
+    const reraMatch = line.match(/(?:rera(?:\s*index)?)(?:\s*[:=]|\D)*(-?\d+(?:\.\d+)?)/i);
     const leakMatch = line.match(/leak(?:age)?\D*(-?\d+(?:\.\d+)?)/i);
+    const pressureAvgMatch = line.match(/(?:avg|average|mean)\s*(?:mask\s*)?(?:pressure|ipap|epap)\D*(-?\d+(?:\.\d+)?)/i);
+    const pressure95Match = line.match(/(?:95(?:th|%)|p95)\s*(?:mask\s*)?(?:pressure|ipap|epap)\D*(-?\d+(?:\.\d+)?)/i);
 
     out.push({
       date,
@@ -939,7 +1132,10 @@ function tryParseFreeText(text: string): ParsedRecord[] {
       ahi: ahiMatch ? safeNumber(ahiMatch[1]) : undefined,
       residualApneas: residualMatch ? safeNumber(residualMatch[1]) : undefined,
       centralApneas: centralMatch ? safeNumber(centralMatch[1]) : undefined,
-      leak: leakMatch ? safeNumber(leakMatch[1]) : undefined
+      reraIndex: reraMatch ? safeNumber(reraMatch[1]) : undefined,
+      leak: leakMatch ? safeNumber(leakMatch[1]) : undefined,
+      pressureAvg: pressureAvgMatch ? normalizePressureNumber(safeNumber(pressureAvgMatch[1])) : undefined,
+      pressure95th: pressure95Match ? normalizePressureNumber(safeNumber(pressure95Match[1])) : undefined
     });
   }
 
@@ -959,7 +1155,10 @@ function sanitizeRecords(records: ParsedRecord[]): ParsedRecord[] {
       (typeof r.ahi === "number" && r.ahi >= 0 && r.ahi < 200) ||
       (typeof r.residualApneas === "number" && r.residualApneas >= 0 && r.residualApneas < 200) ||
       (typeof r.centralApneas === "number" && r.centralApneas >= 0 && r.centralApneas < 200) ||
-      (typeof r.leak === "number" && r.leak >= 0 && r.leak < 500);
+      (typeof r.reraIndex === "number" && r.reraIndex >= 0 && r.reraIndex < 200) ||
+      (typeof r.leak === "number" && r.leak >= 0 && r.leak < 500) ||
+      (typeof r.pressureAvg === "number" && r.pressureAvg >= 0 && r.pressureAvg <= 80) ||
+      (typeof r.pressure95th === "number" && r.pressure95th >= 0 && r.pressure95th <= 80);
     return hasSignal;
   });
 }
@@ -969,8 +1168,11 @@ function recordSignature(record: ParsedRecord): string {
   const a = typeof record.ahi === "number" ? record.ahi.toFixed(3) : "";
   const r = typeof record.residualApneas === "number" ? record.residualApneas.toFixed(3) : "";
   const c = typeof record.centralApneas === "number" ? record.centralApneas.toFixed(3) : "";
+  const re = typeof record.reraIndex === "number" ? record.reraIndex.toFixed(3) : "";
   const l = typeof record.leak === "number" ? record.leak.toFixed(3) : "";
-  return `${toIsoDate(record.date)}|${u}|${a}|${r}|${c}|${l}`;
+  const pa = typeof record.pressureAvg === "number" ? record.pressureAvg.toFixed(3) : "";
+  const p95 = typeof record.pressure95th === "number" ? record.pressure95th.toFixed(3) : "";
+  return `${toIsoDate(record.date)}|${u}|${a}|${r}|${c}|${re}|${l}|${pa}|${p95}`;
 }
 
 function dedupeParsedRecords(records: ParsedRecord[]): ParsedRecord[] {
@@ -1175,9 +1377,15 @@ function createEmptyDayBucket(): DayBucket {
     residualApneaCount: 0,
     centralApneaSum: 0,
     centralApneaCount: 0,
+    reraSum: 0,
+    reraCount: 0,
     leakSum: 0,
     leakCount: 0,
-    leakMax: null
+    leakMax: null,
+    pressureAvgSum: 0,
+    pressureAvgCount: 0,
+    pressure95Sum: 0,
+    pressure95Count: 0
   };
 }
 
@@ -1366,7 +1574,10 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
       for (const text of variants) {
         inferMachineSettingsFromText(text, machine);
         const kv = parseKeyValueLines(text);
-        if (kv.size > 0) inferPressureReliefFromMap(kv, machine);
+        if (kv.size > 0) {
+          inferPressureSettingsFromMap(kv, machine);
+          inferPressureReliefFromMap(kv, machine);
+        }
 
         const variantRecords: ParsedRecord[] = [];
         if (candidate.recordDate) {
@@ -1473,6 +1684,21 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
       bucket.centralApneaCount += 1;
     }
 
+    if (typeof record.reraIndex === "number" && record.reraIndex >= 0 && record.reraIndex < 200) {
+      bucket.reraSum += record.reraIndex;
+      bucket.reraCount += 1;
+    }
+
+    if (typeof record.pressureAvg === "number" && record.pressureAvg >= 0 && record.pressureAvg <= 80) {
+      bucket.pressureAvgSum += record.pressureAvg;
+      bucket.pressureAvgCount += 1;
+    }
+
+    if (typeof record.pressure95th === "number" && record.pressure95th >= 0 && record.pressure95th <= 80) {
+      bucket.pressure95Sum += record.pressure95th;
+      bucket.pressure95Count += 1;
+    }
+
     const hasWaveLeakForDay = leakStatsByDay.has(key);
     if (
       typeof record.leak === "number" &&
@@ -1529,6 +1755,10 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
     .filter((d) => d.centralApneaCount > 0)
     .map((d) => d.centralApneaSum / d.centralApneaCount);
 
+  const reraValues = [...dayMap.values()]
+    .filter((d) => d.reraCount > 0)
+    .map((d) => d.reraSum / d.reraCount);
+
   const leakValues = [...dayMap.values()]
     .filter((d) => d.leakCount > 0)
     .map((d) => d.leakSum / d.leakCount);
@@ -1536,6 +1766,14 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
   const leakMaxValues = [...dayMap.values()]
     .map((d) => d.leakMax)
     .filter((v): v is number => typeof v === "number" && Number.isFinite(v));
+
+  const pressureAvgValues = [...dayMap.values()]
+    .filter((d) => d.pressureAvgCount > 0)
+    .map((d) => d.pressureAvgSum / d.pressureAvgCount);
+
+  const pressure95Values = [...dayMap.values()]
+    .filter((d) => d.pressure95Count > 0)
+    .map((d) => d.pressure95Sum / d.pressure95Count);
 
   const daysWithData = dayMap.size;
   const daysWithUsage = usageValues.length;
@@ -1547,11 +1785,17 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
     residualApneaValues.length > 0 ? residualApneaValues.reduce((a, b) => a + b, 0) / residualApneaValues.length : null;
   const avgCentralApneas =
     centralApneaValues.length > 0 ? centralApneaValues.reduce((a, b) => a + b, 0) / centralApneaValues.length : null;
+  const avgReraIndex = reraValues.length > 0 ? reraValues.reduce((a, b) => a + b, 0) / reraValues.length : null;
   const ahi95th = ahiValues.length > 0 ? percentile(ahiValues, 95) : null;
   const residualApneas95th = residualApneaValues.length > 0 ? percentile(residualApneaValues, 95) : null;
   const centralApneas95th = centralApneaValues.length > 0 ? percentile(centralApneaValues, 95) : null;
+  const rera95th = reraValues.length > 0 ? percentile(reraValues, 95) : null;
   const avgLeak = leakValues.length > 0 ? leakValues.reduce((a, b) => a + b, 0) / leakValues.length : null;
   const maxLeak = leakMaxValues.length > 0 ? Math.max(...leakMaxValues) : leakValues.length > 0 ? Math.max(...leakValues) : null;
+  const avgPressure =
+    pressureAvgValues.length > 0 ? pressureAvgValues.reduce((a, b) => a + b, 0) / pressureAvgValues.length : null;
+  const pressure95th =
+    pressure95Values.length > 0 ? percentile(pressure95Values, 95) : pressureAvgValues.length > 0 ? percentile(pressureAvgValues, 95) : null;
 
   if (selectedLoader) {
     const top = loaderRanking.slice(0, 4).map((m) => `${m.label} (${m.score})`).join(", ");
@@ -1567,6 +1811,26 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
   }
   if (leakValues.length === 0) {
     warnings.push("Leak metrics were not detected from the selected files.");
+  }
+
+  if (machine.pressureAvg === undefined && avgPressure !== null) {
+    machine.pressureAvg = finite(avgPressure);
+  }
+  if (machine.pressure95th === undefined && pressure95th !== null) {
+    machine.pressure95th = finite(pressure95th);
+  }
+  if (!machine.pressureIsAuto && (isLikelyAutoMode(machine.mode) || !!machine.pressureMin || !!machine.pressureMax)) {
+    machine.pressureIsAuto = true;
+  }
+  if ((!machine.pressureMin || !machine.pressureMax) && machine.pressure) {
+    const rangeMatch = machine.pressure.match(/(-?\d+(?:\.\d+)?)\s*-\s*(-?\d+(?:\.\d+)?)/);
+    if (rangeMatch) {
+      const min = normalizePressureNumber(safeNumber(rangeMatch[1]));
+      const max = normalizePressureNumber(safeNumber(rangeMatch[2]));
+      if (!machine.pressureMin && min !== undefined) machine.pressureMin = pressureText(min);
+      if (!machine.pressureMax && max !== undefined) machine.pressureMax = pressureText(max);
+      if (min !== undefined || max !== undefined) machine.pressureIsAuto = true;
+    }
   }
 
   const report: QuickReportMetrics = {
@@ -1594,9 +1858,11 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
     avgAhi: avgAhi === null ? null : finite(avgAhi),
     avgResidualApneas: avgResidualApneas === null ? null : finite(avgResidualApneas),
     avgCentralApneas: avgCentralApneas === null ? null : finite(avgCentralApneas),
+    avgReraIndex: avgReraIndex === null ? null : finite(avgReraIndex),
     ahi95th: ahi95th === null ? null : finite(ahi95th),
     residualApneas95th: residualApneas95th === null ? null : finite(residualApneas95th),
     centralApneas95th: centralApneas95th === null ? null : finite(centralApneas95th),
+    rera95th: rera95th === null ? null : finite(rera95th),
     avgLeak: avgLeak === null ? null : finite(avgLeak),
     maxLeak: maxLeak === null ? null : finite(maxLeak),
     machine,

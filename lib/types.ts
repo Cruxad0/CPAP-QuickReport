@@ -20,13 +20,21 @@ export interface ParsedRecord {
   ahi?: number;
   residualApneas?: number;
   centralApneas?: number;
+  reraIndex?: number;
   leak?: number;
+  pressureAvg?: number;
+  pressure95th?: number;
 }
 
 export interface MachineSettings {
   device?: string;
   mode?: string;
   pressure?: string;
+  pressureMin?: string;
+  pressureMax?: string;
+  pressureAvg?: number | null;
+  pressure95th?: number | null;
+  pressureIsAuto?: boolean;
   pressureRelief?: string;
 }
 
@@ -49,9 +57,11 @@ export interface QuickReportMetrics {
   avgAhi: number | null;
   avgResidualApneas: number | null;
   avgCentralApneas: number | null;
+  avgReraIndex: number | null;
   ahi95th: number | null;
   residualApneas95th: number | null;
   centralApneas95th: number | null;
+  rera95th: number | null;
   avgLeak: number | null;
   maxLeak: number | null;
   machine: MachineSettings;

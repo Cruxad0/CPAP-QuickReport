@@ -224,6 +224,42 @@ function drawBottomFooterBlock(
 
 type TableRow = [string, string];
 
+function machineSettingRows(report: QuickReportMetrics): TableRow[] {
+  const rows: TableRow[] = [
+    ["Device", textValue(report.machine.device)],
+    ["Mode", textValue(report.machine.mode)]
+  ];
+
+  const hasAutoPressure =
+    report.machine.pressureIsAuto === true ||
+    Boolean(report.machine.pressureMin) ||
+    Boolean(report.machine.pressureMax) ||
+    typeof report.machine.pressureAvg === "number" ||
+    typeof report.machine.pressure95th === "number";
+
+  if (hasAutoPressure) {
+    rows.push(["Min pressure", textValue(report.machine.pressureMin)]);
+    rows.push(["Max pressure", textValue(report.machine.pressureMax)]);
+    rows.push([
+      "Avg Pressure",
+      report.machine.pressureAvg === null || report.machine.pressureAvg === undefined
+        ? NO_DATA_FALLBACK
+        : `${valueText(report.machine.pressureAvg)} cmH2O`
+    ]);
+    rows.push([
+      "95th Pressure",
+      report.machine.pressure95th === null || report.machine.pressure95th === undefined
+        ? NO_DATA_FALLBACK
+        : `${valueText(report.machine.pressure95th)} cmH2O`
+    ]);
+  } else {
+    rows.push(["Pressure", textValue(report.machine.pressure)]);
+  }
+
+  rows.push(["Pressure relief", textValue(report.machine.pressureRelief)]);
+  return rows;
+}
+
 function drawTable(
   pdfDoc: any,
   state: PdfState,
@@ -353,12 +389,7 @@ export async function buildPdfReport(report: QuickReportMetrics, headerDataUrl?:
     pdfDoc,
     state,
     "Machine Settings",
-    [
-      ["Device", textValue(report.machine.device)],
-      ["Mode", textValue(report.machine.mode)],
-      ["Pressure", textValue(report.machine.pressure)],
-      ["Pressure relief", textValue(report.machine.pressureRelief)]
-    ],
+    machineSettingRows(report),
     headerImage,
     fontRegular,
     fontBold,
@@ -382,6 +413,8 @@ export async function buildPdfReport(report: QuickReportMetrics, headerDataUrl?:
       ["95th Residual apneas", valueText(report.residualApneas95th)],
       ["Avg Central apneas", valueText(report.avgCentralApneas)],
       ["95th Central apneas", valueText(report.centralApneas95th)],
+      ["Avg RERA index", valueText(report.avgReraIndex)],
+      ["95th RERA index", valueText(report.rera95th)],
       ["Avg Leak", report.avgLeak === null ? NO_DATA_FALLBACK : `${valueText(report.avgLeak)} L/min`],
       ["Max leak", report.maxLeak === null ? NO_DATA_FALLBACK : `${valueText(report.maxLeak)} L/min`]
     ],
