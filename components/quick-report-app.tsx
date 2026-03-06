@@ -30,6 +30,13 @@ const SOURCE_SELECTION_CANCEL_TIMEOUT_MS = 20000;
 const REPORT_RANGE_OPTIONS = [90, 30, 7] as const;
 
 type ReportRangeDays = (typeof REPORT_RANGE_OPTIONS)[number];
+type GeneratedReportArtifact = {
+  metrics: QuickReportMetrics;
+  previewUrl: string;
+  previewEmbedUrl: string;
+  downloadName: string;
+};
+type GeneratedReports = Partial<Record<ReportRangeDays, GeneratedReportArtifact>>;
 
 type RecentWindowFilterResult = {
   files: SourceFile[];
@@ -39,6 +46,15 @@ type RecentWindowFilterResult = {
   latestDateIso: string | null;
   hadDatedFiles: boolean;
 };
+
+function revokeGeneratedReportUrls(reports: GeneratedReports) {
+  for (const days of REPORT_RANGE_OPTIONS) {
+    const artifact = reports[days];
+    if (artifact?.previewUrl) {
+      URL.revokeObjectURL(artifact.previewUrl);
+    }
+  }
+}
 
 function bytesToLabel(size: number): string {
   if (size > 1024 * 1024) return `${(size / (1024 * 1024)).toFixed(2)} MB`;
@@ -422,7 +438,7 @@ export function QuickReportApp() {
   const [sourceKind, setSourceKind] = useState<DataSourceKind>("folder");
   const [sourceFiles, setSourceFiles] = useState<SourceFile[]>([]);
   const [headerDataUrl, setHeaderDataUrl] = useState<string | undefined>(undefined);
-  const [reportRangeDays, setReportRangeDays] = useState<ReportRangeDays>(90);
+  const [activeReportDays, setActiveReportDays] = useState<ReportRangeDays>(90);
 
   const [status, setStatus] = useState<"idle" | "working" | "ready" | "error">("idle");
   const [statusMessage, setStatusMessage] = useState("Awaiting data source.");
@@ -432,11 +448,8 @@ export function QuickReportApp() {
     percent: 0
   });
 
-  const [report, setReport] = useState<QuickReportMetrics | null>(null);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [previewEmbedUrl, setPreviewEmbedUrl] = useState<string | null>(null);
+  const [generatedReports, setGeneratedReports] = useState<GeneratedReports>({});
   const [isPreviewCollapsed, setIsPreviewCollapsed] = useState(false);
-  const [downloadName, setDownloadName] = useState("report.pdf");
   const [errors, setErrors] = useState<string[]>([]);
   const [isSourceLoading, setIsSourceLoading] = useState(false);
   const [pendingSourceSelection, setPendingSourceSelection] = useState<"folder" | "zip" | null>(null);
@@ -463,15 +476,18 @@ export function QuickReportApp() {
 
   useEffect(() => {
     return () => {
-      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      revokeGeneratedReportUrls(generatedReports);
     };
-  }, [previewUrl]);
+  }, [generatedReports]);
 
   const selectedCountLabel = useMemo(() => {
     if (sourceFiles.length === 0) return "No files selected";
     const total = sourceFiles.reduce((sum, f) => sum + f.size, 0);
     return `${sourceFiles.length} files selected (${bytesToLabel(total)})`;
   }, [sourceFiles]);
+  const activeReport = generatedReports[activeReportDays] ?? null;
+  const activeMetrics = activeReport?.metrics ?? null;
+  const hasGeneratedReports = REPORT_RANGE_OPTIONS.some((days) => Boolean(generatedReports[days]));
 
   const dateOfBirthIso = useMemo(() => normalizeDobInput(dateOfBirthInput), [dateOfBirthInput]);
   const isPatientNameMissing = patientName.trim().length <= 1;
@@ -530,16 +546,13 @@ export function QuickReportApp() {
   };
 
   const resetResultState = () => {
-    setReport(null);
+    revokeGeneratedReportUrls(generatedReports);
+    setGeneratedReports({});
+    setActiveReportDays(90);
     setErrors([]);
     setStatus("idle");
     setStatusMessage("Awaiting data source.");
     setParseProgress({ phase: "idle", detail: "Idle", percent: 0 });
-    if (previewUrl) {
-      URL.revokeObjectURL(previewUrl);
-      setPreviewUrl(null);
-    }
-    setPreviewEmbedUrl(null);
     setIsPreviewCollapsed(false);
     setShowCalendarAlt(false);
     setIsSourceLoading(false);
@@ -561,7 +574,6 @@ export function QuickReportApp() {
     resetResultState();
     setSourceFiles([]);
     setSourceKind("folder");
-    setReportRangeDays(90);
     setPatientName("");
     setDateOfBirthInput("");
     clearSourceInputs();
@@ -636,13 +648,11 @@ export function QuickReportApp() {
 
       setSourceKind("folder");
       setSourceFiles(filtered.files);
-      setReport(null);
+      revokeGeneratedReportUrls(generatedReports);
+      setGeneratedReports({});
+      setActiveReportDays(90);
       setErrors([]);
-      if (previewUrl) {
-        URL.revokeObjectURL(previewUrl);
-        setPreviewUrl(null);
-      }
-      setPreviewEmbedUrl(null);
+      setIsPreviewCollapsed(false);
       setStatus("idle");
       if (filtered.hadDatedFiles) {
         const endDateText = filtered.latestDateIso ? formatIsoAsUsDate(filtered.latestDateIso) : "latest dated file";
@@ -746,13 +756,11 @@ export function QuickReportApp() {
         setStatusMessage(`ZIP loaded: ${mapped.length} files ready for parsing.`);
       }
       setParseProgress({ phase: "ready", detail: "ZIP ready", percent: 100 });
-      setReport(null);
+      revokeGeneratedReportUrls(generatedReports);
+      setGeneratedReports({});
+      setActiveReportDays(90);
       setErrors([]);
-      if (previewUrl) {
-        URL.revokeObjectURL(previewUrl);
-        setPreviewUrl(null);
-      }
-      setPreviewEmbedUrl(null);
+      setIsPreviewCollapsed(false);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Could not parse ZIP file.";
       setStatus("error");
@@ -784,34 +792,63 @@ export function QuickReportApp() {
     setStatusMessage("Processing files locally in this browser...");
     setParseProgress({ phase: "start", detail: "Preparing workflow...", percent: 2 });
 
+    const generated: GeneratedReports = {};
     try {
-      const metrics = await buildQuickReportMetrics({
-        sourceKind,
-        files: sourceFiles,
-        patientName,
-        dateOfBirthIso: dateOfBirthIso ?? "",
-        physicianName,
-        lookbackDays: reportRangeDays,
-        onProgress: (p) => setParseProgress(p)
-      });
+      const totalRanges = REPORT_RANGE_OPTIONS.length;
+      for (let idx = 0; idx < totalRanges; idx += 1) {
+        const days = REPORT_RANGE_OPTIONS[idx];
+        const segmentStart = Math.round((idx / totalRanges) * 96);
+        const segmentSpan = Math.round(96 / totalRanges);
 
-      setParseProgress({ phase: "pdf", detail: "Rendering PDF...", percent: 98 });
-      const { blob, filename } = await buildPdfReport(metrics, headerDataUrl);
+        setParseProgress({
+          phase: "start",
+          detail: `Generating ${days}-day report (${idx + 1}/${totalRanges})...`,
+          percent: Math.max(2, segmentStart)
+        });
 
-      if (previewUrl) URL.revokeObjectURL(previewUrl);
-      const url = URL.createObjectURL(blob);
-      const embedUrl = await blobToDataUrl(blob);
+        const metrics = await buildQuickReportMetrics({
+          sourceKind,
+          files: sourceFiles,
+          patientName,
+          dateOfBirthIso: dateOfBirthIso ?? "",
+          physicianName,
+          lookbackDays: days,
+          onProgress: (p) =>
+            setParseProgress({
+              phase: p.phase,
+              detail: `${days}-day: ${p.detail}`,
+              percent: Math.min(98, segmentStart + Math.round((Math.max(0, Math.min(100, p.percent)) / 100) * segmentSpan))
+            })
+        });
 
-      setReport(metrics);
-      setDownloadName(filename);
-      setPreviewUrl(url);
-      setPreviewEmbedUrl(embedUrl);
+        setParseProgress({
+          phase: "pdf",
+          detail: `Rendering ${days}-day PDF...`,
+          percent: Math.min(98, segmentStart + segmentSpan - 1)
+        });
+
+        const { blob, filename } = await buildPdfReport(metrics, headerDataUrl);
+        const previewUrl = URL.createObjectURL(blob);
+        const previewEmbedUrl = await blobToDataUrl(blob);
+
+        generated[days] = {
+          metrics,
+          previewUrl,
+          previewEmbedUrl,
+          downloadName: filename
+        };
+      }
+
+      revokeGeneratedReportUrls(generatedReports);
+      setGeneratedReports(generated);
+      setActiveReportDays(90);
       setIsPreviewCollapsed(false);
       setStatus("ready");
       setStatusMessage("Report generated successfully. Review preview and export PDF.");
       setParseProgress({ phase: "done", detail: "Done", percent: 100 });
       setErrors([]);
     } catch (error) {
+      revokeGeneratedReportUrls(generated);
       const message = error instanceof Error ? error.message : "An unexpected error occurred.";
       setStatus("error");
       setStatusMessage("Report generation failed.");
@@ -821,18 +858,18 @@ export function QuickReportApp() {
   };
 
   const triggerDownload = () => {
-    if (!previewUrl) return;
+    if (!activeReport?.previewUrl) return;
     const a = document.createElement("a");
-    a.href = previewUrl;
-    a.download = downloadName;
+    a.href = activeReport.previewUrl;
+    a.download = activeReport.downloadName;
     document.body.appendChild(a);
     a.click();
     a.remove();
   };
 
   const openPreviewInNewTab = () => {
-    if (!previewUrl) return;
-    window.open(previewUrl, "_blank", "noopener,noreferrer");
+    if (!activeReport?.previewUrl) return;
+    window.open(activeReport.previewUrl, "_blank", "noopener,noreferrer");
   };
 
   const openCalendarPicker = () => {
@@ -892,8 +929,8 @@ export function QuickReportApp() {
           <ol className="usage-steps">
             <li>Enter the patient name and date of birth.</li>
             <li>Click <strong>Select SD-CARD</strong> and choose the SD card folder.</li>
-            <li>Choose 90, 30, or 7 days, then click <strong>Generate PDF</strong>.</li>
-            <li>Review the preview, then click <strong>Export PDF</strong> to save.</li>
+            <li>Click <strong>Generate Reports</strong> to create 90, 30, and 7 day reports.</li>
+            <li>Use the report tabs in preview, then click <strong>Export PDF</strong> to save.</li>
           </ol>
         </article>
 
@@ -1022,23 +1059,6 @@ export function QuickReportApp() {
           <h3>Data Source</h3>
           <p className="subtle">Choose an SD-card folder. The webapp keeps only the most recent 90 days NIMV data locally in browser.</p>
 
-          <div className="range-tabs" role="tablist" aria-label="Report date range">
-            {REPORT_RANGE_OPTIONS.map((days) => (
-              <button
-                key={days}
-                type="button"
-                role="tab"
-                aria-selected={reportRangeDays === days}
-                className={`range-tab ${reportRangeDays === days ? "range-tab-active" : ""}`}
-                onClick={() => setReportRangeDays(days)}
-                disabled={status === "working"}
-              >
-                {days} Days
-              </button>
-            ))}
-          </div>
-          <p className="subtle">Selected report range: {reportRangeDays} days.</p>
-
           <div className="actions">
             <button
               className="btn btn-secondary"
@@ -1072,7 +1092,7 @@ export function QuickReportApp() {
 
           <div className="actions">
             <button className="btn btn-primary" onClick={handleGenerate} disabled={!canGenerate}>
-              Generate {reportRangeDays}-Day PDF
+              Generate Reports
             </button>
             <button
               className="btn btn-danger"
@@ -1099,11 +1119,11 @@ export function QuickReportApp() {
 
         {status === "ready" || status === "error" ? (
           <article className="card col-12">
-            {status === "ready" && report ? (
+            {status === "ready" && activeMetrics ? (
               <ul className="notes">
                 <li>Report is ready. Review the preview, then export the PDF.</li>
                 <li>
-                  Selected loader and Date range: {report.selectedLoader} | {report.dateRangeStart} to {report.dateRangeEnd}
+                  Selected loader and Date range ({activeReportDays} days): {activeMetrics.selectedLoader} | {activeMetrics.dateRangeStart} to {activeMetrics.dateRangeEnd}
                 </li>
               </ul>
             ) : null}
@@ -1125,8 +1145,23 @@ export function QuickReportApp() {
           </article>
         ) : null}
 
-        {previewUrl ? (
+        {hasGeneratedReports && activeReport ? (
           <article className="card col-12 preview-shell">
+            <div className="range-tabs" role="tablist" aria-label="Generated report tabs">
+              {REPORT_RANGE_OPTIONS.map((days) => (
+                <button
+                  key={days}
+                  type="button"
+                  role="tab"
+                  aria-selected={activeReportDays === days}
+                  className={`range-tab ${activeReportDays === days ? "range-tab-active" : ""}`}
+                  onClick={() => setActiveReportDays(days)}
+                  disabled={!generatedReports[days]}
+                >
+                  {days} Days
+                </button>
+              ))}
+            </div>
             <div className="actions" style={{ marginTop: 0 }}>
               <button className="btn btn-primary" onClick={triggerDownload}>
                 Export PDF
@@ -1142,14 +1177,14 @@ export function QuickReportApp() {
               >
                 {isPreviewCollapsed ? "Open Preview" : "Close Preview"}
               </button>
-              <span className="subtle">Default filename: {downloadName}</span>
+              <span className="subtle">Default filename: {activeReport.downloadName}</span>
             </div>
             {!isPreviewCollapsed ? (
               <>
                 <iframe
-                  key={previewUrl}
+                  key={activeReport.previewUrl}
                   className="preview-frame"
-                  src={previewEmbedUrl ?? previewUrl}
+                  src={activeReport.previewEmbedUrl ?? activeReport.previewUrl}
                   title="PDF preview"
                 />
                 <p className="subtle">If preview is blank on this browser, use Open PDF.</p>
