@@ -426,8 +426,8 @@ function rankLoaders(files: SourceMeta[]): LoaderMatch[] {
     .sort((a, b) => b.score - a.score || a.label.localeCompare(b.label));
 }
 
-function normalizeLookbackDays(value: number): number {
-  if (!Number.isFinite(value)) return 90;
+function normalizeLookbackDays(value?: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return 90;
   const rounded = Math.trunc(value);
   if (rounded <= 0) return 90;
   return rounded;
