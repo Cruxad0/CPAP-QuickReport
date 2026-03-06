@@ -634,16 +634,20 @@ function normalizeLookbackDays(value?: number): number {
   return rounded;
 }
 
-function resolveRecentWindow(latestDate: Date, lookbackDays: number): DateWindow {
+function resolveRecentWindow(_latestDate: Date, lookbackDays: number): DateWindow {
   const normalizedLookbackDays = normalizeLookbackDays(lookbackDays);
-  const latestDataDay = toClinicalDay(latestDate);
-  const todayClinicalDay = toClinicalDay(new Date());
-  const latestAllowedDay = new Date(todayClinicalDay);
-  // Exclude the current day from query windows and end at today - 1 day.
-  latestAllowedDay.setUTCDate(latestAllowedDay.getUTCDate() - 1);
-  const windowEnd = latestDataDay > latestAllowedDay ? latestAllowedDay : latestDataDay;
+
+  // Anchor all report windows to the most recently completed clinical day:
+  // end = today - 1 (noon-to-noon logic excludes the currently running day).
+  const now = new Date();
+  const todayNoon = createUtcDateNoon(now.getUTCFullYear(), now.getUTCMonth() + 1, now.getUTCDate());
+  const windowEnd = new Date(todayNoon);
+  windowEnd.setUTCDate(windowEnd.getUTCDate() - 1);
+
+  // Include one extra day boundary for noon-to-noon windows:
+  // start = (today - 1) - N  => today - (N + 1)
   const windowStart = new Date(windowEnd);
-  windowStart.setUTCDate(windowStart.getUTCDate() - (normalizedLookbackDays - 1));
+  windowStart.setUTCDate(windowStart.getUTCDate() - normalizedLookbackDays);
   return { start: windowStart, end: windowEnd };
 }
 

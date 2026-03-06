@@ -173,7 +173,10 @@ function filterSourceFilesToRecentWindow(files: SourceFile[], lookbackDays: numb
   }
 
   const latestMs = dated.reduce((max, entry) => Math.max(max, entry.date.getTime()), dated[0].date.getTime());
-  const windowStartMs = latestMs - (lookbackDays - 1) * DAY_MS;
+  const now = new Date();
+  const todayNoon = createUtcDateNoon(now.getUTCFullYear(), now.getUTCMonth() + 1, now.getUTCDate());
+  const anchoredWindowEndMs = (todayNoon?.getTime() ?? latestMs) - DAY_MS;
+  const windowStartMs = anchoredWindowEndMs - (lookbackDays - 1) * DAY_MS;
 
   let filteredOutCount = 0;
   let filteredOutBytes = 0;
@@ -181,7 +184,7 @@ function filterSourceFilesToRecentWindow(files: SourceFile[], lookbackDays: numb
     .filter((entry) => {
       if (entry.date) {
         const t = entry.date.getTime();
-        const keep = t >= windowStartMs && t <= latestMs;
+        const keep = t >= windowStartMs && t <= anchoredWindowEndMs;
         if (!keep) {
           filteredOutCount += 1;
           filteredOutBytes += entry.file.size;
@@ -200,7 +203,7 @@ function filterSourceFilesToRecentWindow(files: SourceFile[], lookbackDays: numb
 
   // Safety fallback: never end up with an empty set due to over-filtering.
   const outputFiles = kept.length > 0 ? kept : files;
-  const latestDateIso = new Date(latestMs).toISOString().slice(0, 10);
+  const latestDateIso = new Date(anchoredWindowEndMs).toISOString().slice(0, 10);
 
   return {
     files: outputFiles,
