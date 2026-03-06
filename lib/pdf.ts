@@ -224,20 +224,37 @@ function drawBottomFooterBlock(
 
 type TableRow = [string, string];
 
+function isAutoPapMode(mode: string | undefined): boolean {
+  if (!mode) return false;
+  return /\b(auto\s*pap|auto\s*cpap|apap|autoset|vauto|auto[-\s]*bipap|autobilevel)\b/i.test(mode);
+}
+
+function isBiPapMode(mode: string | undefined): boolean {
+  if (!mode) return false;
+  return /\b(bipap|bi[-\s]*level|bilevel|vpap|lumis|avaps|s\/t|st)\b/i.test(mode);
+}
+
 function machineSettingRows(report: QuickReportMetrics): TableRow[] {
   const rows: TableRow[] = [
     ["Device", textValue(report.machine.device)],
     ["Mode", textValue(report.machine.mode)]
   ];
 
+  const mode = report.machine.mode?.trim() ?? "";
   const hasAutoPressure =
     report.machine.pressureIsAuto === true ||
     Boolean(report.machine.pressureMin) ||
     Boolean(report.machine.pressureMax) ||
     typeof report.machine.pressureAvg === "number" ||
     typeof report.machine.pressure95th === "number";
+  const isBiPap = isBiPapMode(mode);
+  const isAutoPap = !isBiPap && (isAutoPapMode(mode) || (!mode && hasAutoPressure));
 
-  if (hasAutoPressure) {
+  if (isBiPap) {
+    rows.push(["IPAP", textValue(report.machine.ipap)]);
+    rows.push(["EPAP", textValue(report.machine.epap)]);
+    rows.push(["Respiratory rate (RR)", textValue(report.machine.respiratoryRate)]);
+  } else if (isAutoPap) {
     rows.push(["Min pressure", textValue(report.machine.pressureMin)]);
     rows.push(["Max pressure", textValue(report.machine.pressureMax)]);
     rows.push([
@@ -414,7 +431,6 @@ export async function buildPdfReport(report: QuickReportMetrics, headerDataUrl?:
       ["Avg Central apneas", valueText(report.avgCentralApneas)],
       ["95th Central apneas", valueText(report.centralApneas95th)],
       ["Avg RERA index", valueText(report.avgReraIndex)],
-      ["95th RERA index", valueText(report.rera95th)],
       ["Avg Leak", report.avgLeak === null ? NO_DATA_FALLBACK : `${valueText(report.avgLeak)} L/min`],
       ["Max leak", report.maxLeak === null ? NO_DATA_FALLBACK : `${valueText(report.maxLeak)} L/min`]
     ],

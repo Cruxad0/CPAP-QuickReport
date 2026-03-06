@@ -137,6 +137,11 @@ function isLikelyAutoMode(mode: string | undefined): boolean {
   return /\b(auto|apap|autoset|vauto|autobilevel|auto[-\s]*bipap|asv|autosv)\b/i.test(mode);
 }
 
+function isLikelyBiPapMode(mode: string | undefined): boolean {
+  if (!mode) return false;
+  return /\b(bipap|bi[-\s]*level|bilevel|vpap|lumis|avaps|s\/t|st|t30|s30|pc)\b/i.test(mode);
+}
+
 function createUtcDateNoon(year: number, month: number, day: number): Date {
   return new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
 }
@@ -355,7 +360,9 @@ function inferMachineSettingsFromText(text: string, machine: QuickReportMetrics[
     if (fixedPressure !== undefined) machine.pressure = `Fixed ${Number(fixedPressure.toFixed(2)).toString()} (cmH2O)`;
   }
 
-  inferPressureSettingsFromMap(parseKeyValueLines(text), machine);
+  const kv = parseKeyValueLines(text);
+  inferPressureSettingsFromMap(kv, machine);
+  inferBilevelSettingsFromMap(kv, machine);
 }
 
 function inferPressureSettingsFromMap(configMap: Map<string, string>, machine: QuickReportMetrics["machine"]) {
@@ -412,6 +419,91 @@ function inferPressureSettingsFromMap(configMap: Map<string, string>, machine: Q
     if (fixed !== undefined) {
       machine.pressure = `Fixed ${Number(fixed.toFixed(2)).toString()} (cmH2O)`;
     }
+  }
+}
+
+function inferBilevelSettingsFromMap(configMap: Map<string, string>, machine: QuickReportMetrics["machine"]) {
+  const kvLower = new Map<string, string>();
+  for (const [k, v] of configMap.entries()) kvLower.set(k.toLowerCase(), v);
+
+  const readPressure = (keys: string[], patterns: RegExp[] = []): number | undefined => {
+    for (const key of keys) {
+      const raw = kvLower.get(key.toLowerCase());
+      const normalized = normalizePressureNumber(safeNumber(raw));
+      if (normalized !== undefined) return normalized;
+    }
+    for (const [key, value] of kvLower.entries()) {
+      if (!patterns.some((pattern) => pattern.test(key))) continue;
+      const normalized = normalizePressureNumber(safeNumber(value));
+      if (normalized !== undefined) return normalized;
+    }
+    return undefined;
+  };
+
+  const readRate = (): number | undefined => {
+    const directKeys = [
+      "rr",
+      "rrset",
+      "setrr",
+      "respiratoryrate",
+      "respiratory_rate",
+      "respfreq",
+      "backuprate",
+      "backup_rate",
+      "targetrate",
+      "timedrate"
+    ];
+    for (const key of directKeys) {
+      const raw = kvLower.get(key);
+      const n = safeNumber(raw);
+      if (n !== undefined && n >= 0 && n <= 80) return n;
+    }
+    for (const [key, value] of kvLower.entries()) {
+      if (!/(?:\brr\b|respiratory.*rate|backup.*rate|timed.*rate|target.*rate)/i.test(key)) continue;
+      const n = safeNumber(value);
+      if (n !== undefined && n >= 0 && n <= 80) return n;
+    }
+    return undefined;
+  };
+
+  const epapFixed = readPressure(["epap", "epapset", "set_epap", "epap_set"], [/\bepap\b/i]);
+  const ipapFixed = readPressure(["ipap", "ipapset", "set_ipap", "ipap_set"], [/\bipap\b/i]);
+  const epapMin = readPressure(["epapmin", "epap_min", "minepap", "min_epap"], [/\bepap.*(?:min|minimum)\b/i, /\b(?:min|minimum).*epap\b/i]);
+  const epapMax = readPressure(["epapmax", "epap_max", "maxepap", "max_epap"], [/\bepap.*(?:max|maximum)\b/i, /\b(?:max|maximum).*epap\b/i]);
+  const ipapMin = readPressure(["ipapmin", "ipap_min", "minipap", "min_ipap"], [/\bipap.*(?:min|minimum)\b/i, /\b(?:min|minimum).*ipap\b/i]);
+  const ipapMax = readPressure(["ipapmax", "ipap_max", "maxipap", "max_ipap"], [/\bipap.*(?:max|maximum)\b/i, /\b(?:max|maximum).*ipap\b/i]);
+  const rr = readRate();
+
+  if (!machine.epap) {
+    if (epapFixed !== undefined) {
+      machine.epap = pressureText(epapFixed);
+    } else if (epapMin !== undefined || epapMax !== undefined) {
+      if (epapMin !== undefined && epapMax !== undefined) {
+        machine.epap = `${Number(epapMin.toFixed(2)).toString()}-${Number(epapMax.toFixed(2)).toString()} cmH2O`;
+      } else if (epapMin !== undefined) {
+        machine.epap = `${Number(epapMin.toFixed(2)).toString()} cmH2O (min)`;
+      } else if (epapMax !== undefined) {
+        machine.epap = `${Number(epapMax.toFixed(2)).toString()} cmH2O (max)`;
+      }
+    }
+  }
+
+  if (!machine.ipap) {
+    if (ipapFixed !== undefined) {
+      machine.ipap = pressureText(ipapFixed);
+    } else if (ipapMin !== undefined || ipapMax !== undefined) {
+      if (ipapMin !== undefined && ipapMax !== undefined) {
+        machine.ipap = `${Number(ipapMin.toFixed(2)).toString()}-${Number(ipapMax.toFixed(2)).toString()} cmH2O`;
+      } else if (ipapMin !== undefined) {
+        machine.ipap = `${Number(ipapMin.toFixed(2)).toString()} cmH2O (min)`;
+      } else if (ipapMax !== undefined) {
+        machine.ipap = `${Number(ipapMax.toFixed(2)).toString()} cmH2O (max)`;
+      }
+    }
+  }
+
+  if (!machine.respiratoryRate && rr !== undefined) {
+    machine.respiratoryRate = `${Number(rr.toFixed(2)).toString()} bpm`;
   }
 }
 
@@ -794,9 +886,19 @@ function inferMachineSettingsFromConfigMap(configMap: Map<string, string>, machi
       machine.pressureMax = `IPAP ${ipapMaxText} cmH2O`;
       machine.pressureIsAuto = true;
     }
+
+    if (!machine.epap) {
+      if (epapText) machine.epap = `${epapText} cmH2O`;
+      else if (epapMinText) machine.epap = `${epapMinText} cmH2O (min)`;
+    }
+    if (!machine.ipap) {
+      if (ipapText) machine.ipap = `${ipapText} cmH2O`;
+      else if (ipapMaxText) machine.ipap = `${ipapMaxText} cmH2O (max)`;
+    }
   }
 
   inferPressureSettingsFromMap(configMap, machine);
+  inferBilevelSettingsFromMap(configMap, machine);
 
   if (!machine.pressureRelief) {
     inferPressureReliefFromMap(configMap, machine);
@@ -1831,6 +1933,35 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
       if (!machine.pressureMax && max !== undefined) machine.pressureMax = pressureText(max);
       if (min !== undefined || max !== undefined) machine.pressureIsAuto = true;
     }
+  }
+
+  if ((!machine.epap || !machine.ipap) && machine.pressure) {
+    const epapMatch = machine.pressure.match(/epap\s*(-?\d+(?:\.\d+)?)(?:\s*-\s*(-?\d+(?:\.\d+)?))?/i);
+    const ipapMatch = machine.pressure.match(/ipap\s*(-?\d+(?:\.\d+)?)(?:\s*-\s*(-?\d+(?:\.\d+)?))?/i);
+    const epapLow = normalizePressureNumber(epapMatch ? safeNumber(epapMatch[1]) : undefined);
+    const epapHigh = normalizePressureNumber(epapMatch ? safeNumber(epapMatch[2]) : undefined);
+    const ipapLow = normalizePressureNumber(ipapMatch ? safeNumber(ipapMatch[1]) : undefined);
+    const ipapHigh = normalizePressureNumber(ipapMatch ? safeNumber(ipapMatch[2]) : undefined);
+
+    if (!machine.epap) {
+      if (epapLow !== undefined && epapHigh !== undefined) {
+        machine.epap = `${Number(epapLow.toFixed(2)).toString()}-${Number(epapHigh.toFixed(2)).toString()} cmH2O`;
+      } else if (epapLow !== undefined) {
+        machine.epap = pressureText(epapLow);
+      }
+    }
+
+    if (!machine.ipap) {
+      if (ipapLow !== undefined && ipapHigh !== undefined) {
+        machine.ipap = `${Number(ipapLow.toFixed(2)).toString()}-${Number(ipapHigh.toFixed(2)).toString()} cmH2O`;
+      } else if (ipapLow !== undefined) {
+        machine.ipap = pressureText(ipapLow);
+      }
+    }
+  }
+
+  if (!machine.mode && (machine.epap || machine.ipap || machine.respiratoryRate)) {
+    machine.mode = "BiPAP";
   }
 
   const report: QuickReportMetrics = {

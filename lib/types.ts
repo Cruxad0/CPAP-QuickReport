@@ -35,6 +35,9 @@ export interface MachineSettings {
   pressureAvg?: number | null;
   pressure95th?: number | null;
   pressureIsAuto?: boolean;
+  epap?: string;
+  ipap?: string;
+  respiratoryRate?: string;
   pressureRelief?: string;
 }
 
