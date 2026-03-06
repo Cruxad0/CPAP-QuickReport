@@ -27,7 +27,7 @@ const MAX_YEAR = 2100;
 const IMPORT_LOOKBACK_DAYS = 91;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const SOURCE_SELECTION_CANCEL_TIMEOUT_MS = 20000;
-const REPORT_RANGE_OPTIONS = [90, 30, 7] as const;
+const REPORT_RANGE_OPTIONS = [90, 60, 30, 7] as const;
 
 type ReportRangeDays = (typeof REPORT_RANGE_OPTIONS)[number];
 type GeneratedReportArtifact = {
@@ -913,7 +913,7 @@ export function QuickReportApp() {
     <main>
       <section className="hero">
         <h1>CPAP Clinician QuickReport</h1>
-        <p>Create a 90/30/7-day CPAP PDF report in a few steps. Data is processed locally and never stored.</p>
+        <p>Create a 90/60/30/7-day CPAP PDF report in a few steps. Data is processed locally and never stored.</p>
         <p className="subtle">
           Powered by{" "}
           <a href="https://notespecialist.com" target="_blank" rel="noopener noreferrer">
@@ -929,7 +929,7 @@ export function QuickReportApp() {
           <ol className="usage-steps">
             <li>Enter the patient name and date of birth.</li>
             <li>Click <strong>Select SD-CARD</strong> and choose the SD card folder.</li>
-            <li>Click <strong>Generate Reports</strong> to create 90, 30, and 7 day reports.</li>
+            <li>Click <strong>Generate Reports</strong> to create 90, 60, 30, and 7 day reports.</li>
             <li>Use the report tabs in preview, then click <strong>Export PDF</strong> to save.</li>
           </ol>
         </article>
