@@ -426,12 +426,20 @@ function rankLoaders(files: SourceMeta[]): LoaderMatch[] {
     .sort((a, b) => b.score - a.score || a.label.localeCompare(b.label));
 }
 
-function resolveRecentWindow(latestDate: Date): DateWindow {
+function normalizeLookbackDays(value: number): number {
+  if (!Number.isFinite(value)) return 90;
+  const rounded = Math.trunc(value);
+  if (rounded <= 0) return 90;
+  return rounded;
+}
+
+function resolveRecentWindow(latestDate: Date, lookbackDays: number): DateWindow {
+  const normalizedLookbackDays = normalizeLookbackDays(lookbackDays);
   const latestDataDay = toClinicalDay(latestDate);
   const todayClinicalDay = toClinicalDay(new Date());
   const windowEnd = latestDataDay > todayClinicalDay ? todayClinicalDay : latestDataDay;
   const windowStart = new Date(windowEnd);
-  windowStart.setUTCDate(windowStart.getUTCDate() - 89);
+  windowStart.setUTCDate(windowStart.getUTCDate() - (normalizedLookbackDays - 1));
   return { start: windowStart, end: windowEnd };
 }
 
@@ -525,13 +533,13 @@ function scoreGenericCandidate(meta: SourceMeta, window: DateWindow | null, prio
   return score;
 }
 
-function selectGenericCandidates(allCandidates: SourceMeta[], loaderRanking: LoaderMatch[]): SourceMeta[] {
+function selectGenericCandidates(allCandidates: SourceMeta[], loaderRanking: LoaderMatch[], lookbackDays: number): SourceMeta[] {
   const loaderIds = loaderRanking.slice(0, 5).map((l) => l.id);
   const latestDated = allCandidates
     .filter((m): m is SourceMeta & { recordDate: Date } => m.recordDate !== null)
     .reduce<Date | null>((acc, m) => (acc === null || m.recordDate > acc ? m.recordDate : acc), null);
 
-  const window = latestDated ? resolveRecentWindow(latestDated) : null;
+  const window = latestDated ? resolveRecentWindow(latestDated, lookbackDays) : null;
   const priorityPatterns = loaderPriorityPatterns(loaderIds);
 
   const ranked = allCandidates
@@ -1077,7 +1085,7 @@ function parseResventLeakFromBytes(bytes: Uint8Array): LeakStats | null {
   return parseByLayout(true) ?? parseByLayout(false);
 }
 
-function pickResventCandidates(files: SourceMeta[], warnings: string[]): {
+function pickResventCandidates(files: SourceMeta[], warnings: string[], lookbackDays: number): {
   configFiles: SourceMeta[];
   statFiles: SourceMeta[];
   evByDayUsage: Map<string, SourceMeta>;
@@ -1094,7 +1102,7 @@ function pickResventCandidates(files: SourceMeta[], warnings: string[]): {
   if (dated.length === 0) return null;
 
   const latestDate = dated.reduce((acc, m) => (m.recordDate > acc ? m.recordDate : acc), dated[0].recordDate);
-  const { start: windowStart, end: windowEnd } = resolveRecentWindow(latestDate);
+  const { start: windowStart, end: windowEnd } = resolveRecentWindow(latestDate, lookbackDays);
 
   const inWindow = dated.filter((m) => m.recordDate >= windowStart && m.recordDate <= windowEnd);
   const windowDateSet = new Set(inWindow.map((m) => toClinicalIsoDate(m.recordDate)));
@@ -1187,7 +1195,8 @@ function isGenericTextCandidate(meta: SourceMeta): boolean {
 }
 
 export async function buildQuickReportMetrics(request: ParseRequest): Promise<QuickReportMetrics> {
-  const { files, patientName, dateOfBirthIso, physicianName, onProgress } = request;
+  const { files, patientName, dateOfBirthIso, physicianName, lookbackDays, onProgress } = request;
+  const normalizedLookbackDays = normalizeLookbackDays(lookbackDays);
 
   const warnings: string[] = [];
   const now = new Date();
@@ -1207,7 +1216,7 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
   emit(onProgress, { phase: "scan", detail: "Scanning files...", percent: 8 });
 
   if (hasResventStructure) {
-    const selected = pickResventCandidates(meta, warnings);
+    const selected = pickResventCandidates(meta, warnings, normalizedLookbackDays);
     if (selected) {
       fallbackWindowDateSet = selected.windowDateSet;
       latestPathDate = selected.latestDate;
@@ -1317,7 +1326,7 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
   // Generic parsing is always executed so all loader families can contribute metrics.
   const runGenericPass = true;
   const genericTextCandidates = meta.filter(isGenericTextCandidate);
-  const genericCandidatesRaw = runGenericPass ? selectGenericCandidates(genericTextCandidates, loaderRanking) : [];
+  const genericCandidatesRaw = runGenericPass ? selectGenericCandidates(genericTextCandidates, loaderRanking, normalizedLookbackDays) : [];
   const genericCandidates =
     hasResventStructure
       ? genericCandidatesRaw.filter(
@@ -1391,7 +1400,7 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
     }
   }
 
-  emit(onProgress, { phase: "compute", detail: "Computing 90-day metrics...", percent: 82 });
+  emit(onProgress, { phase: "compute", detail: `Computing ${normalizedLookbackDays}-day metrics...`, percent: 82 });
 
   const dedupedRecords = dedupeParsedRecords(records);
   if (dedupedRecords.length < records.length) {
@@ -1426,7 +1435,7 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
     );
   }
 
-  const { start: windowStart, end: windowEnd } = resolveRecentWindow(latest);
+  const { start: windowStart, end: windowEnd } = resolveRecentWindow(latest, normalizedLookbackDays);
   const windowStartIso = toIsoDate(windowStart);
   const windowEndIso = toIsoDate(windowEnd);
 
@@ -1494,7 +1503,7 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
         "Data import succeeded but no daily metrics were parsed from THERAPY/RECORD. Verify this export includes STAT/STATxx and EVxx files."
       );
     }
-    throw new Error("Data import succeeded but no records were found in the most recent 90-day date range.");
+    throw new Error(`Data import succeeded but no records were found in the most recent ${normalizedLookbackDays}-day date range.`);
   }
 
   const usageValues = [...dayMap.values()]
@@ -1575,10 +1584,10 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
     physicianName: physicianName.trim(),
     dateRangeStart: formatDateHuman(toIsoDate(windowStart)),
     dateRangeEnd: formatDateHuman(toIsoDate(windowEnd)),
-    daysInWindow: 90,
+    daysInWindow: normalizedLookbackDays,
     daysWithData,
     daysWithUsage,
-    usageDaysPercent: finite((daysWithData / 90) * 100),
+    usageDaysPercent: finite((daysWithData / normalizedLookbackDays) * 100),
     compliantDays,
     compliancePercent: finite((compliantDays / complianceBaseDays) * 100),
     avgUsageHours: avgUsageHours === null ? null : finite(avgUsageHours),

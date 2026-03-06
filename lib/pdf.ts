@@ -368,7 +368,7 @@ export async function buildPdfReport(report: QuickReportMetrics, headerDataUrl?:
   drawTable(
     pdfDoc,
     state,
-    "Therapy Summary (Last 90 Days)",
+    `Therapy Summary (Last ${report.daysInWindow} Days)`,
     [
       ["Date range", `${report.dateRangeStart} to ${report.dateRangeEnd}`],
       ["Days with data", `${report.daysWithData} / ${report.daysInWindow}`],

@@ -197,6 +197,41 @@ textarea {
   margin-top: 0.9rem;
 }
 
+.range-tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.22rem;
+  border: 1px solid #c8d9e8;
+  border-radius: 999px;
+  background: #f4f8fc;
+  margin-top: 0.75rem;
+}
+
+.range-tab {
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 0.4rem 0.8rem;
+  background: transparent;
+  color: #25445b;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.range-tab:hover:not(:disabled) {
+  background: #e7f0f8;
+}
+
+.range-tab-active {
+  background: linear-gradient(135deg, var(--brand) 0%, var(--brand-2) 100%);
+  color: #fff;
+}
+
+.range-tab:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .link-button {
   margin-top: 0.45rem;
   border: 0;

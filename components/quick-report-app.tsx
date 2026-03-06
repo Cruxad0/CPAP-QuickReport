@@ -27,6 +27,9 @@ const MAX_YEAR = 2100;
 const IMPORT_LOOKBACK_DAYS = 91;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const SOURCE_SELECTION_CANCEL_TIMEOUT_MS = 20000;
+const REPORT_RANGE_OPTIONS = [90, 30, 7] as const;
+
+type ReportRangeDays = (typeof REPORT_RANGE_OPTIONS)[number];
 
 type RecentWindowFilterResult = {
   files: SourceFile[];
@@ -419,6 +422,7 @@ export function QuickReportApp() {
   const [sourceKind, setSourceKind] = useState<DataSourceKind>("folder");
   const [sourceFiles, setSourceFiles] = useState<SourceFile[]>([]);
   const [headerDataUrl, setHeaderDataUrl] = useState<string | undefined>(undefined);
+  const [reportRangeDays, setReportRangeDays] = useState<ReportRangeDays>(90);
 
   const [status, setStatus] = useState<"idle" | "working" | "ready" | "error">("idle");
   const [statusMessage, setStatusMessage] = useState("Awaiting data source.");
@@ -557,6 +561,7 @@ export function QuickReportApp() {
     resetResultState();
     setSourceFiles([]);
     setSourceKind("folder");
+    setReportRangeDays(90);
     setPatientName("");
     setDateOfBirthInput("");
     clearSourceInputs();
@@ -786,6 +791,7 @@ export function QuickReportApp() {
         patientName,
         dateOfBirthIso: dateOfBirthIso ?? "",
         physicianName,
+        lookbackDays: reportRangeDays,
         onProgress: (p) => setParseProgress(p)
       });
 
@@ -870,7 +876,7 @@ export function QuickReportApp() {
     <main>
       <section className="hero">
         <h1>CPAP Clinician QuickReport</h1>
-        <p>Create a 90-day CPAP PDF report in a few steps. Data is processed locally and never stored.</p>
+        <p>Create a 90/30/7-day CPAP PDF report in a few steps. Data is processed locally and never stored.</p>
         <p className="subtle">
           Powered by{" "}
           <a href="https://notespecialist.com" target="_blank" rel="noopener noreferrer">
@@ -886,7 +892,7 @@ export function QuickReportApp() {
           <ol className="usage-steps">
             <li>Enter the patient name and date of birth.</li>
             <li>Click <strong>Select SD-CARD</strong> and choose the SD card folder.</li>
-            <li>Click <strong>Generate 90-Day PDF</strong>.</li>
+            <li>Choose 90, 30, or 7 days, then click <strong>Generate PDF</strong>.</li>
             <li>Review the preview, then click <strong>Export PDF</strong> to save.</li>
           </ol>
         </article>
@@ -1016,6 +1022,23 @@ export function QuickReportApp() {
           <h3>Data Source</h3>
           <p className="subtle">Choose an SD-card folder. The webapp keeps only the most recent 90 days NIMV data locally in browser.</p>
 
+          <div className="range-tabs" role="tablist" aria-label="Report date range">
+            {REPORT_RANGE_OPTIONS.map((days) => (
+              <button
+                key={days}
+                type="button"
+                role="tab"
+                aria-selected={reportRangeDays === days}
+                className={`range-tab ${reportRangeDays === days ? "range-tab-active" : ""}`}
+                onClick={() => setReportRangeDays(days)}
+                disabled={status === "working"}
+              >
+                {days} Days
+              </button>
+            ))}
+          </div>
+          <p className="subtle">Selected report range: {reportRangeDays} days.</p>
+
           <div className="actions">
             <button
               className="btn btn-secondary"
@@ -1049,7 +1072,7 @@ export function QuickReportApp() {
 
           <div className="actions">
             <button className="btn btn-primary" onClick={handleGenerate} disabled={!canGenerate}>
-              Generate 90-Day PDF
+              Generate {reportRangeDays}-Day PDF
             </button>
             <button
               className="btn btn-danger"

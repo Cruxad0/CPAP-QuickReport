@@ -64,5 +64,6 @@ export interface ParseRequest {
   patientName: string;
   dateOfBirthIso: string;
   physicianName: string;
+  lookbackDays: number;
   onProgress?: (p: ParseProgress) => void;
 }
