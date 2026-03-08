@@ -1755,12 +1755,28 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
   const { start: windowStart, end: windowEnd } = resolveRecentWindow(latest, normalizedLookbackDays);
   const windowStartIso = toIsoDate(windowStart);
   const windowEndIso = toIsoDate(windowEnd);
+  let effectiveWindowStartIso = windowStartIso;
+
+  const availableDayKeys = new Set<string>();
+  for (const record of dedupedRecords) {
+    const key = toClinicalIsoDate(record.date);
+    if (key <= windowEndIso) availableDayKeys.add(key);
+  }
+  for (const day of leakStatsByDay.keys()) {
+    if (day <= windowEndIso) availableDayKeys.add(day);
+  }
+  if (availableDayKeys.size > 0) {
+    const earliestAvailableIso = [...availableDayKeys].sort((a, b) => a.localeCompare(b))[0];
+    if (earliestAvailableIso > effectiveWindowStartIso) {
+      effectiveWindowStartIso = earliestAvailableIso;
+    }
+  }
 
   const dayMap = new Map<string, DayBucket>();
 
   for (const record of dedupedRecords) {
     const key = toClinicalIsoDate(record.date);
-    if (key < windowStartIso || key > windowEndIso) continue;
+    if (key < effectiveWindowStartIso || key > windowEndIso) continue;
     const bucket = dayMap.get(key) ?? createEmptyDayBucket();
     let usageForAhiWeight: number | undefined;
 
@@ -1821,7 +1837,7 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
   }
 
   for (const [day, stats] of leakStatsByDay.entries()) {
-    if (day < windowStartIso || day > windowEndIso) continue;
+    if (day < effectiveWindowStartIso || day > windowEndIso) continue;
     const bucket = dayMap.get(day) ?? createEmptyDayBucket();
     bucket.leakSum += stats.sum / stats.count;
     bucket.leakCount += 1;
@@ -1881,7 +1897,18 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
     .filter((d) => d.pressure95Count > 0)
     .map((d) => d.pressure95Sum / d.pressure95Count);
 
-  const daysWithData = dayMap.size;
+  const effectiveWindowStart = new Date(`${effectiveWindowStartIso}T12:00:00Z`);
+  const effectiveWindowEnd = new Date(`${windowEndIso}T12:00:00Z`);
+  const effectiveDaySpan = Math.max(0, Math.round((effectiveWindowEnd.getTime() - effectiveWindowStart.getTime()) / (24 * 3600 * 1000)));
+  const effectiveWindowDays = Math.max(1, Math.min(normalizedLookbackDays, effectiveDaySpan));
+  if (effectiveWindowDays < normalizedLookbackDays) {
+    warnings.push(
+      `Only ${effectiveWindowDays} days of therapy history are available; calculations were adjusted from ${normalizedLookbackDays} days to avoid false deficits.`
+    );
+  }
+
+  const daysWithDataRaw = dayMap.size;
+  const daysWithData = Math.min(daysWithDataRaw, effectiveWindowDays);
   const daysWithUsage = usageValues.length;
   const compliantDays = usageValues.filter((u) => u >= 4).length;
   const complianceBaseDays = Math.max(1, daysWithUsage);
@@ -1985,12 +2012,12 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
     patientName: patientName.trim(),
     dateOfBirth: formatDateHuman(dateOfBirthIso),
     physicianName: physicianName.trim(),
-    dateRangeStart: formatDateHuman(toIsoDate(windowStart)),
+    dateRangeStart: formatDateHuman(effectiveWindowStartIso),
     dateRangeEnd: formatDateHuman(toIsoDate(windowEnd)),
-    daysInWindow: normalizedLookbackDays,
+    daysInWindow: effectiveWindowDays,
     daysWithData,
     daysWithUsage,
-    usageDaysPercent: finite((daysWithData / normalizedLookbackDays) * 100),
+    usageDaysPercent: finite((daysWithData / Math.max(1, effectiveWindowDays)) * 100),
     compliantDays,
     compliancePercent: finite((compliantDays / complianceBaseDays) * 100),
     avgUsageHours: avgUsageHours === null ? null : finite(avgUsageHours),
