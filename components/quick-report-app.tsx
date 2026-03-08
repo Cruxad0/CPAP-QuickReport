@@ -488,9 +488,14 @@ export function QuickReportApp() {
     const total = sourceFiles.reduce((sum, f) => sum + f.size, 0);
     return `${sourceFiles.length} files selected (${bytesToLabel(total)})`;
   }, [sourceFiles]);
-  const activeReport = generatedReports[activeReportDays] ?? null;
+  const generatedReportDays = useMemo(
+    () => REPORT_RANGE_OPTIONS.filter((days) => Boolean(generatedReports[days])),
+    [generatedReports]
+  );
+  const resolvedActiveReportDays = generatedReports[activeReportDays] ? activeReportDays : (generatedReportDays[0] ?? null);
+  const activeReport = resolvedActiveReportDays ? generatedReports[resolvedActiveReportDays] ?? null : null;
   const activeMetrics = activeReport?.metrics ?? null;
-  const hasGeneratedReports = REPORT_RANGE_OPTIONS.some((days) => Boolean(generatedReports[days]));
+  const hasGeneratedReports = generatedReportDays.length > 0;
 
   const dateOfBirthIso = useMemo(() => normalizeDobInput(dateOfBirthInput), [dateOfBirthInput]);
   const isPatientNameMissing = patientName.trim().length <= 1;
@@ -798,10 +803,20 @@ export function QuickReportApp() {
     const generated: GeneratedReports = {};
     try {
       const totalRanges = REPORT_RANGE_OPTIONS.length;
+      let availableHistoryDays: number | null = null;
       for (let idx = 0; idx < totalRanges; idx += 1) {
         const days = REPORT_RANGE_OPTIONS[idx];
         const segmentStart = Math.round((idx / totalRanges) * 96);
         const segmentSpan = Math.round(96 / totalRanges);
+
+        if (availableHistoryDays !== null && days > availableHistoryDays) {
+          setParseProgress({
+            phase: "start",
+            detail: `Skipping ${days}-day tab (only ${availableHistoryDays} days available)...`,
+            percent: Math.max(2, segmentStart)
+          });
+          continue;
+        }
 
         setParseProgress({
           phase: "start",
@@ -824,6 +839,16 @@ export function QuickReportApp() {
             })
         });
 
+        availableHistoryDays = availableHistoryDays === null ? metrics.daysInWindow : Math.max(availableHistoryDays, metrics.daysInWindow);
+        if (metrics.daysInWindow < days) {
+          setParseProgress({
+            phase: "start",
+            detail: `Hiding ${days}-day tab (only ${metrics.daysInWindow} days available)...`,
+            percent: Math.min(98, segmentStart + segmentSpan - 1)
+          });
+          continue;
+        }
+
         setParseProgress({
           phase: "pdf",
           detail: `Rendering ${days}-day PDF...`,
@@ -844,7 +869,8 @@ export function QuickReportApp() {
 
       revokeGeneratedReportUrls(generatedReports);
       setGeneratedReports(generated);
-      setActiveReportDays(90);
+      const largestAvailableTab = REPORT_RANGE_OPTIONS.find((days) => Boolean(generated[days])) ?? 7;
+      setActiveReportDays(largestAvailableTab);
       setIsPreviewCollapsed(false);
       setStatus("ready");
       setStatusMessage("Report generated successfully. Review preview and export PDF.");
@@ -1126,7 +1152,7 @@ export function QuickReportApp() {
               <ul className="notes">
                 <li>Report is ready. Review the preview, then export the PDF.</li>
                 <li>
-                  Selected loader and Date range ({activeReportDays} days): {activeMetrics.selectedLoader} | {activeMetrics.dateRangeStart} to {activeMetrics.dateRangeEnd}
+                  Selected loader and Date range ({resolvedActiveReportDays ?? activeReportDays} days): {activeMetrics.selectedLoader} | {activeMetrics.dateRangeStart} to {activeMetrics.dateRangeEnd}
                 </li>
               </ul>
             ) : null}
@@ -1151,15 +1177,14 @@ export function QuickReportApp() {
         {hasGeneratedReports && activeReport ? (
           <article className="card col-12 preview-shell">
             <div className="range-tabs" role="tablist" aria-label="Generated report tabs">
-              {REPORT_RANGE_OPTIONS.map((days) => (
+              {generatedReportDays.map((days) => (
                 <button
                   key={days}
                   type="button"
                   role="tab"
-                  aria-selected={activeReportDays === days}
-                  className={`range-tab ${activeReportDays === days ? "range-tab-active" : ""}`}
+                  aria-selected={resolvedActiveReportDays === days}
+                  className={`range-tab ${resolvedActiveReportDays === days ? "range-tab-active" : ""}`}
                   onClick={() => setActiveReportDays(days)}
-                  disabled={!generatedReports[days]}
                 >
                   {days} Days
                 </button>
