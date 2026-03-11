@@ -244,12 +244,12 @@ type TableRow = [string, string];
 
 function isAutoPapMode(mode: string | undefined): boolean {
   if (!mode) return false;
-  return /\b(auto\s*pap|auto\s*cpap|apap|autoset|vauto|auto[-\s]*bipap|autobilevel)\b/i.test(mode);
+  return /\b(apap|autoset|vauto|autobilevel|auto[-_\s]*bipap|auto(?:matic)?[-_\s]*(?:pap|cpap)|cpap[-_\s]*auto|auto)\b/i.test(mode);
 }
 
 function isBiPapMode(mode: string | undefined): boolean {
   if (!mode) return false;
-  return /\b(bipap|bi[-\s]*level|bilevel|vpap|lumis|avaps|s\/t|st)\b/i.test(mode);
+  return /\b(bipap|bi[-_\s]*level|bilevel|vpap|lumis|avaps|s\/t|st|t30|s30|pc)\b/i.test(mode);
 }
 
 function machineSettingRows(report: QuickReportMetrics): TableRow[] {
@@ -266,7 +266,8 @@ function machineSettingRows(report: QuickReportMetrics): TableRow[] {
     typeof report.machine.pressureAvg === "number" ||
     typeof report.machine.pressure95th === "number";
   const isBiPap = isBiPapMode(mode);
-  const isAutoPap = !isBiPap && (isAutoPapMode(mode) || (!mode && hasAutoPressure));
+  const isFixedCpap = /\bcpap\b/i.test(mode) && !isAutoPapMode(mode);
+  const isAutoPap = !isBiPap && !isFixedCpap && (isAutoPapMode(mode) || hasAutoPressure);
 
   if (isBiPap) {
     rows.push(["IPAP", textValue(report.machine.ipap)]);

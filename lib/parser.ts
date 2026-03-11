@@ -134,7 +134,7 @@ function pressureText(value: number | undefined): string | undefined {
 
 function isLikelyAutoMode(mode: string | undefined): boolean {
   if (!mode) return false;
-  return /\b(auto|apap|autoset|vauto|autobilevel|auto[-\s]*bipap|asv|autosv)\b/i.test(mode);
+  return /\b(apap|autoset|vauto|autobilevel|auto[-_\s]*bipap|asv|autosv|auto(?:matic)?[-_\s]*(?:pap|cpap)|cpap[-_\s]*auto|auto)\b/i.test(mode);
 }
 
 function isLikelyBiPapMode(mode: string | undefined): boolean {
