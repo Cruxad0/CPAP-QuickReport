@@ -1754,10 +1754,10 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
   const availableDayKeys = new Set<string>();
   for (const record of dedupedRecords) {
     const key = toClinicalIsoDate(record.date);
-    if (key <= windowEndIso) availableDayKeys.add(key);
+    if (key < windowEndIso) availableDayKeys.add(key);
   }
   for (const day of leakStatsByDay.keys()) {
-    if (day <= windowEndIso) availableDayKeys.add(day);
+    if (day < windowEndIso) availableDayKeys.add(day);
   }
   if (availableDayKeys.size > 0) {
     const earliestAvailableIso = [...availableDayKeys].sort((a, b) => a.localeCompare(b))[0];
@@ -1770,7 +1770,7 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
 
   for (const record of dedupedRecords) {
     const key = toClinicalIsoDate(record.date);
-    if (key < effectiveWindowStartIso || key > windowEndIso) continue;
+    if (key < effectiveWindowStartIso || key >= windowEndIso) continue;
     const bucket = dayMap.get(key) ?? createEmptyDayBucket();
     let usageForAhiWeight: number | undefined;
 
@@ -1831,7 +1831,7 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
   }
 
   for (const [day, stats] of leakStatsByDay.entries()) {
-    if (day < effectiveWindowStartIso || day > windowEndIso) continue;
+    if (day < effectiveWindowStartIso || day >= windowEndIso) continue;
     const bucket = dayMap.get(day) ?? createEmptyDayBucket();
     bucket.leakSum += stats.sum / stats.count;
     bucket.leakCount += 1;
@@ -1905,7 +1905,7 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
   const daysWithData = Math.min(daysWithDataRaw, effectiveWindowDays);
   const daysWithUsage = usageValues.length;
   const compliantDays = usageValues.filter((u) => u >= 4).length;
-  const complianceBaseDays = Math.max(1, daysWithUsage);
+  const complianceBaseDays = Math.max(1, effectiveWindowDays);
   const avgUsageHours = usageValues.length > 0 ? usageValues.reduce((a, b) => a + b, 0) / usageValues.length : null;
   const avgAhi = ahiValues.length > 0 ? ahiValues.reduce((a, b) => a + b, 0) / ahiValues.length : null;
   const avgResidualApneas =
