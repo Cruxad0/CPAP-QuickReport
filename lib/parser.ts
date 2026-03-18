@@ -1,3 +1,4 @@
+import { isAutoPapLikeMode, isBiPapLikeMode } from "@/lib/machine-mode";
 import { ParseRequest, ParsedRecord, ParseProgress, QuickReportMetrics, SourceFile } from "@/lib/types";
 
 const MAX_GENERIC_FILES_TO_SCAN = 2500;
@@ -132,15 +133,8 @@ function pressureText(value: number | undefined): string | undefined {
   return `${Number(n.toFixed(2)).toString()} cmH2O`;
 }
 
-function isLikelyAutoMode(mode: string | undefined): boolean {
-  if (!mode) return false;
-  return /\b(apap|autoset|vauto|autobilevel|auto[-_\s]*bipap|asv|autosv|auto(?:matic)?[-_\s]*(?:pap|cpap)|cpap[-_\s]*auto|auto)\b/i.test(mode);
-}
-
-function isLikelyBiPapMode(mode: string | undefined): boolean {
-  if (!mode) return false;
-  return /\b(bipap|bi[-\s]*level|bilevel|vpap|lumis|avaps|s\/t|st|t30|s30|pc)\b/i.test(mode);
-}
+const isLikelyAutoMode = isAutoPapLikeMode;
+const isLikelyBiPapMode = isBiPapLikeMode;
 
 function createUtcDateNoon(year: number, month: number, day: number): Date {
   return new Date(Date.UTC(year, month - 1, day, 12, 0, 0));

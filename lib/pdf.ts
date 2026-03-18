@@ -1,3 +1,4 @@
+import { isAutoPapLikeMode, isBiPapLikeMode, isFixedCpapLikeMode } from "@/lib/machine-mode";
 import { QuickReportMetrics } from "@/lib/types";
 
 const PAGE_WIDTH_A4 = 595.28;
@@ -242,14 +243,13 @@ function drawBottomFooterBlock(
 
 type TableRow = [string, string];
 
-function isAutoPapMode(mode: string | undefined): boolean {
-  if (!mode) return false;
-  return /\b(apap|autoset|vauto|autobilevel|auto[-_\s]*bipap|auto(?:matic)?[-_\s]*(?:pap|cpap)|cpap[-_\s]*auto|auto)\b/i.test(mode);
-}
-
-function isBiPapMode(mode: string | undefined): boolean {
-  if (!mode) return false;
-  return /\b(bipap|bi[-_\s]*level|bilevel|vpap|lumis|avaps|s\/t|st|t30|s30|pc)\b/i.test(mode);
+function hasAutoPressureRange(report: QuickReportMetrics): boolean {
+  return (
+    report.machine.pressureIsAuto === true ||
+    Boolean(report.machine.pressureMin) ||
+    Boolean(report.machine.pressureMax) ||
+    (typeof report.machine.pressure === "string" && /\d+(?:\.\d+)?\s*-\s*\d+(?:\.\d+)?/.test(report.machine.pressure))
+  );
 }
 
 function machineSettingRows(report: QuickReportMetrics): TableRow[] {
@@ -259,15 +259,9 @@ function machineSettingRows(report: QuickReportMetrics): TableRow[] {
   ];
 
   const mode = report.machine.mode?.trim() ?? "";
-  const hasAutoPressure =
-    report.machine.pressureIsAuto === true ||
-    Boolean(report.machine.pressureMin) ||
-    Boolean(report.machine.pressureMax) ||
-    typeof report.machine.pressureAvg === "number" ||
-    typeof report.machine.pressure95th === "number";
-  const isBiPap = isBiPapMode(mode);
-  const isFixedCpap = /\bcpap\b/i.test(mode) && !isAutoPapMode(mode);
-  const isAutoPap = !isBiPap && !isFixedCpap && (isAutoPapMode(mode) || hasAutoPressure);
+  const isBiPap = isBiPapLikeMode(mode);
+  const isFixedCpap = isFixedCpapLikeMode(mode);
+  const isAutoPap = !isBiPap && !isFixedCpap && (isAutoPapLikeMode(mode) || hasAutoPressureRange(report));
 
   if (isBiPap) {
     rows.push(["IPAP", textValue(report.machine.ipap)]);
