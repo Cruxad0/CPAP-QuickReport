@@ -946,7 +946,7 @@ export function QuickReportApp() {
         <p className="subtle">
           Powered by{" "}
           <a href="https://notespecialist.com" target="_blank" rel="noopener noreferrer">
-            notespecialist.com
+            NoteSpecialist.com
           </a>
           {", "}an AI-powered clinical documentation tool.
         </p>
