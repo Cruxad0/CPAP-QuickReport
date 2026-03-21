@@ -1,3 +1,5 @@
+import type { QuickReportMetrics } from "@/lib/types";
+
 function normalizeMachineMode(mode: string | undefined): string {
   return (mode ?? "")
     .toLowerCase()
@@ -58,4 +60,22 @@ export function isFixedCpapLikeMode(mode: string | undefined): boolean {
   const normalized = normalizeMachineMode(mode);
   if (!normalized) return false;
   return normalized.includes("cpap") && !isAutoPapLikeMode(normalized);
+}
+
+export type CanonicalTherapyMode = "BiPAP" | "APAP" | "CPAP";
+
+export function classifyTherapyMode(machine: QuickReportMetrics["machine"]): CanonicalTherapyMode | null {
+  if (isBiPapLikeMode(machine.mode) || machine.epap || machine.ipap || machine.respiratoryRate) {
+    return "BiPAP";
+  }
+
+  if (isAutoPapLikeMode(machine.mode) || machine.pressureIsAuto || machine.pressureMin || machine.pressureMax) {
+    return "APAP";
+  }
+
+  if (isFixedCpapLikeMode(machine.mode) || machine.pressure) {
+    return "CPAP";
+  }
+
+  return null;
 }

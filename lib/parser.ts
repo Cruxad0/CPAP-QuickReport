@@ -1,4 +1,12 @@
-import { isAutoPapLikeMode, isBiPapLikeMode } from "@/lib/machine-mode";
+import { classifyTherapyMode, isAutoPapLikeMode, isBiPapLikeMode } from "@/lib/machine-mode";
+import {
+  buildFamilyPriorityPatterns,
+  hasFamilySignature,
+  isCandidateForFamily,
+  rankParserFamilies,
+  type LoaderMatch,
+  type ParserFamilyDefinition
+} from "@/lib/parsers/families";
 import { ParseRequest, ParsedRecord, ParseProgress, QuickReportMetrics, SourceFile } from "@/lib/types";
 
 const MAX_GENERIC_FILES_TO_SCAN = 2500;
@@ -11,45 +19,10 @@ const GENERIC_BINARY_EXTENSIONS = new Set(["dat", "pdat", "cfg", "ini", "edf", "
 const MAX_GENERIC_BINARY_FILE_BYTES = 1_500_000;
 const GENERIC_NAME_HINT = /(?:^|[_\-.])(stat\d{0,2}|ev\d{0,2}|summary|session|record|therapy|usage|result|detail|event|config|setting)(?:[_\-.]|$)/i;
 
-type LoaderSignature = {
-  id: string;
-  label: string;
-  markers: RegExp[];
-};
-
-type LoaderMatch = {
-  id: string;
-  label: string;
-  score: number;
-};
-
 type DateWindow = {
   start: Date;
   end: Date;
 };
-
-const LOADER_SIGNATURES: LoaderSignature[] = [
-  { id: "resvent", label: "Resvent / Hoffrichter", markers: [/(?:^|\/)therapy\/record\//i, /(?:^|\/)therapy\/config\//i] },
-  { id: "resmed", label: "ResMed", markers: [/(?:^|\/)datalog\//i, /(?:^|\/)str\.edf$/i, /(?:^|\/)eve\.edf$/i] },
-  { id: "sleepstyle", label: "Fisher & Paykel SleepStyle", markers: [/(?:^|\/)summary\.edf$/i, /(?:^|\/)detail\.edf$/i] },
-  { id: "prisma", label: "Lowe / Prisma", markers: [/(?:^|\/)therapy\.pdat$/i, /(?:^|\/)therapy\//i] },
-  { id: "weinmann", label: "Weinmann / Loewenstein", markers: [/(?:^|\/)wm_profiles\.xml$/i, /(?:^|\/)somnobalance/i] },
-  { id: "prs1", label: "Philips Respironics System One / DreamStation", markers: [/(?:^|\/)p-series\//i, /(?:^|\/)p[0-9]{5}\.[0-9]{3}$/i] },
-  { id: "mseries", label: "Philips Respironics M-Series", markers: [/(?:^|\/)m-series\//i, /(?:^|\/)therapy\.dat$/i] },
-  {
-    id: "bmc",
-    label: "Apex / BMC / Luna",
-    markers: [/(?:^|\/)p[0-9]{4}\.idx$/i, /(?:^|\/)p[0-9]{4}\.000$/i, /(?:^|\/)(?:luna|apex|bmc)/i]
-  },
-  { id: "intellipap", label: "DeVilbiss IntelliPAP", markers: [/(?:^|\/)smartcode\//i, /(?:^|\/)sl\.edf$/i] },
-  { id: "icon", label: "Fisher & Paykel ICON", markers: [/(?:^|\/)fpicon\//i, /(?:^|\/)icon\.edf$/i] },
-  { id: "yuwell", label: "Yuwell", markers: [/(?:^|\/)yuwell/i, /(?:^|\/)wave\//i] },
-  { id: "dreem", label: "Dreem", markers: [/(?:^|\/)dreem\//i, /(?:^|\/)dreem.*\.(?:csv|json)$/i] },
-  { id: "viatom", label: "Viatom", markers: [/(?:^|\/)viatom/i, /(?:^|\/)oximeter/i] },
-  { id: "vrem", label: "VREM", markers: [/(?:^|\/)vrem/i] },
-  { id: "cms50", label: "CMS50", markers: [/(?:^|\/)spo2\.(?:dat|csv)$/i, /(?:^|\/)cms50/i] },
-  { id: "zeo", label: "Zeo", markers: [/(?:^|\/)zeo/i, /(?:^|\/)zeosleep/i] }
-];
 
 const DATE_PATTERNS = [
   /(\d{4})-(\d{2})-(\d{2})/, // yyyy-mm-dd
@@ -572,55 +545,6 @@ function parseKeyValueLines(text: string): Map<string, string> {
   return out;
 }
 
-function detectLikelyLoaders(files: SourceMeta[]): string[] {
-  const detected: string[] = [];
-  for (const sig of LOADER_SIGNATURES) {
-    const hit = files.some((f) => sig.markers.some((re) => re.test(f.normalizedPath)));
-    if (hit) detected.push(sig.label);
-  }
-  return detected;
-}
-
-function hasLoaderSignature(files: SourceMeta[], loaderId: string): boolean {
-  const sig = LOADER_SIGNATURES.find((s) => s.id === loaderId);
-  if (!sig) return false;
-  return files.some((f) => sig.markers.some((re) => re.test(f.normalizedPath)));
-}
-
-function scoreLoader(files: SourceMeta[], sig: LoaderSignature): number {
-  let score = 0;
-  for (const marker of sig.markers) {
-    if (files.some((f) => marker.test(f.normalizedPath))) score += 1;
-  }
-
-  // Add structural confidence by loader family, mirroring OSCAR loader entry points.
-  if (sig.id === "resvent") {
-    if (files.some((f) => /(?:^|\/)therapy\/record\/\d{6}\/\d{2}\/stat(?:\d{1,4})?(?:\..*)?$/i.test(f.normalizedPath))) score += 4;
-    if (files.some((f) => /(?:^|\/)therapy\/record\/\d{6}\/\d{2}\/(?:ev\d{2}|p\d{2}_\d+|w\d{2}_\d+)(?:\..*)?$/i.test(f.normalizedPath))) score += 3;
-    if (files.some((f) => /(?:^|\/)therapy\/config\//i.test(f.normalizedPath))) score += 2;
-  } else if (sig.id === "resmed") {
-    if (files.some((f) => /(?:^|\/)datalog\/.*\/str\.edf$/i.test(f.normalizedPath))) score += 4;
-    if (files.some((f) => /(?:^|\/)datalog\/.*\/(eve|pld|brp|sad)\.edf$/i.test(f.normalizedPath))) score += 2;
-  } else if (sig.id === "sleepstyle") {
-    if (files.some((f) => /(?:^|\/)(summary|detail)\.edf$/i.test(f.normalizedPath))) score += 3;
-  } else if (sig.id === "prisma") {
-    if (files.some((f) => /(?:^|\/)therapy\.pdat$/i.test(f.normalizedPath))) score += 4;
-  } else if (sig.id === "bmc") {
-    if (files.some((f) => /(?:^|\/)p\d{4}\.(?:idx|000)$/i.test(f.normalizedPath))) score += 4;
-  } else if (sig.id === "prs1") {
-    if (files.some((f) => /(?:^|\/)p-series\/p\d{5}\.\d{3}$/i.test(f.normalizedPath))) score += 4;
-  }
-
-  return score;
-}
-
-function rankLoaders(files: SourceMeta[]): LoaderMatch[] {
-  return LOADER_SIGNATURES
-    .map((sig) => ({ id: sig.id, label: sig.label, score: scoreLoader(files, sig) }))
-    .filter((m) => m.score > 0)
-    .sort((a, b) => b.score - a.score || a.label.localeCompare(b.label));
-}
-
 function normalizeLookbackDays(value?: number): number {
   if (typeof value !== "number" || !Number.isFinite(value)) return 90;
   const rounded = Math.trunc(value);
@@ -643,61 +567,6 @@ function resolveRecentWindow(_latestDate: Date, lookbackDays: number): DateWindo
   const windowStart = new Date(windowEnd);
   windowStart.setUTCDate(windowStart.getUTCDate() - normalizedLookbackDays);
   return { start: windowStart, end: windowEnd };
-}
-
-function loaderPriorityPatterns(loaderIds: string[]): RegExp[] {
-  const patterns: RegExp[] = [
-    /(?:^|\/)(?:therapy|record|datalog|summary|detail|session|usage|result|events?)\//i,
-    /(?:^|\/)(?:stat\d{0,4}|ev\d{0,4}|summary|detail|session|usage|result|report|compliance)(?:\..*)?$/i,
-    /(?:^|\/)(?:str|eve|pld|sad|brp|crc)\.edf$/i
-  ];
-
-  for (const id of loaderIds) {
-    switch (id) {
-      case "resvent":
-        patterns.push(
-          /(?:^|\/)therapy\/record\/\d{6}\/\d{2}\/(?:stat\d{0,4}|ev\d{2}|p\d{2}_\d+|w\d{2}_\d+)(?:\..*)?$/i,
-          /(?:^|\/)therapy\/config\//i
-        );
-        break;
-      case "resmed":
-        patterns.push(
-          /(?:^|\/)datalog\/.*\/(?:str|eve|pld|sad|brp|crc)\.edf$/i,
-          /(?:^|\/)(?:settings|summary)\.edf$/i
-        );
-        break;
-      case "prs1":
-      case "mseries":
-        patterns.push(
-          /(?:^|\/)p-series\/p\d{5}\.\d{3}$/i,
-          /(?:^|\/)p\d{5}\.\d{3}$/i,
-          /(?:^|\/)(?:summary|compliance)\.(?:txt|csv|xml)$/i
-        );
-        break;
-      case "bmc":
-        patterns.push(/(?:^|\/)p\d{4}\.(?:idx|000)$/i, /(?:^|\/)record\//i);
-        break;
-      case "sleepstyle":
-      case "icon":
-      case "intellipap":
-        patterns.push(/(?:^|\/)(?:summary|detail|sl|icon)\.edf$/i);
-        break;
-      case "prisma":
-      case "weinmann":
-        patterns.push(/(?:^|\/)(?:therapy\.pdat|wm_profiles\.xml)$/i, /(?:^|\/)therapy\//i);
-        break;
-      case "viatom":
-      case "cms50":
-      case "vrem":
-      case "dreem":
-      case "yuwell":
-      case "zeo":
-        patterns.push(/(?:^|\/).*\.(?:csv|txt|json|xml|dat)$/i);
-        break;
-    }
-  }
-
-  return patterns;
 }
 
 function scoreGenericCandidate(meta: SourceMeta, window: DateWindow | null, priorityPatterns: RegExp[]): number {
@@ -735,14 +604,17 @@ function scoreGenericCandidate(meta: SourceMeta, window: DateWindow | null, prio
   return score;
 }
 
-function selectGenericCandidates(allCandidates: SourceMeta[], loaderRanking: LoaderMatch[], lookbackDays: number): SourceMeta[] {
-  const loaderIds = loaderRanking.slice(0, 5).map((l) => l.id);
+function selectGenericCandidates(
+  allCandidates: SourceMeta[],
+  selectedFamily: ParserFamilyDefinition | null,
+  lookbackDays: number
+): SourceMeta[] {
   const latestDated = allCandidates
     .filter((m): m is SourceMeta & { recordDate: Date } => m.recordDate !== null)
     .reduce<Date | null>((acc, m) => (acc === null || m.recordDate > acc ? m.recordDate : acc), null);
 
   const window = latestDated ? resolveRecentWindow(latestDated, lookbackDays) : null;
-  const priorityPatterns = loaderPriorityPatterns(loaderIds);
+  const priorityPatterns = selectedFamily ? buildFamilyPriorityPatterns(selectedFamily) : [];
 
   const ranked = allCandidates
     .map((m) => ({ meta: m, score: scoreGenericCandidate(m, window, priorityPatterns) }))
@@ -1512,11 +1384,19 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
   const records: ParsedRecord[] = [];
 
   const meta = files.map(toSourceMeta);
-  const loaderRanking = rankLoaders(meta);
+  const loaderRanking = rankParserFamilies(meta);
   const likelyLoaders = loaderRanking.map((m) => m.label);
   const selectedLoader = loaderRanking[0] ?? null;
+  const selectedFamily = selectedLoader?.family ?? null;
+  if (!selectedFamily) {
+    throw new Error("Device structure was not recognized. This webapp only loads supported CPAP/NIV SD-card layouts.");
+  }
+  if (!selectedFamily.supportedQuickReport) {
+    throw new Error(`${selectedFamily.label} data is not loadable in this webapp. Only supported CPAP/NIV device layouts are accepted.`);
+  }
   const hasResventStructure =
-    hasLoaderSignature(meta, "resvent") || meta.some((m) => /(?:^|\/)therapy\/(?:record|config)\//i.test(m.normalizedPath));
+    selectedFamily.id === "resvent" &&
+    (hasFamilySignature(meta, "resvent") || meta.some((m) => /(?:^|\/)therapy\/(?:record|config)\//i.test(m.normalizedPath)));
   const leakStatsByDay = new Map<string, LeakStats>();
   let fallbackWindowDateSet = new Set<string>();
   let latestPathDate: Date | null = null;
@@ -1634,7 +1514,12 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
   // Generic parsing is always executed so all loader families can contribute metrics.
   const runGenericPass = true;
   const genericTextCandidates = meta.filter(isGenericTextCandidate);
-  const genericCandidatesRaw = runGenericPass ? selectGenericCandidates(genericTextCandidates, loaderRanking, normalizedLookbackDays) : [];
+  const familyScopedGenericCandidates = selectedFamily
+    ? genericTextCandidates.filter((candidate) => isCandidateForFamily(candidate, selectedFamily))
+    : genericTextCandidates;
+  const genericCandidatesRaw = runGenericPass
+    ? selectGenericCandidates(familyScopedGenericCandidates, selectedFamily, normalizedLookbackDays)
+    : [];
   const genericCandidates =
     hasResventStructure
       ? genericCandidatesRaw.filter(
@@ -1737,7 +1622,7 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
 
   if (!latest) {
     const detectedText = selectedLoader
-      ? ` Selected loader: ${selectedLoader.label}.`
+      ? ` Selected loader: ${selectedFamily.label}.`
       : likelyLoaders.length > 0
         ? ` Detected layouts: ${likelyLoaders.join(", ")}.`
         : "";
@@ -1985,9 +1870,14 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
     }
   }
 
-  if (!machine.mode && (machine.epap || machine.ipap || machine.respiratoryRate)) {
-    machine.mode = "BiPAP";
+  const canonicalTherapyMode = classifyTherapyMode(machine);
+  if (!canonicalTherapyMode) {
+    throw new Error(
+      `The ${selectedFamily.label} layout was detected, but the therapy mode could not be verified as BiPAP, APAP, or CPAP. The device is loadable only when one of those modes can be confirmed.`
+    );
   }
+  machine.mode = canonicalTherapyMode;
+  machine.pressureIsAuto = canonicalTherapyMode === "APAP";
 
   if (machine.device) {
     machine.device = machine.device.replace(/\s*\(\s*sd\s*card\s*\)\s*$/i, "").trim();
