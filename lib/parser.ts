@@ -11,12 +11,14 @@ import {
 import { parseBmcFamily } from "@/lib/parsers/bmc";
 import { parseIconFamily } from "@/lib/parsers/icon";
 import { parseIntelliPapFamily } from "@/lib/parsers/intellipap";
+import { parseMSeriesFamily } from "@/lib/parsers/mseries";
 import { parsePrismaFamily } from "@/lib/parsers/prisma";
 import { parsePrs1Family } from "@/lib/parsers/prs1";
 import { parseResMedFamily } from "@/lib/parsers/resmed";
 import { parseSleepStyleFamily } from "@/lib/parsers/sleepstyle";
 import { runTextFamilyParser } from "@/lib/parsers/text-family-runner";
 import type { FamilyParserDeps } from "@/lib/parsers/text-family-types";
+import { parseVremFamily } from "@/lib/parsers/vrem";
 import { parseWeinmannFamily } from "@/lib/parsers/weinmann";
 import { ParseRequest, ParsedRecord, ParseProgress, QuickReportMetrics, SourceFile } from "@/lib/types";
 
@@ -1466,7 +1468,9 @@ function usesDedicatedFamilyParser(familyId: string): boolean {
     familyId === "bmc" ||
     familyId === "sleepstyle" ||
     familyId === "icon" ||
-    familyId === "intellipap"
+    familyId === "intellipap" ||
+    familyId === "mseries" ||
+    familyId === "vrem"
   );
 }
 
@@ -1475,7 +1479,59 @@ async function refineSelectedFamily(
   loaderRanking: LoaderMatch[],
   meta: SourceMeta[]
 ): Promise<ParserFamilyDefinition | null> {
-  if (!selectedFamily) return null;
+  if (!selectedFamily) {
+    for (const candidate of meta.slice(0, 20)) {
+      const lowerPath = candidate.normalizedPath.toLowerCase();
+
+      if (candidate.ext === "dat" && candidate.file.size >= 14 && candidate.file.size <= MAX_FILE_SIZE_BYTES) {
+        try {
+          const bytes = (await candidate.file.readBytes()).subarray(0, Math.min(candidate.file.size, 256));
+          if (bytes.length >= 14) {
+            const recordCount = ((bytes[2] ?? 0) << 8) | (bytes[1] ?? 0);
+            const expectedMinSize = 3 + recordCount * 11;
+            const month = bytes[7] ?? 0;
+            const day = bytes[8] ?? 0;
+            const hour = bytes[9] ?? 0;
+            const minute = bytes[10] ?? 0;
+            const second = bytes[11] ?? 0;
+            if (
+              recordCount > 0 &&
+              expectedMinSize <= candidate.file.size &&
+              month >= 1 &&
+              month <= 12 &&
+              day >= 1 &&
+              day <= 31 &&
+              hour <= 23 &&
+              minute <= 59 &&
+              second <= 59
+            ) {
+              return getParserFamily("md300w1");
+            }
+          }
+        } catch {
+          // keep scanning
+        }
+      }
+
+      if (candidate.ext === "csv" && candidate.file.size <= MAX_FILE_SIZE_BYTES) {
+        try {
+          const header = new TextDecoder("utf-8", { fatal: false })
+            .decode((await candidate.file.readBytes()).subarray(0, 4096))
+            .split(/\r?\n/, 1)[0]
+            .toLowerCase();
+          if (
+            header.includes("timestamp") &&
+            (header.includes("inclination") || header.includes("orientation") || header.includes("movement"))
+          ) {
+            return getParserFamily("somnopose");
+          }
+        } catch {
+          // keep scanning
+        }
+      }
+    }
+    return null;
+  }
 
   const topIds = new Set(loaderRanking.slice(0, 4).map((loader) => loader.id));
   if (!(topIds.has("sleepstyle") && topIds.has("icon"))) {
@@ -1701,6 +1757,10 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
     await parseBmcFamily(familyParserContext, familyParserDeps);
   } else if (selectedFamily.id === "intellipap") {
     await parseIntelliPapFamily(familyParserContext, familyParserDeps);
+  } else if (selectedFamily.id === "mseries") {
+    await parseMSeriesFamily(familyParserContext, familyParserDeps);
+  } else if (selectedFamily.id === "vrem") {
+    await parseVremFamily(familyParserContext, familyParserDeps);
   } else {
     await runTextFamilyParser(familyParserContext, familyParserDeps);
   }

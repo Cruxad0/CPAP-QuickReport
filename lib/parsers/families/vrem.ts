@@ -6,7 +6,11 @@ export const VREM_FAMILY: ParserFamilyDefinition = {
   supportedQuickReport: true,
   parserStrategy: "generic-text",
   oscarLoader: "OSCAR-code-ref-2/oscar/SleepLib/loader_plugins/vrem_loader.cpp",
-  signaturePatterns: [/(?:^|\/)vrem/i],
-  confidencePatterns: [{ pattern: /(?:^|\/)vrem/i, weight: 4 }],
-  priorityPatterns: [/(?:^|\/)vrem/i]
+  signaturePatterns: [/(?:^|\/)(?:vrem[^/]*\/)?pi\.txt$/i, /(?:^|\/)(?:vrem[^/]*\/)?di\.txt$/i],
+  confidencePatterns: [
+    { pattern: /(?:^|\/)(?:vrem[^/]*\/)?pi\.txt$/i, weight: 4 },
+    { pattern: /(?:^|\/)(?:vrem[^/]*\/)?di\.txt$/i, weight: 3 },
+    { pattern: /(?:^|\/)(?:vrem[^/]*\/)?od[^/]+\//i, weight: 2 }
+  ],
+  priorityPatterns: [/(?:^|\/)(?:vrem[^/]*\/)?(?:pi\.txt|di\.txt)$/i, /(?:^|\/)(?:vrem[^/]*\/)?od[^/]+\//i]
 };

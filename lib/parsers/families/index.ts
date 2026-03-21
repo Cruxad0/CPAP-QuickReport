@@ -1,14 +1,17 @@
 import { BMC_FAMILY } from "@/lib/parsers/families/bmc";
 import { CMS50_FAMILY } from "@/lib/parsers/families/cms50";
+import { CMS50F37_FAMILY } from "@/lib/parsers/families/cms50f37";
 import { DREEM_FAMILY } from "@/lib/parsers/families/dreem";
 import { ICON_FAMILY } from "@/lib/parsers/families/icon";
 import { INTELLIPAP_FAMILY } from "@/lib/parsers/families/intellipap";
 import { MSERIES_FAMILY } from "@/lib/parsers/families/mseries";
+import { MD300W1_FAMILY } from "@/lib/parsers/families/md300w1";
 import { PRISMA_FAMILY } from "@/lib/parsers/families/prisma";
 import { PRS1_FAMILY } from "@/lib/parsers/families/prs1";
 import { RESMED_FAMILY } from "@/lib/parsers/families/resmed";
 import { RESVENT_FAMILY } from "@/lib/parsers/families/resvent";
 import { SLEEPSTYLE_FAMILY } from "@/lib/parsers/families/sleepstyle";
+import { SOMNOPOSE_FAMILY } from "@/lib/parsers/families/somnopose";
 import type { LoaderMatch, ParserFamilyDefinition, SourceMetaLike } from "@/lib/parsers/families/types";
 import { VIATOM_FAMILY } from "@/lib/parsers/families/viatom";
 import { VREM_FAMILY } from "@/lib/parsers/families/vrem";
@@ -38,6 +41,9 @@ export const PARSER_FAMILIES: ParserFamilyDefinition[] = [
   VIATOM_FAMILY,
   VREM_FAMILY,
   CMS50_FAMILY,
+  CMS50F37_FAMILY,
+  MD300W1_FAMILY,
+  SOMNOPOSE_FAMILY,
   ZEO_FAMILY
 ];
 
