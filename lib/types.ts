@@ -22,6 +22,7 @@ export interface ParsedRecord {
   centralApneas?: number;
   reraIndex?: number;
   leak?: number;
+  leakMax?: number;
   pressureAvg?: number;
   pressure95th?: number;
 }

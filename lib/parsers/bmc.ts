@@ -63,8 +63,11 @@ function inferBmcSettingsFromIdx(bytes: Uint8Array, machine: QuickReportMetrics[
     machine.pressureMax = formatCm(maxPressure);
   } else if (machine.mode === "BiPAP") {
     if (modeCode === 6) {
+      const minIpap = formatCm(ipap);
+      const maxIpap = formatCm(maxPressure);
       machine.epap = formatCm(epap);
-      machine.ipap = formatCm(maxPressure);
+      if (minIpap && maxIpap) machine.ipap = `${minIpap}-${maxIpap}`;
+      else machine.ipap = maxIpap ?? minIpap;
     } else {
       machine.epap = formatCm(epap);
       machine.ipap = formatCm(ipap);

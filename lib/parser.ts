@@ -858,13 +858,17 @@ function parseResventStatText(text: string, fallbackDate: Date): ParsedRecord | 
   }
 
   let leak: number | undefined;
+  let leakMax: number | undefined;
   for (const [key, value] of kv.entries()) {
     if (!/leak/i.test(key)) continue;
     const n = safeNumber(value);
     if (n === undefined) continue;
-    if (n >= 0 && n <= 500) {
+    if (/max/i.test(key)) {
+      if (n >= 0 && n <= 500) leakMax = n;
+      continue;
+    }
+    if (n >= 0 && n <= 500 && leak === undefined) {
       leak = n;
-      break;
     }
   }
 
@@ -875,6 +879,7 @@ function parseResventStatText(text: string, fallbackDate: Date): ParsedRecord | 
     (centralApneas !== undefined && centralApneas >= 0 && centralApneas < 200) ||
     (reraIndex !== undefined && reraIndex >= 0 && reraIndex < 200) ||
     (leak !== undefined && leak >= 0 && leak < 500) ||
+    (leakMax !== undefined && leakMax >= 0 && leakMax < 500) ||
     (pressureAvg !== undefined && pressureAvg >= 0 && pressureAvg <= 80) ||
     (pressure95th !== undefined && pressure95th >= 0 && pressure95th <= 80);
   if (!hasSignal) return null;
@@ -887,6 +892,7 @@ function parseResventStatText(text: string, fallbackDate: Date): ParsedRecord | 
     centralApneas: centralApneas !== undefined && centralApneas >= 0 && centralApneas < 200 ? centralApneas : undefined,
     reraIndex: reraIndex !== undefined && reraIndex >= 0 && reraIndex < 200 ? reraIndex : undefined,
     leak: leak !== undefined && leak >= 0 && leak < 500 ? leak : undefined,
+    leakMax: leakMax !== undefined && leakMax >= 0 && leakMax < 500 ? leakMax : undefined,
     pressureAvg: pressureAvg !== undefined && pressureAvg >= 0 && pressureAvg <= 80 ? pressureAvg : undefined,
     pressure95th: pressure95th !== undefined && pressure95th >= 0 && pressure95th <= 80 ? pressure95th : undefined
   };
@@ -1011,12 +1017,16 @@ function parseGenericDailyKeyValueRecord(text: string, fallbackDate: Date): Pars
   })();
 
   let leak: number | undefined;
+  let leakMax: number | undefined;
   for (const [key, value] of kvLower.entries()) {
     if (!/leak/.test(key)) continue;
     const n = safeNumber(value);
     if (n === undefined) continue;
-    leak = n;
-    break;
+    if (/max/.test(key)) {
+      leakMax = n;
+      continue;
+    }
+    if (leak === undefined) leak = n;
   }
 
   const day = createUtcDateNoon(fallbackDate.getUTCFullYear(), fallbackDate.getUTCMonth() + 1, fallbackDate.getUTCDate());
@@ -1027,6 +1037,7 @@ function parseGenericDailyKeyValueRecord(text: string, fallbackDate: Date): Pars
     (centralApneas !== undefined && centralApneas >= 0 && centralApneas < 200) ||
     (reraIndex !== undefined && reraIndex >= 0 && reraIndex < 200) ||
     (leak !== undefined && leak >= 0 && leak < 500) ||
+    (leakMax !== undefined && leakMax >= 0 && leakMax < 500) ||
     (pressureAvg !== undefined && pressureAvg >= 0 && pressureAvg <= 80) ||
     (pressure95th !== undefined && pressure95th >= 0 && pressure95th <= 80);
 
@@ -1041,6 +1052,7 @@ function parseGenericDailyKeyValueRecord(text: string, fallbackDate: Date): Pars
       centralApneas !== undefined && centralApneas >= 0 && centralApneas < 200 ? centralApneas : undefined,
     reraIndex: reraIndex !== undefined && reraIndex >= 0 && reraIndex < 200 ? reraIndex : undefined,
     leak: leak !== undefined && leak >= 0 && leak < 500 ? leak : undefined,
+    leakMax: leakMax !== undefined && leakMax >= 0 && leakMax < 500 ? leakMax : undefined,
     pressureAvg: pressureAvg !== undefined && pressureAvg >= 0 && pressureAvg <= 80 ? pressureAvg : undefined,
     pressure95th: pressure95th !== undefined && pressure95th >= 0 && pressure95th <= 80 ? pressure95th : undefined
   };
@@ -1070,6 +1082,7 @@ function tryParseDelimited(text: string): ParsedRecord[] {
   const centralIdx = headers.findIndex((h) => /(central|(?:^|[^a-z])cai(?:[^a-z]|$))/i.test(h));
   const reraIdx = headers.findIndex((h) => /(?:^|[^a-z])rera(?:[^a-z]|$)|rera\s*index/.test(h));
   const leakIdx = headers.findIndex((h) => /leak/.test(h));
+  const leakMaxIdx = headers.findIndex((h) => /(?:max).*(?:leak)|(?:leak).*(?:max)/.test(h));
   const pressureAvgIdx = headers.findIndex((h) => /(?:avg|average|mean).*(?:press|ipap|epap)|(?:press|ipap|epap).*(?:avg|average|mean)/.test(h));
   const pressure95Idx = headers.findIndex((h) => /(?:95|p95).*(?:press|ipap|epap)|(?:press|ipap|epap).*(?:95|p95)/.test(h));
 
@@ -1089,6 +1102,7 @@ function tryParseDelimited(text: string): ParsedRecord[] {
       centralApneas: centralIdx >= 0 ? safeNumber(row[centralIdx]) : undefined,
       reraIndex: reraIdx >= 0 ? safeNumber(row[reraIdx]) : undefined,
       leak: leakIdx >= 0 ? safeNumber(row[leakIdx]) : undefined,
+      leakMax: leakMaxIdx >= 0 ? safeNumber(row[leakMaxIdx]) : undefined,
       pressureAvg: pressureAvgIdx >= 0 ? normalizePressureNumber(safeNumber(row[pressureAvgIdx])) : undefined,
       pressure95th: pressure95Idx >= 0 ? normalizePressureNumber(safeNumber(row[pressure95Idx])) : undefined
     });
@@ -1112,6 +1126,7 @@ function tryParseFreeText(text: string): ParsedRecord[] {
     const centralMatch = line.match(/(?:central\s*apnea(?:s)?|central\s*index|(?:^|[^a-z])cai(?:[^a-z]|$))\D*(-?\d+(?:\.\d+)?)/i);
     const reraMatch = line.match(/(?:rera(?:\s*index)?)(?:\s*[:=]|\D)*(-?\d+(?:\.\d+)?)/i);
     const leakMatch = line.match(/leak(?:age)?\D*(-?\d+(?:\.\d+)?)/i);
+    const leakMaxMatch = line.match(/(?:max(?:imum)?\s*leak(?:age)?|leak(?:age)?\s*max)\D*(-?\d+(?:\.\d+)?)/i);
     const pressureAvgMatch = line.match(/(?:avg|average|mean)\s*(?:mask\s*)?(?:pressure|ipap|epap)\D*(-?\d+(?:\.\d+)?)/i);
     const pressure95Match = line.match(/(?:95(?:th|%)|p95)\s*(?:mask\s*)?(?:pressure|ipap|epap)\D*(-?\d+(?:\.\d+)?)/i);
 
@@ -1123,6 +1138,7 @@ function tryParseFreeText(text: string): ParsedRecord[] {
       centralApneas: centralMatch ? safeNumber(centralMatch[1]) : undefined,
       reraIndex: reraMatch ? safeNumber(reraMatch[1]) : undefined,
       leak: leakMatch ? safeNumber(leakMatch[1]) : undefined,
+      leakMax: leakMaxMatch ? safeNumber(leakMaxMatch[1]) : undefined,
       pressureAvg: pressureAvgMatch ? normalizePressureNumber(safeNumber(pressureAvgMatch[1])) : undefined,
       pressure95th: pressure95Match ? normalizePressureNumber(safeNumber(pressure95Match[1])) : undefined
     });
@@ -1146,6 +1162,7 @@ function sanitizeRecords(records: ParsedRecord[]): ParsedRecord[] {
       (typeof r.centralApneas === "number" && r.centralApneas >= 0 && r.centralApneas < 200) ||
       (typeof r.reraIndex === "number" && r.reraIndex >= 0 && r.reraIndex < 200) ||
       (typeof r.leak === "number" && r.leak >= 0 && r.leak < 500) ||
+      (typeof r.leakMax === "number" && r.leakMax >= 0 && r.leakMax < 500) ||
       (typeof r.pressureAvg === "number" && r.pressureAvg >= 0 && r.pressureAvg <= 80) ||
       (typeof r.pressure95th === "number" && r.pressure95th >= 0 && r.pressure95th <= 80);
     return hasSignal;
@@ -1159,9 +1176,10 @@ function recordSignature(record: ParsedRecord): string {
   const c = typeof record.centralApneas === "number" ? record.centralApneas.toFixed(3) : "";
   const re = typeof record.reraIndex === "number" ? record.reraIndex.toFixed(3) : "";
   const l = typeof record.leak === "number" ? record.leak.toFixed(3) : "";
+  const lmax = typeof record.leakMax === "number" ? record.leakMax.toFixed(3) : "";
   const pa = typeof record.pressureAvg === "number" ? record.pressureAvg.toFixed(3) : "";
   const p95 = typeof record.pressure95th === "number" ? record.pressure95th.toFixed(3) : "";
-  return `${toIsoDate(record.date)}|${u}|${a}|${r}|${c}|${re}|${l}|${pa}|${p95}`;
+  return `${toIsoDate(record.date)}|${u}|${a}|${r}|${c}|${re}|${l}|${lmax}|${pa}|${p95}`;
 }
 
 function dedupeParsedRecords(records: ParsedRecord[]): ParsedRecord[] {
@@ -1752,6 +1770,10 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
       bucket.leakSum += record.leak;
       bucket.leakCount += 1;
       bucket.leakMax = bucket.leakMax === null ? record.leak : Math.max(bucket.leakMax, record.leak);
+    }
+
+    if (typeof record.leakMax === "number" && record.leakMax >= 0 && record.leakMax < 500) {
+      bucket.leakMax = bucket.leakMax === null ? record.leakMax : Math.max(bucket.leakMax, record.leakMax);
     }
 
     dayMap.set(key, bucket);
