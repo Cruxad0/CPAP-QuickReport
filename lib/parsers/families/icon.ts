@@ -6,7 +6,10 @@ export const ICON_FAMILY: ParserFamilyDefinition = {
   supportedQuickReport: true,
   parserStrategy: "generic-text",
   oscarLoader: "OSCAR-code-ref-2/oscar/SleepLib/loader_plugins/icon_loader.cpp",
-  signaturePatterns: [/(?:^|\/)fpicon\//i, /(?:^|\/)icon\.edf$/i],
-  confidencePatterns: [{ pattern: /(?:^|\/)(?:fpicon\/|icon\.edf$)/i, weight: 4 }],
-  priorityPatterns: [/(?:^|\/)(?:fpicon\/|icon\.edf$)/i]
+  signaturePatterns: [/(?:^|\/)fphcare\/icon\/[^/]+\/sum.*\.fph$/i, /(?:^|\/)fphcare\/icon\/[^/]+\/flw.*\.fph$/i],
+  confidencePatterns: [
+    { pattern: /(?:^|\/)fphcare\/icon\/[^/]+\/flw.*\.fph$/i, weight: 4 },
+    { pattern: /(?:^|\/)fphcare\/icon\/[^/]+\/det.*\.fph$/i, weight: 2 }
+  ],
+  priorityPatterns: [/(?:^|\/)fphcare\/icon\/[^/]+\/(?:sum|det|flw).*\.(?:fph|FPH)$/i]
 };

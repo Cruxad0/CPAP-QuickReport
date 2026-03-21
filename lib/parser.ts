@@ -1,6 +1,7 @@
 import { classifyTherapyMode, isAutoPapLikeMode, isBiPapLikeMode, resolveExplicitTherapyMode } from "@/lib/machine-mode";
 import {
   buildFamilyPriorityPatterns,
+  getParserFamily,
   hasFamilySignature,
   isCandidateForFamily,
   rankParserFamilies,
@@ -8,9 +9,12 @@ import {
   type ParserFamilyDefinition
 } from "@/lib/parsers/families";
 import { parseBmcFamily } from "@/lib/parsers/bmc";
+import { parseIconFamily } from "@/lib/parsers/icon";
+import { parseIntelliPapFamily } from "@/lib/parsers/intellipap";
 import { parsePrismaFamily } from "@/lib/parsers/prisma";
 import { parsePrs1Family } from "@/lib/parsers/prs1";
 import { parseResMedFamily } from "@/lib/parsers/resmed";
+import { parseSleepStyleFamily } from "@/lib/parsers/sleepstyle";
 import { runTextFamilyParser } from "@/lib/parsers/text-family-runner";
 import type { FamilyParserDeps } from "@/lib/parsers/text-family-types";
 import { parseWeinmannFamily } from "@/lib/parsers/weinmann";
@@ -1454,7 +1458,46 @@ function isGenericTextCandidate(meta: SourceMeta): boolean {
 }
 
 function usesDedicatedFamilyParser(familyId: string): boolean {
-  return familyId === "resmed" || familyId === "prs1" || familyId === "prisma" || familyId === "weinmann" || familyId === "bmc";
+  return (
+    familyId === "resmed" ||
+    familyId === "prs1" ||
+    familyId === "prisma" ||
+    familyId === "weinmann" ||
+    familyId === "bmc" ||
+    familyId === "sleepstyle" ||
+    familyId === "icon" ||
+    familyId === "intellipap"
+  );
+}
+
+async function refineSelectedFamily(
+  selectedFamily: ParserFamilyDefinition | null,
+  loaderRanking: LoaderMatch[],
+  meta: SourceMeta[]
+): Promise<ParserFamilyDefinition | null> {
+  if (!selectedFamily) return null;
+
+  const topIds = new Set(loaderRanking.slice(0, 4).map((loader) => loader.id));
+  if (!(topIds.has("sleepstyle") && topIds.has("icon"))) {
+    return selectedFamily;
+  }
+
+  const summaryCandidate = meta.find((candidate) =>
+    /(?:^|\/)fphcare\/icon\/[^/]+\/sum.*\.fph$/i.test(candidate.normalizedPath)
+  );
+  if (!summaryCandidate) return selectedFamily;
+
+  try {
+    const header = new TextDecoder("ascii", { fatal: false })
+      .decode((await summaryCandidate.file.readBytes()).subarray(0, 0x200))
+      .toUpperCase();
+    if (header.includes("SLEEPSTYLE")) return getParserFamily("sleepstyle") ?? selectedFamily;
+    if (/\bICON\b/.test(header)) return getParserFamily("icon") ?? selectedFamily;
+  } catch {
+    return selectedFamily;
+  }
+
+  return selectedFamily;
 }
 
 export async function buildQuickReportMetrics(request: ParseRequest): Promise<QuickReportMetrics> {
@@ -1470,7 +1513,7 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
   const loaderRanking = rankParserFamilies(meta);
   const likelyLoaders = loaderRanking.map((m) => m.label);
   const selectedLoader = loaderRanking[0] ?? null;
-  const selectedFamily = selectedLoader?.family ?? null;
+  const selectedFamily = await refineSelectedFamily(selectedLoader?.family ?? null, loaderRanking, meta);
   if (!selectedFamily) {
     throw new Error("Device structure was not recognized. This webapp only loads supported CPAP/NIV SD-card layouts.");
   }
@@ -1648,10 +1691,16 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
     await parsePrs1Family(familyParserContext, familyParserDeps);
   } else if (selectedFamily.id === "prisma") {
     await parsePrismaFamily(familyParserContext, familyParserDeps);
+  } else if (selectedFamily.id === "sleepstyle") {
+    await parseSleepStyleFamily(familyParserContext, familyParserDeps);
+  } else if (selectedFamily.id === "icon") {
+    await parseIconFamily(familyParserContext, familyParserDeps);
   } else if (selectedFamily.id === "weinmann") {
     await parseWeinmannFamily(familyParserContext, familyParserDeps);
   } else if (selectedFamily.id === "bmc") {
     await parseBmcFamily(familyParserContext, familyParserDeps);
+  } else if (selectedFamily.id === "intellipap") {
+    await parseIntelliPapFamily(familyParserContext, familyParserDeps);
   } else {
     await runTextFamilyParser(familyParserContext, familyParserDeps);
   }
@@ -1875,7 +1924,7 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
 
   if (selectedLoader) {
     const top = loaderRanking.slice(0, 4).map((m) => `${m.label} (${m.score})`).join(", ");
-    warnings.unshift(`Selected loader: ${selectedLoader.label}. Candidate scores: ${top}.`);
+    warnings.unshift(`Selected loader: ${selectedFamily.label}. Candidate scores: ${top}.`);
   } else if (likelyLoaders.length > 0) {
     warnings.unshift(`Detected OSCAR-compatible loader signatures: ${likelyLoaders.join(", ")}.`);
   }
@@ -1956,7 +2005,7 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
       hour: "numeric",
       minute: "2-digit"
     }),
-    selectedLoader: selectedLoader?.label ?? (likelyLoaders[0] ?? "Not detected"),
+    selectedLoader: selectedFamily.label,
     patientName: patientName.trim(),
     dateOfBirth: formatDateHuman(dateOfBirthIso),
     physicianName: physicianName.trim(),
