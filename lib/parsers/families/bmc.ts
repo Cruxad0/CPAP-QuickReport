@@ -6,7 +6,11 @@ export const BMC_FAMILY: ParserFamilyDefinition = {
   supportedQuickReport: true,
   parserStrategy: "generic-text",
   oscarLoader: "OSCAR-code-ref-2/oscar/SleepLib/loader_plugins/bmc_loader.cpp",
-  signaturePatterns: [/(?:^|\/)p[0-9]{4}\.idx$/i, /(?:^|\/)p[0-9]{4}\.000$/i, /(?:^|\/)(?:luna|apex|bmc)/i],
-  confidencePatterns: [{ pattern: /(?:^|\/)p\d{4}\.(?:idx|000)$/i, weight: 4 }],
-  priorityPatterns: [/(?:^|\/)p\d{4}\.(?:idx|000)$/i, /(?:^|\/)record\//i]
+  signaturePatterns: [/(?:^|\/)[^/]+\.usr$/i, /(?:^|\/)[^/]+\.idx$/i, /(?:^|\/)[^/]+\.000$/i],
+  confidencePatterns: [
+    { pattern: /(?:^|\/)[^/]+\.usr$/i, weight: 4 },
+    { pattern: /(?:^|\/)[^/]+\.idx$/i, weight: 3 },
+    { pattern: /(?:^|\/)[^/]+\.000$/i, weight: 2 }
+  ],
+  priorityPatterns: [/(?:^|\/)[^/]+\.(?:usr|idx|000)$/i]
 };

@@ -7,10 +7,13 @@ import {
   type LoaderMatch,
   type ParserFamilyDefinition
 } from "@/lib/parsers/families";
+import { parseBmcFamily } from "@/lib/parsers/bmc";
+import { parsePrismaFamily } from "@/lib/parsers/prisma";
 import { parsePrs1Family } from "@/lib/parsers/prs1";
 import { parseResMedFamily } from "@/lib/parsers/resmed";
 import { runTextFamilyParser } from "@/lib/parsers/text-family-runner";
 import type { FamilyParserDeps } from "@/lib/parsers/text-family-types";
+import { parseWeinmannFamily } from "@/lib/parsers/weinmann";
 import { ParseRequest, ParsedRecord, ParseProgress, QuickReportMetrics, SourceFile } from "@/lib/types";
 
 const MAX_GENERIC_FILES_TO_SCAN = 2500;
@@ -1432,6 +1435,10 @@ function isGenericTextCandidate(meta: SourceMeta): boolean {
   return false;
 }
 
+function usesDedicatedFamilyParser(familyId: string): boolean {
+  return familyId === "resmed" || familyId === "prs1" || familyId === "prisma" || familyId === "weinmann" || familyId === "bmc";
+}
+
 export async function buildQuickReportMetrics(request: ParseRequest): Promise<QuickReportMetrics> {
   const { files, patientName, dateOfBirthIso, physicianName, lookbackDays, onProgress } = request;
   const normalizedLookbackDays = normalizeLookbackDays(lookbackDays);
@@ -1575,8 +1582,15 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
   const familyScopedGenericCandidates = selectedFamily
     ? genericTextCandidates.filter((candidate) => isCandidateForFamily(candidate, selectedFamily))
     : genericTextCandidates;
+  const familyScopedAllCandidates = selectedFamily
+    ? meta.filter((candidate) => isCandidateForFamily(candidate, selectedFamily))
+    : meta;
   const genericCandidatesRaw = runGenericPass
-    ? selectGenericCandidates(familyScopedGenericCandidates, selectedFamily, normalizedLookbackDays)
+    ? selectGenericCandidates(
+        selectedFamily && usesDedicatedFamilyParser(selectedFamily.id) ? familyScopedAllCandidates : familyScopedGenericCandidates,
+        selectedFamily,
+        normalizedLookbackDays
+      )
     : [];
   const genericCandidates =
     hasResventStructure
@@ -1614,6 +1628,12 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
     await parseResMedFamily(familyParserContext, familyParserDeps);
   } else if (selectedFamily.id === "prs1") {
     await parsePrs1Family(familyParserContext, familyParserDeps);
+  } else if (selectedFamily.id === "prisma") {
+    await parsePrismaFamily(familyParserContext, familyParserDeps);
+  } else if (selectedFamily.id === "weinmann") {
+    await parseWeinmannFamily(familyParserContext, familyParserDeps);
+  } else if (selectedFamily.id === "bmc") {
+    await parseBmcFamily(familyParserContext, familyParserDeps);
   } else {
     await runTextFamilyParser(familyParserContext, familyParserDeps);
   }
