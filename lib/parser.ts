@@ -1,4 +1,4 @@
-import { classifyTherapyMode, isAutoPapLikeMode, isBiPapLikeMode } from "@/lib/machine-mode";
+import { classifyTherapyMode, isAutoPapLikeMode, isBiPapLikeMode, resolveExplicitTherapyMode } from "@/lib/machine-mode";
 import {
   buildFamilyPriorityPatterns,
   hasFamilySignature,
@@ -7,6 +7,10 @@ import {
   type LoaderMatch,
   type ParserFamilyDefinition
 } from "@/lib/parsers/families";
+import { parsePrs1Family } from "@/lib/parsers/prs1";
+import { parseResMedFamily } from "@/lib/parsers/resmed";
+import { runTextFamilyParser } from "@/lib/parsers/text-family-runner";
+import type { FamilyParserDeps } from "@/lib/parsers/text-family-types";
 import { ParseRequest, ParsedRecord, ParseProgress, QuickReportMetrics, SourceFile } from "@/lib/types";
 
 const MAX_GENERIC_FILES_TO_SCAN = 2500;
@@ -301,10 +305,10 @@ function inferMachineSettingsFromText(text: string, machine: QuickReportMetrics[
     if (m) machine.pressureRelief = m[1].trim();
   }
 
-  const minMatch = text.match(/(?:^|\b)(?:min(?:imum)?\s*(?:pressure|ipap|epap)|pmin|epapmin|ipapmin)\s*[:=]?\s*(-?\d+(?:\.\d+)?)/im);
-  const maxMatch = text.match(/(?:^|\b)(?:max(?:imum)?\s*(?:pressure|ipap|epap)|pmax|epapmax|ipapmax)\s*[:=]?\s*(-?\d+(?:\.\d+)?)/im);
-  const avgPressureMatch = text.match(/(?:avg|average|mean)\s*(?:mask\s*)?(?:pressure|ipap|epap)\s*[:=]?\s*(-?\d+(?:\.\d+)?)/i);
-  const p95PressureMatch = text.match(/(?:95(?:th|%)|p95)\s*(?:mask\s*)?(?:pressure|ipap|epap)\s*[:=]?\s*(-?\d+(?:\.\d+)?)/i);
+  const minMatch = text.match(/^\s*(?:min(?:imum)?\s*pressure|pmin|minpressure|pressuremin|min_pressure)\s*[:=]?\s*(-?\d+(?:\.\d+)?)/im);
+  const maxMatch = text.match(/^\s*(?:max(?:imum)?\s*pressure|pmax|maxpressure|pressuremax|max_pressure)\s*[:=]?\s*(-?\d+(?:\.\d+)?)/im);
+  const avgPressureMatch = text.match(/^\s*(?:avg|average|mean)\s*(?:mask\s*)?pressure\s*[:=]?\s*(-?\d+(?:\.\d+)?)/im);
+  const p95PressureMatch = text.match(/^\s*(?:95(?:th|%)|p95)\s*(?:mask\s*)?pressure\s*[:=]?\s*(-?\d+(?:\.\d+)?)/im);
 
   const minPressure = normalizePressureNumber(minMatch ? safeNumber(minMatch[1]) : undefined);
   const maxPressure = normalizePressureNumber(maxMatch ? safeNumber(maxMatch[1]) : undefined);
@@ -322,7 +326,7 @@ function inferMachineSettingsFromText(text: string, machine: QuickReportMetrics[
       machine.pressure = `${Number(minPressure.toFixed(2)).toString()}-${Number(maxPressure.toFixed(2)).toString()} (cmH2O)`;
     }
   } else if (!machine.pressure) {
-    const fixedPressureMatch = text.match(/(?:set\s*pressure|fixed\s*pressure|cpap\s*pressure|pressure)\s*[:=]\s*(-?\d+(?:\.\d+)?)/i);
+    const fixedPressureMatch = text.match(/^\s*(?:set\s*pressure|fixed\s*pressure|cpap\s*pressure|pressure)\s*[:=]\s*(-?\d+(?:\.\d+)?)/im);
     const fixedPressure = normalizePressureNumber(fixedPressureMatch ? safeNumber(fixedPressureMatch[1]) : undefined);
     if (fixedPressure !== undefined) machine.pressure = `Fixed ${Number(fixedPressure.toFixed(2)).toString()} (cmH2O)`;
   }
@@ -355,20 +359,20 @@ function inferPressureSettingsFromMap(configMap: Map<string, string>, machine: Q
   };
 
   const minPressure =
-    readByExactKey(["pmin", "minpressure", "pressuremin", "min_pressure", "epapmin", "ipapmin", "min_epap", "min_ipap"]) ??
-    readByPattern([/(?:^|_)(?:min|minimum).*(?:press|ipap|epap)/i, /(?:press|ipap|epap).*(?:min|minimum)(?:$|_)/i]);
+    readByExactKey(["pmin", "minpressure", "pressuremin", "min_pressure"]) ??
+    readByPattern([/(?:^|_)(?:min|minimum).*(?:press)/i, /(?:press).*(?:min|minimum)(?:$|_)/i]);
 
   const maxPressure =
-    readByExactKey(["pmax", "maxpressure", "pressuremax", "max_pressure", "epapmax", "ipapmax", "max_epap", "max_ipap"]) ??
-    readByPattern([/(?:^|_)(?:max|maximum).*(?:press|ipap|epap)/i, /(?:press|ipap|epap).*(?:max|maximum)(?:$|_)/i]);
+    readByExactKey(["pmax", "maxpressure", "pressuremax", "max_pressure"]) ??
+    readByPattern([/(?:^|_)(?:max|maximum).*(?:press)/i, /(?:press).*(?:max|maximum)(?:$|_)/i]);
 
   const avgPressure =
     readByExactKey(["avgpressure", "averagepressure", "meanpressure", "pressureavg", "pressure_mean", "avg_press", "avgpressurecmh2o"]) ??
-    readByPattern([/(?:avg|average|mean).*(?:press|ipap|epap)/i, /(?:press|ipap|epap).*(?:avg|average|mean)/i]);
+    readByPattern([/(?:avg|average|mean).*(?:press)/i, /(?:press).*(?:avg|average|mean)/i]);
 
   const pressure95th =
-    readByExactKey(["pressure95", "pressure_95", "p95", "p95pressure", "ipap95", "epap95"]) ??
-    readByPattern([/(?:95|p95).*(?:press|ipap|epap)/i, /(?:press|ipap|epap).*(?:95|p95)/i]);
+    readByExactKey(["pressure95", "pressure_95", "p95", "p95pressure"]) ??
+    readByPattern([/(?:95|p95).*(?:press)/i, /(?:press).*(?:95|p95)/i]);
 
   if (!machine.pressureMin && minPressure !== undefined) machine.pressureMin = pressureText(minPressure);
   if (!machine.pressureMax && maxPressure !== undefined) machine.pressureMax = pressureText(maxPressure);
@@ -381,8 +385,8 @@ function inferPressureSettingsFromMap(configMap: Map<string, string>, machine: Q
 
   if (!machine.pressure && minPressure === undefined && maxPressure === undefined) {
     const fixed =
-      readByExactKey(["press", "pressure", "setpressure", "cpappressure", "epap", "ipap"]) ??
-      readByPattern([/(?:^|_)(?:set|fixed).*(?:press|ipap|epap)/i]);
+      readByExactKey(["press", "pressure", "setpressure", "cpappressure"]) ??
+      readByPattern([/(?:^|_)(?:set|fixed).*(?:press)/i]);
     if (fixed !== undefined) {
       machine.pressure = `Fixed ${Number(fixed.toFixed(2)).toString()} (cmH2O)`;
     }
@@ -440,6 +444,14 @@ function inferBilevelSettingsFromMap(configMap: Map<string, string>, machine: Qu
   const ipapMin = readPressure(["ipapmin", "ipap_min", "minipap", "min_ipap"], [/\bipap.*(?:min|minimum)\b/i, /\b(?:min|minimum).*ipap\b/i]);
   const ipapMax = readPressure(["ipapmax", "ipap_max", "maxipap", "max_ipap"], [/\bipap.*(?:max|maximum)\b/i, /\b(?:max|maximum).*ipap\b/i]);
   const rr = readRate();
+  const explicitMode = resolveExplicitTherapyMode(machine.mode);
+  const hasBilevelPressureEvidence =
+    (epapFixed !== undefined && ipapFixed !== undefined) ||
+    ((epapMin !== undefined || epapMax !== undefined) && (ipapMin !== undefined || ipapMax !== undefined)) ||
+    rr !== undefined;
+
+  if (explicitMode === "CPAP" || explicitMode === "APAP") return;
+  if (explicitMode !== "BiPAP" && !hasBilevelPressureEvidence) return;
 
   if (!machine.epap) {
     if (epapFixed !== undefined) {
@@ -724,6 +736,8 @@ function inferMachineSettingsFromConfigMap(configMap: Map<string, string>, machi
     }
   }
 
+  const explicitMode = resolveExplicitTherapyMode(machine.mode);
+
   if (!machine.pressure) {
     const press = configMap.get("Press");
     const pMin = configMap.get("PMin");
@@ -748,20 +762,20 @@ function inferMachineSettingsFromConfigMap(configMap: Map<string, string>, machi
       machine.pressureMin = `${pMinText} cmH2O`;
       machine.pressureMax = `${pMaxText} cmH2O`;
       machine.pressureIsAuto = true;
-    }
-    else if (epapText && ipapText) machine.pressure = `EPAP ${epapText} / IPAP ${ipapText} (cmH2O)`;
-    else if (epapMinText && ipapMaxText) {
+    } else if (explicitMode === "BiPAP" && epapText && ipapText) {
+      machine.pressure = `EPAP ${epapText} / IPAP ${ipapText} (cmH2O)`;
+    } else if (explicitMode === "BiPAP" && epapMinText && ipapMaxText) {
       machine.pressure = `EPAP ${epapMinText} - IPAP ${ipapMaxText} (cmH2O)`;
       machine.pressureMin = `EPAP ${epapMinText} cmH2O`;
       machine.pressureMax = `IPAP ${ipapMaxText} cmH2O`;
       machine.pressureIsAuto = true;
     }
 
-    if (!machine.epap) {
+    if (explicitMode === "BiPAP" && !machine.epap) {
       if (epapText) machine.epap = `${epapText} cmH2O`;
       else if (epapMinText) machine.epap = `${epapMinText} cmH2O (min)`;
     }
-    if (!machine.ipap) {
+    if (explicitMode === "BiPAP" && !machine.ipap) {
       if (ipapText) machine.ipap = `${ipapText} cmH2O`;
       else if (ipapMaxText) machine.ipap = `${ipapMaxText} cmH2O (max)`;
     }
@@ -1365,6 +1379,50 @@ function finite(value: number): number {
   return Number.isFinite(value) ? value : 0;
 }
 
+function sanitizeMachineSettingsForResolvedMode(
+  machine: QuickReportMetrics["machine"],
+  canonicalMode: "BiPAP" | "APAP" | "CPAP"
+) {
+  if (canonicalMode === "CPAP") {
+    machine.pressureIsAuto = false;
+    machine.pressureMin = undefined;
+    machine.pressureMax = undefined;
+    machine.epap = undefined;
+    machine.ipap = undefined;
+    machine.respiratoryRate = undefined;
+    return;
+  }
+
+  if (canonicalMode === "APAP") {
+    machine.pressureIsAuto = true;
+    machine.epap = undefined;
+    machine.ipap = undefined;
+    machine.respiratoryRate = undefined;
+    return;
+  }
+
+  machine.pressureIsAuto = false;
+  machine.pressureMin = undefined;
+  machine.pressureMax = undefined;
+}
+
+function createFamilyParserDeps(): FamilyParserDeps {
+  return {
+    emit,
+    decodeLikelyTextVariants,
+    inferMachineSettingsFromText,
+    parseKeyValueLines,
+    inferPressureSettingsFromMap,
+    inferBilevelSettingsFromMap,
+    inferPressureReliefFromMap,
+    parseResventStatText,
+    parseGenericDailyKeyValueRecord,
+    parseRecords,
+    sanitizeRecords,
+    dedupeParsedRecords
+  };
+}
+
 function isGenericTextCandidate(meta: SourceMeta): boolean {
   if (TEXT_EXTENSIONS.has(meta.ext) && meta.file.size <= MAX_FILE_SIZE_BYTES) return true;
   if (GENERIC_BINARY_EXTENSIONS.has(meta.ext) && meta.file.size <= MAX_GENERIC_BINARY_FILE_BYTES) return true;
@@ -1540,60 +1598,24 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
     );
   }
 
-  let genericProcessed = 0;
-  for (const candidate of genericCandidates) {
-    genericProcessed += 1;
-    const pct = 70 + Math.round((genericProcessed / Math.max(1, genericCandidates.length)) * 10);
-    emit(onProgress, {
-      phase: "parse",
-      detail: `Reading ${candidate.normalizedPath}`,
-      percent: Math.min(80, pct)
-    });
+  const familyParserContext = {
+    familyLabel: selectedFamily.label,
+    candidates: genericCandidates,
+    machine,
+    records,
+    warnings,
+    onProgress,
+    progressStart: 70,
+    progressEnd: 80
+  };
+  const familyParserDeps = createFamilyParserDeps();
 
-    try {
-      const bytes = await candidate.file.readBytes();
-      const variants = decodeLikelyTextVariants(bytes);
-      if (variants.length === 0) continue;
-
-      let bestVariantRecords: ParsedRecord[] = [];
-      for (const text of variants) {
-        inferMachineSettingsFromText(text, machine);
-        const kv = parseKeyValueLines(text);
-        if (kv.size > 0) {
-          inferPressureSettingsFromMap(kv, machine);
-          inferPressureReliefFromMap(kv, machine);
-        }
-
-        const variantRecords: ParsedRecord[] = [];
-        if (candidate.recordDate) {
-          const statLike = parseResventStatText(text, candidate.recordDate);
-          if (statLike) {
-            variantRecords.push(statLike);
-          } else {
-            const genericDaily = parseGenericDailyKeyValueRecord(text, candidate.recordDate);
-            if (genericDaily) variantRecords.push(genericDaily);
-          }
-        }
-
-        const parsed = sanitizeRecords(parseRecords(text));
-        variantRecords.push(...parsed);
-
-        const dedupedVariantRecords = dedupeParsedRecords(variantRecords);
-        if (dedupedVariantRecords.length > bestVariantRecords.length) {
-          bestVariantRecords = dedupedVariantRecords;
-        }
-      }
-
-      if (bestVariantRecords.length > 0) {
-        records.push(...bestVariantRecords);
-      }
-    } catch {
-      continue;
-    }
-
-    if (genericProcessed % 10 === 0) {
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    }
+  if (selectedFamily.id === "resmed") {
+    await parseResMedFamily(familyParserContext, familyParserDeps);
+  } else if (selectedFamily.id === "prs1") {
+    await parsePrs1Family(familyParserContext, familyParserDeps);
+  } else {
+    await runTextFamilyParser(familyParserContext, familyParserDeps);
   }
 
   emit(onProgress, { phase: "compute", detail: `Computing ${normalizedLookbackDays}-day metrics...`, percent: 82 });
@@ -1877,7 +1899,7 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
     );
   }
   machine.mode = canonicalTherapyMode;
-  machine.pressureIsAuto = canonicalTherapyMode === "APAP";
+  sanitizeMachineSettingsForResolvedMode(machine, canonicalTherapyMode);
 
   if (machine.device) {
     machine.device = machine.device.replace(/\s*\(\s*sd\s*card\s*\)\s*$/i, "").trim();

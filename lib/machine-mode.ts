@@ -11,20 +11,11 @@ function normalizeMachineMode(mode: string | undefined): string {
 const AUTO_MODE_PATTERNS: RegExp[] = [
   /\bapap\b/,
   /\bautoset\b/,
-  /\bvauto\b/,
-  /\bautobilevel\b/,
-  /\bauto bilevel\b/,
-  /\bautobipap\b/,
-  /\bauto bipap\b/,
   /\bauto pap\b/,
   /\bautomatic pap\b/,
   /\bauto cpap\b/,
   /\bautomatic cpap\b/,
   /\bcpap auto\b/,
-  /\basv\b/,
-  /\bautosv\b/,
-  /\bauto s30\b/,
-  /\bauto st30\b/,
   /^auto$/,
   /^automatic$/
 ];
@@ -33,13 +24,22 @@ const BIPAP_MODE_PATTERNS: RegExp[] = [
   /\bbipap\b/,
   /\bbi level\b/,
   /\bbilevel\b/,
+  /\bautobilevel\b/,
+  /\bauto bilevel\b/,
+  /\bautobipap\b/,
+  /\bauto bipap\b/,
   /\bvpap\b/,
+  /\bvauto\b/,
   /\blumis\b/,
+  /\basv\b/,
+  /\bautosv\b/,
   /\bavaps\b/,
   /\bs t\b/,
   /^st$/,
   /\bst a\b/,
   /^s30$/,
+  /\bauto s30\b/,
+  /\bauto st30\b/,
   /^t30$/,
   /^pc$/
 ];
@@ -64,16 +64,26 @@ export function isFixedCpapLikeMode(mode: string | undefined): boolean {
 
 export type CanonicalTherapyMode = "BiPAP" | "APAP" | "CPAP";
 
+export function resolveExplicitTherapyMode(mode: string | undefined): CanonicalTherapyMode | null {
+  if (isBiPapLikeMode(mode)) return "BiPAP";
+  if (isAutoPapLikeMode(mode)) return "APAP";
+  if (isFixedCpapLikeMode(mode)) return "CPAP";
+  return null;
+}
+
 export function classifyTherapyMode(machine: QuickReportMetrics["machine"]): CanonicalTherapyMode | null {
-  if (isBiPapLikeMode(machine.mode) || machine.epap || machine.ipap || machine.respiratoryRate) {
+  const explicitMode = resolveExplicitTherapyMode(machine.mode);
+  if (explicitMode) return explicitMode;
+
+  if (machine.respiratoryRate || (machine.epap && machine.ipap)) {
     return "BiPAP";
   }
 
-  if (isAutoPapLikeMode(machine.mode) || machine.pressureIsAuto || machine.pressureMin || machine.pressureMax) {
+  if (machine.pressureIsAuto || machine.pressureMin || machine.pressureMax) {
     return "APAP";
   }
 
-  if (isFixedCpapLikeMode(machine.mode) || machine.pressure) {
+  if (machine.pressure) {
     return "CPAP";
   }
 
