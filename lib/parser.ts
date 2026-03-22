@@ -1,4 +1,10 @@
-import { classifyTherapyMode, isAutoPapLikeMode, isBiPapLikeMode, resolveExplicitTherapyMode } from "@/lib/machine-mode";
+import {
+  classifyTherapyMode,
+  isAutoPapLikeMode,
+  isBiPapLikeMode,
+  resolveExplicitTherapyMode,
+  type CanonicalTherapyMode
+} from "@/lib/machine-mode";
 import {
   buildFamilyPriorityPatterns,
   getParserFamily,
@@ -1433,6 +1439,90 @@ function sanitizeMachineSettingsForResolvedMode(
   machine.pressureMax = undefined;
 }
 
+function normalizeMachineSettingsForModeResolution(machine: QuickReportMetrics["machine"]) {
+  if (!machine.pressureIsAuto && (isLikelyAutoMode(machine.mode) || !!machine.pressureMin || !!machine.pressureMax)) {
+    machine.pressureIsAuto = true;
+  }
+
+  if ((!machine.pressureMin || !machine.pressureMax) && machine.pressure) {
+    const rangeMatch = machine.pressure.match(/(-?\d+(?:\.\d+)?)\s*-\s*(-?\d+(?:\.\d+)?)/);
+    if (rangeMatch) {
+      const min = normalizePressureNumber(safeNumber(rangeMatch[1]));
+      const max = normalizePressureNumber(safeNumber(rangeMatch[2]));
+      if (!machine.pressureMin && min !== undefined) machine.pressureMin = pressureText(min);
+      if (!machine.pressureMax && max !== undefined) machine.pressureMax = pressureText(max);
+      if (min !== undefined || max !== undefined) machine.pressureIsAuto = true;
+    }
+  }
+
+  if ((!machine.epap || !machine.ipap) && machine.pressure) {
+    const epapMatch = machine.pressure.match(/epap\s*(-?\d+(?:\.\d+)?)(?:\s*-\s*(-?\d+(?:\.\d+)?))?/i);
+    const ipapMatch = machine.pressure.match(/ipap\s*(-?\d+(?:\.\d+)?)(?:\s*-\s*(-?\d+(?:\.\d+)?))?/i);
+    const epapLow = normalizePressureNumber(epapMatch ? safeNumber(epapMatch[1]) : undefined);
+    const epapHigh = normalizePressureNumber(epapMatch ? safeNumber(epapMatch[2]) : undefined);
+    const ipapLow = normalizePressureNumber(ipapMatch ? safeNumber(ipapMatch[1]) : undefined);
+    const ipapHigh = normalizePressureNumber(ipapMatch ? safeNumber(ipapMatch[2]) : undefined);
+
+    if (!machine.epap) {
+      if (epapLow !== undefined && epapHigh !== undefined) {
+        machine.epap = `${Number(epapLow.toFixed(2)).toString()}-${Number(epapHigh.toFixed(2)).toString()} cmH2O`;
+      } else if (epapLow !== undefined) {
+        machine.epap = pressureText(epapLow);
+      }
+    }
+
+    if (!machine.ipap) {
+      if (ipapLow !== undefined && ipapHigh !== undefined) {
+        machine.ipap = `${Number(ipapLow.toFixed(2)).toString()}-${Number(ipapHigh.toFixed(2)).toString()} cmH2O`;
+      } else if (ipapLow !== undefined) {
+        machine.ipap = pressureText(ipapLow);
+      }
+    }
+  }
+}
+
+function evidenceOnlyTherapyMode(machine: QuickReportMetrics["machine"]): CanonicalTherapyMode | null {
+  return classifyTherapyMode({ ...machine, mode: undefined });
+}
+
+function resolveTherapyModeOrThrow(
+  machine: QuickReportMetrics["machine"],
+  familyLabel: string
+): CanonicalTherapyMode {
+  normalizeMachineSettingsForModeResolution(machine);
+  const canonicalTherapyMode = classifyTherapyMode(machine);
+  if (!canonicalTherapyMode) {
+    throw new Error(
+      `The ${familyLabel} layout was detected, but the therapy mode could not be verified as BiPAP, APAP, or CPAP. The device is loadable only when one of those modes can be confirmed.`
+    );
+  }
+  machine.mode = canonicalTherapyMode;
+  sanitizeMachineSettingsForResolvedMode(machine, canonicalTherapyMode);
+  return canonicalTherapyMode;
+}
+
+function verifyResolvedTherapyModeOrThrow(
+  machine: QuickReportMetrics["machine"],
+  familyLabel: string
+): CanonicalTherapyMode {
+  const canonicalTherapyMode = resolveExplicitTherapyMode(machine.mode);
+  if (!canonicalTherapyMode) {
+    throw new Error(
+      `The ${familyLabel} layout was detected, but the resolved therapy mode was lost before report finalization.`
+    );
+  }
+
+  const evidenceMode = evidenceOnlyTherapyMode(machine);
+  if (evidenceMode && evidenceMode !== canonicalTherapyMode) {
+    throw new Error(
+      `The ${familyLabel} layout was detected, but the resolved therapy mode became inconsistent during report finalization.`
+    );
+  }
+
+  sanitizeMachineSettingsForResolvedMode(machine, canonicalTherapyMode);
+  return canonicalTherapyMode;
+}
+
 function createFamilyParserDeps(): FamilyParserDeps {
   return {
     emit,
@@ -1765,6 +1855,9 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
     await runTextFamilyParser(familyParserContext, familyParserDeps);
   }
 
+  emit(onProgress, { phase: "verify", detail: "Verifying therapy mode...", percent: 81 });
+  resolveTherapyModeOrThrow(machine, selectedFamily.label);
+
   emit(onProgress, { phase: "compute", detail: `Computing ${normalizedLookbackDays}-day metrics...`, percent: 82 });
 
   const dedupedRecords = dedupeParsedRecords(records);
@@ -2004,53 +2097,7 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
   if (machine.pressure95th === undefined && pressure95th !== null) {
     machine.pressure95th = finite(pressure95th);
   }
-  if (!machine.pressureIsAuto && (isLikelyAutoMode(machine.mode) || !!machine.pressureMin || !!machine.pressureMax)) {
-    machine.pressureIsAuto = true;
-  }
-  if ((!machine.pressureMin || !machine.pressureMax) && machine.pressure) {
-    const rangeMatch = machine.pressure.match(/(-?\d+(?:\.\d+)?)\s*-\s*(-?\d+(?:\.\d+)?)/);
-    if (rangeMatch) {
-      const min = normalizePressureNumber(safeNumber(rangeMatch[1]));
-      const max = normalizePressureNumber(safeNumber(rangeMatch[2]));
-      if (!machine.pressureMin && min !== undefined) machine.pressureMin = pressureText(min);
-      if (!machine.pressureMax && max !== undefined) machine.pressureMax = pressureText(max);
-      if (min !== undefined || max !== undefined) machine.pressureIsAuto = true;
-    }
-  }
-
-  if ((!machine.epap || !machine.ipap) && machine.pressure) {
-    const epapMatch = machine.pressure.match(/epap\s*(-?\d+(?:\.\d+)?)(?:\s*-\s*(-?\d+(?:\.\d+)?))?/i);
-    const ipapMatch = machine.pressure.match(/ipap\s*(-?\d+(?:\.\d+)?)(?:\s*-\s*(-?\d+(?:\.\d+)?))?/i);
-    const epapLow = normalizePressureNumber(epapMatch ? safeNumber(epapMatch[1]) : undefined);
-    const epapHigh = normalizePressureNumber(epapMatch ? safeNumber(epapMatch[2]) : undefined);
-    const ipapLow = normalizePressureNumber(ipapMatch ? safeNumber(ipapMatch[1]) : undefined);
-    const ipapHigh = normalizePressureNumber(ipapMatch ? safeNumber(ipapMatch[2]) : undefined);
-
-    if (!machine.epap) {
-      if (epapLow !== undefined && epapHigh !== undefined) {
-        machine.epap = `${Number(epapLow.toFixed(2)).toString()}-${Number(epapHigh.toFixed(2)).toString()} cmH2O`;
-      } else if (epapLow !== undefined) {
-        machine.epap = pressureText(epapLow);
-      }
-    }
-
-    if (!machine.ipap) {
-      if (ipapLow !== undefined && ipapHigh !== undefined) {
-        machine.ipap = `${Number(ipapLow.toFixed(2)).toString()}-${Number(ipapHigh.toFixed(2)).toString()} cmH2O`;
-      } else if (ipapLow !== undefined) {
-        machine.ipap = pressureText(ipapLow);
-      }
-    }
-  }
-
-  const canonicalTherapyMode = classifyTherapyMode(machine);
-  if (!canonicalTherapyMode) {
-    throw new Error(
-      `The ${selectedFamily.label} layout was detected, but the therapy mode could not be verified as BiPAP, APAP, or CPAP. The device is loadable only when one of those modes can be confirmed.`
-    );
-  }
-  machine.mode = canonicalTherapyMode;
-  sanitizeMachineSettingsForResolvedMode(machine, canonicalTherapyMode);
+  verifyResolvedTherapyModeOrThrow(machine, selectedFamily.label);
 
   if (machine.device) {
     machine.device = machine.device.replace(/\s*\(\s*sd\s*card\s*\)\s*$/i, "").trim();
@@ -2074,7 +2121,7 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
     daysInWindow: effectiveWindowDays,
     daysWithData,
     daysWithUsage,
-    usageDaysPercent: finite((daysWithData / Math.max(1, effectiveWindowDays)) * 100),
+    usageDaysPercent: finite((daysWithUsage / Math.max(1, effectiveWindowDays)) * 100),
     compliantDays,
     compliancePercent: finite((compliantDays / complianceBaseDays) * 100),
     avgUsageHours: avgUsageHours === null ? null : finite(avgUsageHours),
