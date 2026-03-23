@@ -241,7 +241,7 @@ function drawBottomFooterBlock(
   });
 }
 
-type TableRow = [string, string];
+type TableRow = [string, string, boolean?];
 
 function hasAutoPressureRange(report: QuickReportMetrics): boolean {
   return (
@@ -288,6 +288,11 @@ function machineSettingRows(report: QuickReportMetrics): TableRow[] {
 
   rows.push(["Pressure relief", textValue(report.machine.pressureRelief)]);
   return rows;
+}
+
+function leakRow(label: string, value: number | null): TableRow {
+  if (value === null || !Number.isFinite(value)) return [label, NO_DATA_FALLBACK];
+  return [label, `${valueText(value)} L/min`, value > 30];
 }
 
 function drawTable(
@@ -338,7 +343,7 @@ function drawTable(
   });
   state.y -= headerHeight;
 
-  rows.forEach(([label, value], idx) => {
+  rows.forEach(([label, value, emphasize], idx) => {
     const labelLines = splitLines(label, fontBold, 10, leftW - insetX * 2);
     const valueLines = splitLines(value, fontRegular, 10, rightW - insetX * 2);
     const lineCount = Math.max(labelLines.length, valueLines.length);
@@ -375,7 +380,7 @@ function drawTable(
         y: valueStartY - i * lineHeight,
         size: 10,
         font: fontRegular,
-        color: rgbFn(0.1, 0.15, 0.2)
+        color: emphasize ? rgbFn(0.73, 0.12, 0.12) : rgbFn(0.1, 0.15, 0.2)
       });
     });
 
@@ -452,9 +457,10 @@ export async function buildPdfReport(report: QuickReportMetrics, headerDataUrl?:
       ["Avg Central apneas", valueText(report.avgCentralApneas)],
       ["95th Central apneas", valueText(report.centralApneas95th)],
       ["Avg RERA index", valueText(report.avgReraIndex)],
-      ["Avg Leak", report.avgLeak === null ? NO_DATA_FALLBACK : `${valueText(report.avgLeak)} L/min`],
-      ["Max leak (30 seconds)", report.maxLeak30s === null ? NO_DATA_FALLBACK : `${valueText(report.maxLeak30s)} L/min`],
-      ["Max leak (2 minutes)", report.maxLeak2m === null ? NO_DATA_FALLBACK : `${valueText(report.maxLeak2m)} L/min`]
+      leakRow("Avg Leak", report.avgLeak),
+      leakRow("95th Leak", report.leak95th),
+      leakRow("30 min Leak", report.maxLeak30m),
+      leakRow("60 min Leak", report.maxLeak60m)
     ],
     headerImage,
     fontRegular,

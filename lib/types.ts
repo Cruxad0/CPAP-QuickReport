@@ -29,8 +29,8 @@ export interface ParsedRecord {
   reraIndex?: number;
   leak?: number;
   leakMax?: number;
-  leakMax30s?: number;
-  leakMax2m?: number;
+  leakMax30m?: number;
+  leakMax60m?: number;
   pressureAvg?: number;
   pressure95th?: number;
 }
@@ -75,9 +75,10 @@ export interface QuickReportMetrics {
   centralApneas95th: number | null;
   rera95th: number | null;
   avgLeak: number | null;
+  leak95th: number | null;
   maxLeak: number | null;
-  maxLeak30s: number | null;
-  maxLeak2m: number | null;
+  maxLeak30m: number | null;
+  maxLeak60m: number | null;
   machine: MachineSettings;
   warnings: string[];
 }
@@ -123,8 +124,8 @@ export interface PreparedDayBucket {
   leakSum: number;
   leakCount: number;
   leakMax: number | null;
-  leakMax30s: number | null;
-  leakMax2m: number | null;
+  leakMax30m: number | null;
+  leakMax60m: number | null;
   pressureAvgSum: number;
   pressureAvgCount: number;
   pressure95Sum: number;

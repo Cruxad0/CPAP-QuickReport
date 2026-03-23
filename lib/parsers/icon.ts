@@ -9,9 +9,25 @@ type IconAggregate = {
   leakSum: number;
   leakCount: number;
   leakMax: number | null;
+  leakSeries: number[];
   obstructiveApneas: number;
   hypopneas: number;
 };
+
+function maxRollingAverage(values: number[], samples: number): number | undefined {
+  if (samples <= 0 || values.length < samples) return undefined;
+  let windowSum = 0;
+  let maxAverage = -Infinity;
+  for (let i = 0; i < values.length; i += 1) {
+    windowSum += values[i];
+    if (i >= samples) windowSum -= values[i - samples];
+    if (i >= samples - 1) {
+      const average = windowSum / samples;
+      if (average > maxAverage) maxAverage = average;
+    }
+  }
+  return Number.isFinite(maxAverage) ? maxAverage : undefined;
+}
 
 function decodeAscii(bytes: Uint8Array): string {
   return new TextDecoder("ascii", { fatal: false }).decode(bytes);
@@ -46,6 +62,7 @@ function getAggregate(map: Map<number, IconAggregate>, date: Date): IconAggregat
     leakSum: 0,
     leakCount: 0,
     leakMax: null,
+    leakSeries: [],
     obstructiveApneas: 0,
     hypopneas: 0
   };
@@ -147,6 +164,7 @@ function parseIconDetail(bytes: Uint8Array, aggregates: Map<number, IconAggregat
         aggregate.pressureCount += 1;
         aggregate.leakSum += leak;
         aggregate.leakCount += 1;
+        aggregate.leakSeries.push(leak);
         if (aggregate.leakMax === null || leak > aggregate.leakMax) aggregate.leakMax = leak;
 
         for (let mask = 1; mask <= 0x20; mask <<= 1) {
@@ -166,6 +184,8 @@ function finalizeRecords(aggregates: Map<number, IconAggregate>): ParsedRecord[]
     const usageHours = aggregate.usageHours;
     const pressureAvg = aggregate.pressureCount > 0 ? aggregate.pressureSum / aggregate.pressureCount : undefined;
     const leak = aggregate.leakCount > 0 ? aggregate.leakSum / aggregate.leakCount : undefined;
+    const leakMax30m = maxRollingAverage(aggregate.leakSeries, 15);
+    const leakMax60m = maxRollingAverage(aggregate.leakSeries, 30);
     const ahi = usageHours && usageHours > 0 ? (aggregate.obstructiveApneas + aggregate.hypopneas) / usageHours : undefined;
 
     records.push({
@@ -175,8 +195,8 @@ function finalizeRecords(aggregates: Map<number, IconAggregate>): ParsedRecord[]
       residualApneas: usageHours && usageHours > 0 ? aggregate.obstructiveApneas / usageHours : undefined,
       leak,
       leakMax: aggregate.leakMax ?? undefined,
-      leakMax30s: aggregate.leakMax ?? undefined,
-      leakMax2m: aggregate.leakMax ?? undefined,
+      leakMax30m,
+      leakMax60m,
       pressureAvg
     });
   }
