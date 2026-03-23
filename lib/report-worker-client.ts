@@ -1,4 +1,4 @@
-import { filterFolderEntriesToRecentWindow, type FolderSourceEntry } from "@/lib/source-files";
+import { filterFolderEntriesToRecentWindow, type FolderSourceEntry, type FolderSourceMetaEntry } from "@/lib/source-files";
 import type { ReportWorkerRequest, ReportWorkerResponse } from "@/lib/report-worker-types";
 import type { GeneratedPdfArtifact, ParseProgress, SourceFileSummary } from "@/lib/types";
 
@@ -36,7 +36,7 @@ type PendingRequest =
     };
 
 export class ReportWorkerClient {
-  private static readonly FOLDER_ENTRY_SCAN_CHUNK_SIZE = 64;
+  private static readonly FOLDER_ENTRY_SCAN_CHUNK_SIZE = 32;
   private static readonly FOLDER_TRANSFER_CHUNK_SIZE = 12;
   private static readonly FOLDER_TRANSFER_YIELD_EVERY = 1;
   private static readonly FOLDER_TRANSFER_PROGRESS_EVERY = 6;
@@ -137,7 +137,7 @@ export class ReportWorkerClient {
     options: { importLookbackDays: number; onProgress?: (progress: ParseProgress) => void }
   ): Promise<FolderSourceEntry[]> {
     const total = files.length ?? 0;
-    const entries: FolderSourceEntry[] = [];
+    const entries: FolderSourceMetaEntry[] = [];
 
     for (let start = 0; start < total; start += ReportWorkerClient.FOLDER_ENTRY_SCAN_CHUNK_SIZE) {
       const end = Math.min(start + ReportWorkerClient.FOLDER_ENTRY_SCAN_CHUNK_SIZE, total);
@@ -145,7 +145,9 @@ export class ReportWorkerClient {
         const file = files[i];
         if (!file) continue;
         entries.push({
-          file,
+          index: i,
+          name: file.name,
+          size: file.size,
           relativePath: file.webkitRelativePath || file.name
         });
       }
@@ -174,7 +176,22 @@ export class ReportWorkerClient {
       });
     }
 
-    return filtered.entries;
+    const folderEntries: FolderSourceEntry[] = [];
+    for (let start = 0; start < filtered.entries.length; start += ReportWorkerClient.FOLDER_TRANSFER_CHUNK_SIZE) {
+      const end = Math.min(start + ReportWorkerClient.FOLDER_TRANSFER_CHUNK_SIZE, filtered.entries.length);
+      for (let i = start; i < end; i += 1) {
+        const entry = filtered.entries[i];
+        const file = files[entry.index];
+        if (!file) continue;
+        folderEntries.push({
+          file,
+          relativePath: entry.relativePath
+        });
+      }
+      await this.yieldToBrowser();
+    }
+
+    return folderEntries;
   }
 
   private async yieldToBrowser(): Promise<void> {

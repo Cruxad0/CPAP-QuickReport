@@ -21,6 +21,13 @@ export type FolderSourceEntry = {
   relativePath: string;
 };
 
+export type FolderSourceMetaEntry = {
+  index: number;
+  name: string;
+  size: number;
+  relativePath: string;
+};
+
 export type RecentFolderEntryFilterResult = {
   entries: FolderSourceEntry[];
   originalCount: number;
@@ -243,14 +250,21 @@ export function filterSourceFilesToRecentWindow(files: SourceFile[], lookbackDay
   };
 }
 
-export function filterFolderEntriesToRecentWindow(
-  entries: FolderSourceEntry[],
+export function filterFolderEntriesToRecentWindow<T extends { relativePath: string; size: number }>(
+  entries: T[],
   lookbackDays: number
-): RecentFolderEntryFilterResult {
+): {
+  entries: T[];
+  originalCount: number;
+  filteredOutCount: number;
+  filteredOutBytes: number;
+  latestDateIso: string | null;
+  hadDatedFiles: boolean;
+} {
   const datedEntries = entries.map((entry) => ({
     entry,
     path: entry.relativePath,
-    size: entry.file.size,
+    size: entry.size,
     date: extractDateFromPath(entry.relativePath)
   }));
 

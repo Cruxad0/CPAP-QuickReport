@@ -310,18 +310,18 @@ function isResventEvFile(meta: SourceMeta): boolean {
 
 function inferMachineSettingsFromText(text: string, machine: QuickReportMetrics["machine"]) {
   if (!machine.device) {
-    const m = text.match(/(?:device|machine|model)\s*[:=]\s*([^\n\r]+)/i);
+    const m = text.match(/^\s*(?:device|machine|model)\s*[:=]\s*([^\n\r]+)/im);
     if (m) machine.device = m[1].trim();
   }
-  if (!machine.mode) {
-    const m = text.match(/(?:mode|therapy mode)\s*[:=]\s*([^\n\r]+)/i);
+  if (!resolveExplicitTherapyMode(machine.mode)) {
+    const m = text.match(/^\s*(?:mode|therapy mode)\s*[:=]\s*([^\n\r]+)/im);
     if (m) {
       machine.mode = m[1].trim();
       if (isLikelyAutoMode(machine.mode)) machine.pressureIsAuto = true;
     }
   }
   if (!machine.pressureRelief) {
-    const m = text.match(/(?:epr|pressure\s*relief|flex|ipr)\s*[:=]\s*([^\n\r]+)/i);
+    const m = text.match(/^\s*(?:epr|pressure\s*relief|flex|ipr)\s*[:=]\s*([^\n\r]+)/im);
     if (m) machine.pressureRelief = m[1].trim();
   }
 
@@ -360,6 +360,8 @@ function inferPressureSettingsFromMap(configMap: Map<string, string>, machine: Q
   const kvLower = new Map<string, string>();
   for (const [k, v] of configMap.entries()) kvLower.set(k.toLowerCase(), v);
 
+  const isBilevelKey = (key: string): boolean => /\b(?:epap|ipap|ps|pressuresupport|rr|respiratoryrate|backup_rate)\b/i.test(key);
+
   const readByExactKey = (keys: string[]): number | undefined => {
     for (const key of keys) {
       const raw = kvLower.get(key.toLowerCase());
@@ -371,6 +373,7 @@ function inferPressureSettingsFromMap(configMap: Map<string, string>, machine: Q
 
   const readByPattern = (patterns: RegExp[]): number | undefined => {
     for (const [key, value] of kvLower.entries()) {
+      if (isBilevelKey(key)) continue;
       if (!patterns.some((pattern) => pattern.test(key))) continue;
       const normalized = normalizePressureNumber(safeNumber(value));
       if (normalized !== undefined) return normalized;
@@ -748,7 +751,7 @@ function inferMachineSettingsFromConfigMap(configMap: Map<string, string>, machi
   else if (!machine.device && model) machine.device = model;
   else if (!machine.device && sn) machine.device = `Serial ${sn}`;
 
-  if (!machine.mode) {
+  if (!resolveExplicitTherapyMode(machine.mode)) {
     const modeRaw = configMap.get("VentMode") ?? configMap.get("mode");
     if (modeRaw) {
       machine.mode = ventModeMap.get(modeRaw) ?? modeRaw;
@@ -1606,11 +1609,23 @@ function sanitizeMachineSettingsForResolvedMode(
 }
 
 function normalizeMachineSettingsForModeResolution(machine: QuickReportMetrics["machine"]) {
+  const explicitMode = resolveExplicitTherapyMode(machine.mode);
+
+  if (explicitMode === "APAP" || explicitMode === "CPAP") {
+    machine.epap = undefined;
+    machine.ipap = undefined;
+    machine.respiratoryRate = undefined;
+  } else if (explicitMode === "BiPAP") {
+    machine.pressureMin = undefined;
+    machine.pressureMax = undefined;
+    machine.pressureIsAuto = false;
+  }
+
   if (!machine.pressureIsAuto && (isLikelyAutoMode(machine.mode) || !!machine.pressureMin || !!machine.pressureMax)) {
     machine.pressureIsAuto = true;
   }
 
-  if ((!machine.pressureMin || !machine.pressureMax) && machine.pressure) {
+  if ((!machine.pressureMin || !machine.pressureMax) && machine.pressure && !/\b(?:epap|ipap)\b/i.test(machine.pressure)) {
     const rangeMatch = machine.pressure.match(/(-?\d+(?:\.\d+)?)\s*-\s*(-?\d+(?:\.\d+)?)/);
     if (rangeMatch) {
       const min = normalizePressureNumber(safeNumber(rangeMatch[1]));
@@ -1621,7 +1636,7 @@ function normalizeMachineSettingsForModeResolution(machine: QuickReportMetrics["
     }
   }
 
-  if ((!machine.epap || !machine.ipap) && machine.pressure) {
+  if ((!machine.epap || !machine.ipap) && machine.pressure && /\b(?:epap|ipap)\b/i.test(machine.pressure)) {
     const epapMatch = machine.pressure.match(/epap\s*(-?\d+(?:\.\d+)?)(?:\s*-\s*(-?\d+(?:\.\d+)?))?/i);
     const ipapMatch = machine.pressure.match(/ipap\s*(-?\d+(?:\.\d+)?)(?:\s*-\s*(-?\d+(?:\.\d+)?))?/i);
     const epapLow = normalizePressureNumber(epapMatch ? safeNumber(epapMatch[1]) : undefined);
