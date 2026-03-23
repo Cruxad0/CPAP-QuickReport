@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { pickDeferredFolderEntries, supportsDirectoryPicker } from "@/lib/directory-picker";
 import { ReportWorkerClient } from "@/lib/report-worker-client";
 import { REPORT_RANGE_OPTIONS, type ReportRangeDays } from "@/lib/report-orchestrator";
 import { bytesToLabel, IMPORT_LOOKBACK_DAYS } from "@/lib/source-files";
@@ -228,6 +229,10 @@ function clearUnloadSafeSiteData() {
     // Best effort only.
   }
   expireSiteCookies();
+}
+
+function isPickerAbort(error: unknown) {
+  return error instanceof DOMException && error.name === "AbortError";
 }
 
 export function QuickReportApp() {
@@ -486,6 +491,72 @@ export function QuickReportApp() {
     } finally {
       setIsSourceLoading(false);
     }
+  };
+
+  const handleDirectoryPickerSelection = async () => {
+    sourceSelectionAttemptRef.current += 1;
+    setPendingSourceSelection("folder");
+    setIsSourceLoading(true);
+    setStatus("working");
+    setStatusMessage("Opening SD-CARD folder...");
+    setParseProgressImmediate({ phase: "scan", detail: "Opening SD-CARD folder...", percent: 1 });
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+
+    try {
+      const deferredEntries = await pickDeferredFolderEntries((progress) => queueParseProgress(progress));
+      if (deferredEntries.length === 0) {
+        setStatus("idle");
+        setStatusMessage("Awaiting data source.");
+        setParseProgressImmediate({ phase: "idle", detail: "Idle", percent: 0 });
+        return;
+      }
+
+      const client = workerClientRef.current;
+      if (!client) throw new Error("Background worker is not available.");
+
+      const loaded = await client.loadFolderEntries(deferredEntries, {
+        importLookbackDays: IMPORT_LOOKBACK_DAYS,
+        parseLookbackDays: REPORT_RANGE_OPTIONS[0],
+        onProgress: (progress) => queueParseProgress(progress)
+      });
+
+      setSourceFiles(loaded.files);
+      setSourceFileCount(loaded.totalFileCount);
+      setSourceFileBytes(loaded.totalBytes);
+      revokeGeneratedReportUrls(generatedReports);
+      setGeneratedReports({});
+      setActiveReportDays(90);
+      setErrors([]);
+      setIsPreviewCollapsed(false);
+      setStatus("idle");
+      setStatusMessage(loaded.statusMessage);
+    } catch (error) {
+      if (isPickerAbort(error)) {
+        setStatus("idle");
+        setStatusMessage("Awaiting data source.");
+        setParseProgressImmediate({ phase: "idle", detail: "Idle", percent: 0 });
+        return;
+      }
+
+      const message = error instanceof Error ? error.message : "Could not load selected folder.";
+      setStatus("error");
+      setErrors([message]);
+      setStatusMessage("Folder load failed.");
+      setParseProgressImmediate({ phase: "error", detail: "Folder load failed", percent: 0 });
+    } finally {
+      setPendingSourceSelection(null);
+      setIsSourceLoading(false);
+    }
+  };
+
+  const handleFolderButtonClick = async () => {
+    if (supportsDirectoryPicker()) {
+      await handleDirectoryPickerSelection();
+      return;
+    }
+
+    beginSourceSelection("folder");
+    folderInputRef.current?.click();
   };
 
   const handleZipSelection: React.ChangeEventHandler<HTMLInputElement> = async (event) => {
@@ -812,8 +883,7 @@ export function QuickReportApp() {
             <button
               className="btn btn-secondary"
               onClick={() => {
-                beginSourceSelection("folder");
-                folderInputRef.current?.click();
+                void handleFolderButtonClick();
               }}
               disabled={isDataSourceLoading}
             >

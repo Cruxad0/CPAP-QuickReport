@@ -1,4 +1,9 @@
-import { filterFolderEntriesToRecentWindow, type FolderSourceEntry, type FolderSourceMetaEntry } from "@/lib/source-files";
+import {
+  filterFolderEntriesToRecentWindow,
+  type DeferredFolderSourceEntry,
+  type FolderSourceEntry,
+  type FolderSourceMetaEntry
+} from "@/lib/source-files";
 import type { ReportWorkerRequest, ReportWorkerResponse } from "@/lib/report-worker-types";
 import type { GeneratedPdfArtifact, ParseProgress, SourceFileSummary } from "@/lib/types";
 
@@ -63,6 +68,25 @@ export class ReportWorkerClient {
     files: FileList | readonly File[],
     options: { importLookbackDays: number; parseLookbackDays: number; onProgress?: (progress: ParseProgress) => void }
   ): Promise<LoadSourceResult> {
+    const deferredEntries: DeferredFolderSourceEntry[] = [];
+    for (let i = 0; i < files.length; i += 1) {
+      const file = files[i];
+      if (!file) continue;
+      deferredEntries.push({
+        name: file.name,
+        size: file.size,
+        relativePath: file.webkitRelativePath || file.name,
+        getFile: async () => file
+      });
+    }
+
+    return await this.loadFolderEntries(deferredEntries, options);
+  }
+
+  async loadFolderEntries(
+    entries: readonly DeferredFolderSourceEntry[],
+    options: { importLookbackDays: number; parseLookbackDays: number; onProgress?: (progress: ParseProgress) => void }
+  ): Promise<LoadSourceResult> {
     const requestId = this.nextRequestId++;
     const promise = new Promise<LoadSourceResult>((resolve, reject) => {
       this.pending.set(requestId, {
@@ -73,7 +97,7 @@ export class ReportWorkerClient {
       });
     });
 
-    void this.postFolderLoadInChunks(requestId, files, options).catch((error) => {
+    void this.postFolderLoadInChunks(requestId, entries, options).catch((error) => {
       const pending = this.pending.get(requestId);
       if (!pending || pending.type !== "load-folder") return;
       this.pending.delete(requestId);
@@ -85,10 +109,10 @@ export class ReportWorkerClient {
 
   private async postFolderLoadInChunks(
     requestId: number,
-    files: FileList | readonly File[],
+    entries: readonly DeferredFolderSourceEntry[],
     options: { importLookbackDays: number; parseLookbackDays: number; onProgress?: (progress: ParseProgress) => void }
   ) {
-    const recentEntries = await this.buildRecentFolderEntries(files, options);
+    const recentEntries = await this.buildRecentFolderEntries(entries, options);
 
     const startRequest: ReportWorkerRequest = {
       requestId,
@@ -133,37 +157,39 @@ export class ReportWorkerClient {
   }
 
   private async buildRecentFolderEntries(
-    files: FileList | readonly File[],
+    entries: readonly DeferredFolderSourceEntry[],
     options: { importLookbackDays: number; onProgress?: (progress: ParseProgress) => void }
   ): Promise<FolderSourceEntry[]> {
-    const total = files.length ?? 0;
-    const entries: FolderSourceMetaEntry[] = [];
+    const metadataEntries: FolderSourceMetaEntry[] = [];
 
-    for (let start = 0; start < total; start += ReportWorkerClient.FOLDER_ENTRY_SCAN_CHUNK_SIZE) {
-      const end = Math.min(start + ReportWorkerClient.FOLDER_ENTRY_SCAN_CHUNK_SIZE, total);
+    for (let start = 0; start < entries.length; start += ReportWorkerClient.FOLDER_ENTRY_SCAN_CHUNK_SIZE) {
+      const end = Math.min(start + ReportWorkerClient.FOLDER_ENTRY_SCAN_CHUNK_SIZE, entries.length);
       for (let i = start; i < end; i += 1) {
-        const file = files[i];
+        const file = entries[i];
         if (!file) continue;
-        entries.push({
+        metadataEntries.push({
           index: i,
           name: file.name,
           size: file.size,
-          relativePath: file.webkitRelativePath || file.name
+          relativePath: file.relativePath
         });
       }
 
-      if (options.onProgress && (end === total || end % (ReportWorkerClient.FOLDER_ENTRY_SCAN_CHUNK_SIZE * 4) === 0)) {
+      if (
+        options.onProgress &&
+        (end === entries.length || end % (ReportWorkerClient.FOLDER_ENTRY_SCAN_CHUNK_SIZE * 4) === 0)
+      ) {
         options.onProgress({
           phase: "scan",
-          detail: `Scanning SD-CARD structure... ${end}/${total}`,
-          percent: Math.min(2, Math.max(1, Math.round((end / Math.max(1, total)) * 2)))
+          detail: `Scanning SD-CARD structure... ${end}/${entries.length}`,
+          percent: Math.min(2, Math.max(1, Math.round((end / Math.max(1, entries.length)) * 2)))
         });
       }
 
       await this.yieldToBrowser();
     }
 
-    const filtered = filterFolderEntriesToRecentWindow(entries, options.importLookbackDays);
+    const filtered = filterFolderEntriesToRecentWindow(metadataEntries, options.importLookbackDays);
 
     if (options.onProgress) {
       options.onProgress({
@@ -181,11 +207,18 @@ export class ReportWorkerClient {
       const end = Math.min(start + ReportWorkerClient.FOLDER_TRANSFER_CHUNK_SIZE, filtered.entries.length);
       for (let i = start; i < end; i += 1) {
         const entry = filtered.entries[i];
-        const file = files[entry.index];
+        const file = entries[entry.index];
         if (!file) continue;
         folderEntries.push({
-          file,
+          file: await file.getFile(),
           relativePath: entry.relativePath
+        });
+      }
+      if (options.onProgress) {
+        options.onProgress({
+          phase: "scan",
+          detail: `Preparing recent SD-CARD files... ${end}/${filtered.entries.length}`,
+          percent: Math.min(3, filtered.entries.length === 0 ? 3 : 2 + Math.round((end / filtered.entries.length)))
         });
       }
       await this.yieldToBrowser();

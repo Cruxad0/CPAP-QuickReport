@@ -21,6 +21,13 @@ export type FolderSourceEntry = {
   relativePath: string;
 };
 
+export type DeferredFolderSourceEntry = {
+  name: string;
+  size: number;
+  relativePath: string;
+  getFile: () => Promise<File>;
+};
+
 export type FolderSourceMetaEntry = {
   index: number;
   name: string;

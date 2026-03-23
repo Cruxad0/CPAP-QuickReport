@@ -5,7 +5,11 @@ const PAGE_WIDTH_A4 = 595.28;
 const PAGE_HEIGHT_A4 = 841.89;
 const PAGE_MARGIN = 18; // 0.25 in
 const NO_DATA_FALLBACK = "Data point not available";
-const HEADER_MAX_HEIGHT = 42;
+const BRANDING_HEADER_TARGET_WIDTH_RATIO = 0.95;
+const BRANDING_LOGO_TARGET_WIDTH_RATIO = 0.15;
+const BRANDING_HEADER_MIN_ASPECT_RATIO = 4;
+const BRANDING_HEADER_MAX_HEIGHT = 90;
+const BRANDING_LOGO_MAX_HEIGHT = 72;
 const FOOTER_BLOCK_HEIGHT = 64;
 const THERAPY_MIN_FONT_SIZE = 10;
 const THERAPY_MAX_FONT_SIZE = 11;
@@ -109,9 +113,42 @@ type PdfState = {
   pageHeight: number;
 };
 
+type BrandingImagePlacement = {
+  kind: "header" | "logo";
+  x: number;
+  width: number;
+  height: number;
+  afterGap: number;
+};
+
 function headerModeText(mode: string | undefined): string {
   const normalized = mode?.trim();
   return normalized && normalized.length > 0 ? normalized : "CPAP";
+}
+
+function measureBrandingImagePlacement(state: PdfState, headerImage: any): BrandingImagePlacement {
+  const contentWidth = state.pageWidth - PAGE_MARGIN * 2;
+  const imageWidth = typeof headerImage?.width === "number" ? headerImage.width : 0;
+  const imageHeight = typeof headerImage?.height === "number" ? headerImage.height : 0;
+  const aspectRatio = imageWidth > 0 && imageHeight > 0 ? imageWidth / imageHeight : BRANDING_HEADER_MIN_ASPECT_RATIO;
+  const isHeader = aspectRatio >= BRANDING_HEADER_MIN_ASPECT_RATIO;
+
+  let width = contentWidth * (isHeader ? BRANDING_HEADER_TARGET_WIDTH_RATIO : BRANDING_LOGO_TARGET_WIDTH_RATIO);
+  let height = width / Math.max(0.0001, aspectRatio);
+  const maxHeight = isHeader ? BRANDING_HEADER_MAX_HEIGHT : BRANDING_LOGO_MAX_HEIGHT;
+  if (height > maxHeight) {
+    height = maxHeight;
+    width = height * aspectRatio;
+  }
+
+  const x = isHeader ? PAGE_MARGIN + (contentWidth - width) / 2 : PAGE_MARGIN;
+  return {
+    kind: isHeader ? "header" : "logo",
+    x,
+    width,
+    height,
+    afterGap: isHeader ? 8 : 6
+  };
 }
 
 function drawDefaultHeader(state: PdfState, reportDays: number, reportMode: string | undefined, fontBold: any, rgbFn: PdfLibModule["rgb"]) {
@@ -141,16 +178,14 @@ function drawHeader(
   rgbFn: PdfLibModule["rgb"]
 ) {
   if (headerImage) {
-    const maxWidth = state.pageWidth - PAGE_MARGIN * 2;
-    const ratio = headerImage.height / headerImage.width;
-    const height = Math.min(HEADER_MAX_HEIGHT, maxWidth * ratio);
+    const placement = measureBrandingImagePlacement(state, headerImage);
     state.page.drawImage(headerImage, {
-      x: PAGE_MARGIN,
-      y: state.y - height,
-      width: maxWidth,
-      height
+      x: placement.x,
+      y: state.y - placement.height,
+      width: placement.width,
+      height: placement.height
     });
-    state.y -= height + 6;
+    state.y -= placement.height + placement.afterGap;
   }
   drawDefaultHeader(state, reportDays, reportMode, fontBold, rgbFn);
 }
