@@ -1,10 +1,10 @@
 "use client";
 
-import JSZip from "jszip";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { buildQuickReportMetrics } from "@/lib/parser";
-import { buildPdfReport } from "@/lib/pdf";
-import { DataSourceKind, ParseProgress, QuickReportMetrics, SourceFile } from "@/lib/types";
+import { ReportWorkerClient } from "@/lib/report-worker-client";
+import { REPORT_RANGE_OPTIONS, type ReportRangeDays } from "@/lib/report-orchestrator";
+import { bytesToLabel, IMPORT_LOOKBACK_DAYS } from "@/lib/source-files";
+import { ParseProgress, QuickReportMetrics, SourceFileSummary } from "@/lib/types";
 
 const MONTH_LABELS = [
   "January",
@@ -24,28 +24,13 @@ const MONTH_LABELS = [
 const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MIN_YEAR = 1900;
 const MAX_YEAR = 2100;
-const IMPORT_LOOKBACK_DAYS = 91;
-const DAY_MS = 24 * 60 * 60 * 1000;
 const SOURCE_SELECTION_CANCEL_TIMEOUT_MS = 20000;
-const REPORT_RANGE_OPTIONS = [90, 60, 30, 7] as const;
-
-type ReportRangeDays = (typeof REPORT_RANGE_OPTIONS)[number];
 type GeneratedReportArtifact = {
   metrics: QuickReportMetrics;
   previewUrl: string;
-  previewEmbedUrl: string;
   downloadName: string;
 };
 type GeneratedReports = Partial<Record<ReportRangeDays, GeneratedReportArtifact>>;
-
-type RecentWindowFilterResult = {
-  files: SourceFile[];
-  originalCount: number;
-  filteredOutCount: number;
-  filteredOutBytes: number;
-  latestDateIso: string | null;
-  hadDatedFiles: boolean;
-};
 
 function revokeGeneratedReportUrls(reports: GeneratedReports) {
   for (const days of REPORT_RANGE_OPTIONS) {
@@ -54,175 +39,6 @@ function revokeGeneratedReportUrls(reports: GeneratedReports) {
       URL.revokeObjectURL(artifact.previewUrl);
     }
   }
-}
-
-function bytesToLabel(size: number): string {
-  if (size > 1024 * 1024) return `${(size / (1024 * 1024)).toFixed(2)} MB`;
-  if (size > 1024) return `${(size / 1024).toFixed(1)} KB`;
-  return `${size} B`;
-}
-
-function createUtcDateNoon(year: number, month: number, day: number): Date | null {
-  if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) return null;
-  if (year < 1900 || year > 2100) return null;
-  if (month < 1 || month > 12) return null;
-  if (day < 1 || day > 31) return null;
-  const dt = new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
-  if (Number.isNaN(dt.getTime())) return null;
-  if (dt.getUTCFullYear() !== year || dt.getUTCMonth() + 1 !== month || dt.getUTCDate() !== day) return null;
-  return dt;
-}
-
-function extractDateFromPath(path: string): Date | null {
-  const normalized = path.replace(/\\/g, "/");
-
-  const resvent = /(?:^|\/)therapy\/record\/(\d{4})(\d{2})\/(\d{2})(?:\/|$)/i.exec(normalized);
-  if (resvent) {
-    return createUtcDateNoon(Number(resvent[1]), Number(resvent[2]), Number(resvent[3]));
-  }
-
-  const yearMonthDay = /(?:^|\/)((?:19|20)\d{2})[\/_-](\d{2})[\/_-](\d{2})(?:\/|$)/.exec(normalized);
-  if (yearMonthDay) {
-    const dt = createUtcDateNoon(Number(yearMonthDay[1]), Number(yearMonthDay[2]), Number(yearMonthDay[3]));
-    if (dt) return dt;
-  }
-
-  const compact = /(?:^|[^\d])((?:19|20)\d{2})(\d{2})(\d{2})(?:[^\d]|$)/.exec(normalized);
-  if (compact) {
-    const dt = createUtcDateNoon(Number(compact[1]), Number(compact[2]), Number(compact[3]));
-    if (dt) return dt;
-  }
-
-  return null;
-}
-
-function shouldKeepUndatedFile(path: string, size: number): boolean {
-  const normalized = path.replace(/\\/g, "/").toLowerCase();
-
-  if (
-    /(?:^|\/)(?:therapy\/config|config|settings?|profile|profiles|wm_profiles\.xml|summary\.edf|detail\.edf|str\.edf|eve\.edf|pld\.edf|sad\.edf|brp\.edf|crc\.edf)(?:\/|$|[._-])/i.test(
-      normalized
-    )
-  ) {
-    return true;
-  }
-
-  // Keep known OSCAR loader families that may not include explicit dates in every file path.
-  if (
-    /(?:^|\/)(?:p-series\/|p\d{5}\.\d{3}$|p\d{4}\.(?:idx|000)$|therapy\.pdat$|therapy\.dat$|sl\.edf$|icon\.edf$|wm_profiles\.xml$)/i.test(
-      normalized
-    )
-  ) {
-    return true;
-  }
-
-  if (/(?:^|\/)(?:viatom|cms50|zeo|dreem|yuwell|vrem)(?:\/|$)/i.test(normalized)) {
-    return true;
-  }
-
-  // Keep small/medium clinical data files with therapy/usage/event semantics.
-  if (
-    size <= 2_000_000 &&
-    /\.(?:csv|txt|json|xml|dat|edf)$/i.test(normalized) &&
-    /(?:therapy|record|usage|session|event|summary|detail|compliance|result)/i.test(normalized)
-  ) {
-    return true;
-  }
-
-  if (
-    size <= 256 * 1024 &&
-    /(?:^|\/)(?:readme|info|version|manifest|meta|about|catalog|machine(?:[_-]info)?|device(?:[_-]info)?)(?:[._-]|$)/i.test(
-      normalized
-    )
-  ) {
-    return true;
-  }
-
-  return false;
-}
-
-function filterSourceFilesToRecentWindow(files: SourceFile[], lookbackDays: number): RecentWindowFilterResult {
-  const datedEntries = files.map((file) => ({
-    file,
-    date: extractDateFromPath(file.path)
-  }));
-
-  const dated = datedEntries.filter((entry): entry is { file: SourceFile; date: Date } => entry.date !== null);
-  if (dated.length === 0) {
-    return {
-      files,
-      originalCount: files.length,
-      filteredOutCount: 0,
-      filteredOutBytes: 0,
-      latestDateIso: null,
-      hadDatedFiles: false
-    };
-  }
-
-  // If date-bearing files are too sparse, avoid risky pruning so all loader families remain compatible.
-  const datedCoverage = dated.length / Math.max(1, files.length);
-  if (datedCoverage < 0.1) {
-    return {
-      files,
-      originalCount: files.length,
-      filteredOutCount: 0,
-      filteredOutBytes: 0,
-      latestDateIso: null,
-      hadDatedFiles: false
-    };
-  }
-
-  const latestMs = dated.reduce((max, entry) => Math.max(max, entry.date.getTime()), dated[0].date.getTime());
-  const now = new Date();
-  const todayNoon = createUtcDateNoon(now.getUTCFullYear(), now.getUTCMonth() + 1, now.getUTCDate());
-  const anchoredWindowEndMs = (todayNoon?.getTime() ?? latestMs) - DAY_MS;
-  const windowStartMs = anchoredWindowEndMs - (lookbackDays - 1) * DAY_MS;
-
-  let filteredOutCount = 0;
-  let filteredOutBytes = 0;
-  const kept = datedEntries
-    .filter((entry) => {
-      if (entry.date) {
-        const t = entry.date.getTime();
-        const keep = t >= windowStartMs && t <= anchoredWindowEndMs;
-        if (!keep) {
-          filteredOutCount += 1;
-          filteredOutBytes += entry.file.size;
-        }
-        return keep;
-      }
-
-      const keepUndated = shouldKeepUndatedFile(entry.file.path, entry.file.size);
-      if (!keepUndated) {
-        filteredOutCount += 1;
-        filteredOutBytes += entry.file.size;
-      }
-      return keepUndated;
-    })
-    .map((entry) => entry.file);
-
-  // Safety fallback: never end up with an empty set due to over-filtering.
-  const outputFiles = kept.length > 0 ? kept : files;
-  const latestDateIso = new Date(anchoredWindowEndMs).toISOString().slice(0, 10);
-
-  return {
-    files: outputFiles,
-    originalCount: files.length,
-    filteredOutCount: outputFiles === files ? 0 : filteredOutCount,
-    filteredOutBytes: outputFiles === files ? 0 : filteredOutBytes,
-    latestDateIso,
-    hadDatedFiles: true
-  };
-}
-
-function formatIsoAsUsDate(iso: string): string {
-  const dt = new Date(`${iso}T00:00:00Z`);
-  return dt.toLocaleDateString("en-US", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    timeZone: "UTC"
-  });
 }
 
 function toIsoDateParts(year: number, month: number, day: number): string | null {
@@ -308,21 +124,6 @@ async function fileToDataUrl(file: File): Promise<string> {
     reader.onload = () => resolve(String(reader.result));
     reader.onerror = () => reject(new Error("Could not read image file."));
     reader.readAsDataURL(file);
-  });
-}
-
-async function blobToDataUrl(blob: Blob): Promise<string> {
-  return await new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(new Error("Could not read generated PDF."));
-    reader.readAsDataURL(blob);
-  });
-}
-
-async function yieldToBrowser(): Promise<void> {
-  await new Promise<void>((resolve) => {
-    window.setTimeout(() => resolve(), 0);
   });
 }
 
@@ -433,13 +234,13 @@ export function QuickReportApp() {
   const folderInputRef = useRef<HTMLInputElement>(null);
   const zipInputRef = useRef<HTMLInputElement>(null);
   const headerInputRef = useRef<HTMLInputElement>(null);
+  const workerClientRef = useRef<ReportWorkerClient | null>(null);
   const sourceSelectionAttemptRef = useRef(0);
 
   const [patientName, setPatientName] = useState("");
   const [dateOfBirthInput, setDateOfBirthInput] = useState("");
   const [physicianName, setPhysicianName] = useState("");
-  const [sourceKind, setSourceKind] = useState<DataSourceKind>("folder");
-  const [sourceFiles, setSourceFiles] = useState<SourceFile[]>([]);
+  const [sourceFiles, setSourceFiles] = useState<SourceFileSummary[]>([]);
   const [headerDataUrl, setHeaderDataUrl] = useState<string | undefined>(undefined);
   const [activeReportDays, setActiveReportDays] = useState<ReportRangeDays>(90);
 
@@ -465,6 +266,15 @@ export function QuickReportApp() {
       folderInputRef.current.setAttribute("webkitdirectory", "");
       folderInputRef.current.setAttribute("directory", "");
     }
+  }, []);
+
+  useEffect(() => {
+    const client = new ReportWorkerClient();
+    workerClientRef.current = client;
+    return () => {
+      workerClientRef.current = null;
+      client.dispose();
+    };
   }, []);
 
   useEffect(() => {
@@ -513,6 +323,8 @@ export function QuickReportApp() {
     sourceFiles.length > 0 &&
     status !== "working";
   const isDataSourceLoading = status === "working" || isSourceLoading || pendingSourceSelection !== null;
+  const dataSourceOverlayText =
+    isSourceLoading || pendingSourceSelection !== null ? "Loading data. Please wait..." : "Generating report. Please wait...";
 
   const beginSourceSelection = (kind: "folder" | "zip") => {
     const activeInput = kind === "folder" ? folderInputRef.current : zipInputRef.current;
@@ -575,20 +387,20 @@ export function QuickReportApp() {
     setStatusMessage("Clearing local data...");
     setParseProgress({ phase: "reset", detail: "Clearing local cache and storage...", percent: 12 });
     setIsSourceLoading(true);
-    await yieldToBrowser();
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
 
     await clearSiteData();
+    await workerClientRef.current?.reset();
 
     resetResultState();
     setSourceFiles([]);
-    setSourceKind("folder");
     setPatientName("");
     setDateOfBirthInput("");
     clearSourceInputs();
     setParseProgress({ phase: "idle", detail: "Idle", percent: 0 });
     setStatus("idle");
     setStatusMessage("Local data cleared. Attempting to close this tab...");
-    await yieldToBrowser();
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
 
     const closed = attemptCloseCurrentTab();
     if (!closed) {
@@ -614,69 +426,23 @@ export function QuickReportApp() {
     setStatusMessage("Loading SD folder...");
     setParseProgress({ phase: "scan", detail: "Loading SD folder...", percent: 4 });
 
-    // Yield once so loading overlay paints before indexing a large folder selection.
-    await yieldToBrowser();
-
     try {
-      const mapped: SourceFile[] = [];
-      const chunkSize = 40;
-      let chunkCount = 0;
-      for (let start = 0; start < files.length; start += chunkSize) {
-        chunkCount += 1;
-        const end = Math.min(start + chunkSize, files.length);
-        for (let i = start; i < end; i += 1) {
-          const file = files[i];
-          mapped.push({
-            name: file.name,
-            path: file.webkitRelativePath || file.name,
-            size: file.size,
-            readText: () => file.text(),
-            readBytes: async () => new Uint8Array(await file.arrayBuffer())
-          });
-        }
-
-        if (chunkCount % 6 === 0 || end === files.length) {
-          const pct = Math.min(45, 5 + Math.round((end / files.length) * 40));
-          setParseProgress({
-            phase: "scan",
-            detail: `Indexing files... ${end}/${files.length}`,
-            percent: pct
-          });
-        }
-        await yieldToBrowser();
-      }
-
-      setParseProgress({
-        phase: "scan",
-        detail: `Keeping recent ${IMPORT_LOOKBACK_DAYS}-day window...`,
-        percent: 50
+      const client = workerClientRef.current;
+      if (!client) throw new Error("Background worker is not available.");
+      const loaded = await client.loadFolder(files, {
+        importLookbackDays: IMPORT_LOOKBACK_DAYS,
+        parseLookbackDays: REPORT_RANGE_OPTIONS[0],
+        onProgress: (progress) => setParseProgress(progress)
       });
-      await yieldToBrowser();
-      const filtered = filterSourceFilesToRecentWindow(mapped, IMPORT_LOOKBACK_DAYS);
 
-      setSourceKind("folder");
-      setSourceFiles(filtered.files);
+      setSourceFiles(loaded.files);
       revokeGeneratedReportUrls(generatedReports);
       setGeneratedReports({});
       setActiveReportDays(90);
       setErrors([]);
       setIsPreviewCollapsed(false);
       setStatus("idle");
-      if (filtered.hadDatedFiles) {
-        const endDateText = filtered.latestDateIso ? formatIsoAsUsDate(filtered.latestDateIso) : "latest dated file";
-        if (filtered.filteredOutCount > 0) {
-          setStatusMessage(
-            `Folder loaded: ${filtered.files.length} files ready (last ${IMPORT_LOOKBACK_DAYS} days through ${endDateText}). Filtered out ${filtered.filteredOutCount} older files (${bytesToLabel(filtered.filteredOutBytes)}).`
-          );
-        } else {
-          setStatusMessage(
-            `Folder loaded: ${filtered.files.length} files ready (last ${IMPORT_LOOKBACK_DAYS} days through ${endDateText}).`
-          );
-        }
-      } else {
-        setStatusMessage(`Folder loaded: ${mapped.length} files ready for parsing.`);
-      }
-      setParseProgress({ phase: "ready", detail: "Folder ready", percent: 100 });
+      setStatusMessage(loaded.statusMessage);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Could not load selected folder.";
       setStatus("error");
@@ -706,64 +472,17 @@ export function QuickReportApp() {
     setParseProgress({ phase: "zip", detail: "Opening ZIP file...", percent: 8 });
 
     try {
-      const archive = await JSZip.loadAsync(zipFile);
-      const entries = Object.values(archive.files)
-        .filter((entry) => !entry.dir)
-        .slice(0, 2500);
-      const mapped: SourceFile[] = [];
-      const chunkSize = 40;
-      let chunkCount = 0;
-      for (let start = 0; start < entries.length; start += chunkSize) {
-        chunkCount += 1;
-        const end = Math.min(start + chunkSize, entries.length);
-        for (let i = start; i < end; i += 1) {
-          const entry = entries[i];
-          const sizeMaybe = Number((entry as unknown as { _data?: { uncompressedSize?: number } })._data?.uncompressedSize ?? 0);
-          mapped.push({
-            name: entry.name.split("/").pop() ?? entry.name,
-            path: entry.name,
-            size: Number.isFinite(sizeMaybe) ? sizeMaybe : 0,
-            readText: async () => await entry.async("string"),
-            readBytes: async () => await entry.async("uint8array")
-          });
-        }
-        if (chunkCount % 4 === 0 || end === entries.length) {
-          const pct = Math.min(45, 9 + Math.round((end / entries.length) * 36));
-          setParseProgress({
-            phase: "zip",
-            detail: `Indexing ZIP entries... ${end}/${entries.length}`,
-            percent: pct
-          });
-        }
-        await yieldToBrowser();
-      }
-
-      setParseProgress({
-        phase: "zip",
-        detail: `Keeping recent ${IMPORT_LOOKBACK_DAYS}-day window...`,
-        percent: 50
+      const client = workerClientRef.current;
+      if (!client) throw new Error("Background worker is not available.");
+      const loaded = await client.loadZip(zipFile, {
+        importLookbackDays: IMPORT_LOOKBACK_DAYS,
+        parseLookbackDays: REPORT_RANGE_OPTIONS[0],
+        onProgress: (progress) => setParseProgress(progress)
       });
-      await yieldToBrowser();
-      const filtered = filterSourceFilesToRecentWindow(mapped, IMPORT_LOOKBACK_DAYS);
 
-      setSourceKind("zip");
-      setSourceFiles(filtered.files);
+      setSourceFiles(loaded.files);
       setStatus("idle");
-      if (filtered.hadDatedFiles) {
-        const endDateText = filtered.latestDateIso ? formatIsoAsUsDate(filtered.latestDateIso) : "latest dated file";
-        if (filtered.filteredOutCount > 0) {
-          setStatusMessage(
-            `ZIP loaded: ${filtered.files.length} files ready (last ${IMPORT_LOOKBACK_DAYS} days through ${endDateText}). Filtered out ${filtered.filteredOutCount} older files (${bytesToLabel(filtered.filteredOutBytes)}).`
-          );
-        } else {
-          setStatusMessage(
-            `ZIP loaded: ${filtered.files.length} files ready (last ${IMPORT_LOOKBACK_DAYS} days through ${endDateText}).`
-          );
-        }
-      } else {
-        setStatusMessage(`ZIP loaded: ${mapped.length} files ready for parsing.`);
-      }
-      setParseProgress({ phase: "ready", detail: "ZIP ready", percent: 100 });
+      setStatusMessage(loaded.statusMessage);
       revokeGeneratedReportUrls(generatedReports);
       setGeneratedReports({});
       setActiveReportDays(90);
@@ -797,73 +516,29 @@ export function QuickReportApp() {
 
     setStatus("working");
     setErrors([]);
-    setStatusMessage("Processing files locally in this browser...");
-    setParseProgress({ phase: "start", detail: "Preparing workflow...", percent: 2 });
+    setStatusMessage("Generating report...");
+    setParseProgress({ phase: "start", detail: "Generating report...", percent: 2 });
 
-    const generated: GeneratedReports = {};
     try {
-      const totalRanges = REPORT_RANGE_OPTIONS.length;
-      let availableHistoryDays: number | null = null;
-      for (let idx = 0; idx < totalRanges; idx += 1) {
-        const days = REPORT_RANGE_OPTIONS[idx];
-        const segmentStart = Math.round((idx / totalRanges) * 96);
-        const segmentSpan = Math.round(96 / totalRanges);
-
-        if (availableHistoryDays !== null && days > availableHistoryDays) {
-          setParseProgress({
-            phase: "start",
-            detail: `Skipping ${days}-day tab (only ${availableHistoryDays} days available)...`,
-            percent: Math.max(2, segmentStart)
-          });
-          continue;
-        }
-
-        setParseProgress({
-          phase: "start",
-          detail: `Generating ${days}-day report (${idx + 1}/${totalRanges})...`,
-          percent: Math.max(2, segmentStart)
-        });
-
-        const metrics = await buildQuickReportMetrics({
-          sourceKind,
-          files: sourceFiles,
+      const client = workerClientRef.current;
+      if (!client) throw new Error("Background worker is not available.");
+      const result = await client.generateReports(
+        {
           patientName,
           dateOfBirthIso: dateOfBirthIso ?? "",
           physicianName,
-          lookbackDays: days,
-          onProgress: (p) =>
-            setParseProgress({
-              phase: p.phase,
-              detail: `${days}-day: ${p.detail}`,
-              percent: Math.min(98, segmentStart + Math.round((Math.max(0, Math.min(100, p.percent)) / 100) * segmentSpan))
-            })
-        });
+          headerDataUrl
+        },
+        (progress) => setParseProgress(progress)
+      );
 
-        availableHistoryDays = availableHistoryDays === null ? metrics.daysInWindow : Math.max(availableHistoryDays, metrics.daysInWindow);
-        if (metrics.daysInWindow < days) {
-          setParseProgress({
-            phase: "start",
-            detail: `Hiding ${days}-day tab (only ${metrics.daysInWindow} days available)...`,
-            percent: Math.min(98, segmentStart + segmentSpan - 1)
-          });
-          continue;
-        }
-
-        setParseProgress({
-          phase: "pdf",
-          detail: `Rendering ${days}-day PDF...`,
-          percent: Math.min(98, segmentStart + segmentSpan - 1)
-        });
-
-        const { blob, filename } = await buildPdfReport(metrics, headerDataUrl);
-        const previewUrl = URL.createObjectURL(blob);
-        const previewEmbedUrl = await blobToDataUrl(blob);
-
+      const generated: GeneratedReports = {};
+      for (const artifact of result.reports) {
+        const days = artifact.days as ReportRangeDays;
         generated[days] = {
-          metrics,
-          previewUrl,
-          previewEmbedUrl,
-          downloadName: filename
+          metrics: artifact.metrics,
+          previewUrl: URL.createObjectURL(artifact.blob),
+          downloadName: artifact.filename
         };
       }
 
@@ -873,11 +548,10 @@ export function QuickReportApp() {
       setActiveReportDays(largestAvailableTab);
       setIsPreviewCollapsed(false);
       setStatus("ready");
-      setStatusMessage("Report generated successfully. Review preview and export PDF.");
+      setStatusMessage(result.statusMessage);
       setParseProgress({ phase: "done", detail: "Done", percent: 100 });
       setErrors([]);
     } catch (error) {
-      revokeGeneratedReportUrls(generated);
       const message = error instanceof Error ? error.message : "An unexpected error occurred.";
       setStatus("error");
       setStatusMessage("Report generation failed.");
@@ -941,8 +615,8 @@ export function QuickReportApp() {
   return (
     <main>
       <section className="hero">
-        <h1>CPAP Clinician QuickReport</h1>
-        <p>Create a 90/60/30/7-day CPAP PDF report in a few steps. Data is processed locally and never stored.</p>
+        <h1>NIMV Clinician QuickReport</h1>
+        <p>Create a 90/60/30/7-day NIMV PDF report in a few steps. Data is processed locally and never stored.</p>
         <p className="subtle">
           Powered by{" "}
           <a href="https://notespecialist.com" target="_blank" rel="noopener noreferrer">
@@ -1084,7 +758,7 @@ export function QuickReportApp() {
         </article>
 
         <article className={`card col-8 ${isDataSourceLoading ? "card-loading" : ""}`} aria-busy={isDataSourceLoading}>
-          {isDataSourceLoading ? <div className="loading-overlay">Loading data. Please wait...</div> : null}
+          {isDataSourceLoading ? <div className="loading-overlay">{dataSourceOverlayText}</div> : null}
           <h3>Data Source</h3>
           <p className="subtle">Choose an SD-card folder. The webapp keeps only the most recent 90 days NIMV data locally in browser.</p>
 
@@ -1212,7 +886,7 @@ export function QuickReportApp() {
                 <iframe
                   key={activeReport.previewUrl}
                   className="preview-frame"
-                  src={activeReport.previewEmbedUrl ?? activeReport.previewUrl}
+                  src={activeReport.previewUrl}
                   title="PDF preview"
                 />
                 <p className="subtle">If preview is blank on this browser, use Open PDF.</p>

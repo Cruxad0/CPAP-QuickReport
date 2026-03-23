@@ -10,7 +10,7 @@ const FOOTER_BLOCK_HEIGHT = 64;
 const CARLITO_REGULAR_URL = "/fonts/Carlito-Regular.ttf";
 const CARLITO_BOLD_URL = "/fonts/Carlito-Bold.ttf";
 const THERAPY_MIN_FONT_SIZE = 10;
-const THERAPY_MAX_FONT_SIZE = 15;
+const THERAPY_MAX_FONT_SIZE = 13;
 
 type PdfLibModule = {
   PDFDocument: {
