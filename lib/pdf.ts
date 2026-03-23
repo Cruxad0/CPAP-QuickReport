@@ -7,8 +7,6 @@ const PAGE_MARGIN = 18; // 0.25 in
 const NO_DATA_FALLBACK = "Data point not available";
 const HEADER_MAX_HEIGHT = 72;
 const FOOTER_BLOCK_HEIGHT = 64;
-const CARLITO_REGULAR_URL = "/fonts/Carlito-Regular.ttf";
-const CARLITO_BOLD_URL = "/fonts/Carlito-Bold.ttf";
 const THERAPY_MIN_FONT_SIZE = 10;
 const THERAPY_MAX_FONT_SIZE = 13;
 
@@ -22,13 +20,6 @@ type PdfLibModule = {
   };
   rgb: (r: number, g: number, b: number) => any;
 };
-
-type EmbeddedPdfFonts = {
-  fontRegular: any;
-  fontBold: any;
-};
-
-let cachedCarlitoFontBytesPromise: Promise<{ regular: Uint8Array; bold: Uint8Array }> | null = null;
 
 function initialsFromName(name: string): string {
   const tokens = name.split(/\s+/).map((x) => x.trim()).filter(Boolean);
@@ -89,47 +80,7 @@ function buildTherapyFontSizes(): number[] {
   }
   return sizes;
 }
-
 const THERAPY_FONT_SIZES = buildTherapyFontSizes();
-
-async function fetchFontBytes(url: string): Promise<Uint8Array> {
-  const response = await fetch(url, { cache: "force-cache" });
-  if (!response.ok) {
-    throw new Error(`Failed to fetch font asset: ${url}`);
-  }
-  return new Uint8Array(await response.arrayBuffer());
-}
-
-async function loadCarlitoFontBytes(): Promise<{ regular: Uint8Array; bold: Uint8Array }> {
-  if (!cachedCarlitoFontBytesPromise) {
-    cachedCarlitoFontBytesPromise = Promise.all([
-      fetchFontBytes(CARLITO_REGULAR_URL),
-      fetchFontBytes(CARLITO_BOLD_URL)
-    ]).then(([regular, bold]) => ({ regular, bold }));
-  }
-  return cachedCarlitoFontBytesPromise;
-}
-
-async function embedReportFonts(pdfDoc: any, standardFonts: PdfLibModule["StandardFonts"]): Promise<EmbeddedPdfFonts> {
-  try {
-    const [{ default: fontkit }, fontBytes] = await Promise.all([
-      import("@pdf-lib/fontkit"),
-      loadCarlitoFontBytes()
-    ]);
-    pdfDoc.registerFontkit(fontkit);
-    const [fontRegular, fontBold] = await Promise.all([
-      pdfDoc.embedFont(fontBytes.regular, { subset: true }),
-      pdfDoc.embedFont(fontBytes.bold, { subset: true })
-    ]);
-    return { fontRegular, fontBold };
-  } catch {
-    const [fontRegular, fontBold] = await Promise.all([
-      pdfDoc.embedFont(standardFonts.Helvetica),
-      pdfDoc.embedFont(standardFonts.HelveticaBold)
-    ]);
-    return { fontRegular, fontBold };
-  }
-}
 
 async function tryEmbedHeaderImage(pdfDoc: any, headerDataUrl: string | undefined): Promise<any | undefined> {
   if (!headerDataUrl) return undefined;
@@ -376,6 +327,23 @@ function hasAutoPressureRange(report: QuickReportMetrics): boolean {
   );
 }
 
+function normalizePressureDisplay(raw: string | null | undefined): string {
+  const text = raw?.trim();
+  if (!text) return NO_DATA_FALLBACK;
+  if (/^not detected from input files$/i.test(text)) return NO_DATA_FALLBACK;
+
+  const values = [...text.matchAll(/-?\d+(?:\.\d+)?/g)].map((match) => Number.parseFloat(match[0])).filter(Number.isFinite);
+  if (values.length === 0) return text;
+  if (values.length >= 2 && /\d+(?:\.\d+)?\s*-\s*\d+(?:\.\d+)?/.test(text)) {
+    return `${values[0].toFixed(1)}-${values[1].toFixed(1)} cmH2O`;
+  }
+  return `${values[0].toFixed(1)} cmH2O`;
+}
+
+function pressureMetricText(value: number | null | undefined): string {
+  return typeof value === "number" && Number.isFinite(value) ? `${value.toFixed(1)} cmH2O` : NO_DATA_FALLBACK;
+}
+
 function machineSettingRows(report: QuickReportMetrics): TableRow[] {
   const rows: TableRow[] = [
     ["Device", textValue(report.machine.device)],
@@ -388,26 +356,14 @@ function machineSettingRows(report: QuickReportMetrics): TableRow[] {
   const isAutoPap = !isBiPap && !isFixedCpap && (isAutoPapLikeMode(mode) || hasAutoPressureRange(report));
 
   if (isBiPap) {
-    rows.push(["IPAP", textValue(report.machine.ipap)]);
-    rows.push(["EPAP", textValue(report.machine.epap)]);
+    rows.push(["IPAP", normalizePressureDisplay(report.machine.ipap)]);
+    rows.push(["EPAP", normalizePressureDisplay(report.machine.epap)]);
     rows.push(["Respiratory rate (RR)", textValue(report.machine.respiratoryRate)]);
   } else if (isAutoPap) {
-    rows.push(["Min pressure", textValue(report.machine.pressureMin)]);
-    rows.push(["Max pressure", textValue(report.machine.pressureMax)]);
-    rows.push([
-      "Avg Pressure",
-      report.machine.pressureAvg === null || report.machine.pressureAvg === undefined
-        ? NO_DATA_FALLBACK
-        : `${valueText(report.machine.pressureAvg)} cmH2O`
-    ]);
-    rows.push([
-      "95th Pressure",
-      report.machine.pressure95th === null || report.machine.pressure95th === undefined
-        ? NO_DATA_FALLBACK
-        : `${valueText(report.machine.pressure95th)} cmH2O`
-    ]);
+    rows.push(["Min pressure", normalizePressureDisplay(report.machine.pressureMin)]);
+    rows.push(["Max pressure", normalizePressureDisplay(report.machine.pressureMax)]);
   } else {
-    rows.push(["Pressure", textValue(report.machine.pressure)]);
+    rows.push(["Pressure", normalizePressureDisplay(report.machine.pressure)]);
   }
 
   rows.push(["Pressure relief", textValue(report.machine.pressureRelief)]);
@@ -637,7 +593,8 @@ export async function buildPdfReport(report: QuickReportMetrics, headerDataUrl?:
   const { PDFDocument, StandardFonts, rgb: rgbFn } = pdfLib;
 
   const pdfDoc = await PDFDocument.create();
-  const { fontRegular, fontBold } = await embedReportFonts(pdfDoc, StandardFonts);
+  const fontRegular = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
   const headerImage = await tryEmbedHeaderImage(pdfDoc, headerDataUrl);
 
   const state: PdfState = {

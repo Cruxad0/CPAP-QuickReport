@@ -5,10 +5,18 @@ export type SourceSelectionKind = "folder" | "zip";
 export type ReportWorkerRequest =
   | {
       requestId: number;
-      type: "load-folder";
-      files: File[];
+      type: "load-folder-start";
       importLookbackDays: number;
       parseLookbackDays: number;
+    }
+  | {
+      requestId: number;
+      type: "load-folder-chunk";
+      files: File[];
+    }
+  | {
+      requestId: number;
+      type: "load-folder-finish";
     }
   | {
       requestId: number;
@@ -41,6 +49,8 @@ export type ReportWorkerResponse =
       type: "source-ready";
       sourceKind: DataSourceKind;
       files: SourceFileSummary[];
+      totalFileCount: number;
+      totalBytes: number;
       statusMessage: string;
       selectedLoader: string;
     }

@@ -4,6 +4,8 @@ import type { GeneratedPdfArtifact, ParseProgress, SourceFileSummary } from "@/l
 type LoadSourceResult = {
   sourceKind: "folder" | "zip";
   files: SourceFileSummary[];
+  totalFileCount: number;
+  totalBytes: number;
   statusMessage: string;
   selectedLoader: string;
 };
@@ -33,6 +35,8 @@ type PendingRequest =
     };
 
 export class ReportWorkerClient {
+  private static readonly FOLDER_TRANSFER_CHUNK_SIZE = 200;
+  private static readonly FOLDER_TRANSFER_YIELD_EVERY = 2;
   private readonly worker: Worker;
   private readonly pending = new Map<number, PendingRequest>();
   private nextRequestId = 1;
@@ -53,26 +57,78 @@ export class ReportWorkerClient {
   }
 
   async loadFolder(
-    files: File[],
+    files: FileList | readonly File[],
     options: { importLookbackDays: number; parseLookbackDays: number; onProgress?: (progress: ParseProgress) => void }
   ): Promise<LoadSourceResult> {
     const requestId = this.nextRequestId++;
-    return await new Promise<LoadSourceResult>((resolve, reject) => {
+    const promise = new Promise<LoadSourceResult>((resolve, reject) => {
       this.pending.set(requestId, {
         type: "load-folder",
         onProgress: options.onProgress,
         resolve,
         reject
       });
-      const request: ReportWorkerRequest = {
-        requestId,
-        type: "load-folder",
-        files,
-        importLookbackDays: options.importLookbackDays,
-        parseLookbackDays: options.parseLookbackDays
-      };
-      this.worker.postMessage(request);
     });
+
+    void this.postFolderLoadInChunks(requestId, files, options).catch((error) => {
+      const pending = this.pending.get(requestId);
+      if (!pending || pending.type !== "load-folder") return;
+      this.pending.delete(requestId);
+      pending.reject(error instanceof Error ? error : new Error("Folder transfer to worker failed."));
+    });
+
+    return await promise;
+  }
+
+  private async postFolderLoadInChunks(
+    requestId: number,
+    files: FileList | readonly File[],
+    options: { importLookbackDays: number; parseLookbackDays: number; onProgress?: (progress: ParseProgress) => void }
+  ) {
+    const startRequest: ReportWorkerRequest = {
+      requestId,
+      type: "load-folder-start",
+      importLookbackDays: options.importLookbackDays,
+      parseLookbackDays: options.parseLookbackDays
+    };
+    this.worker.postMessage(startRequest);
+
+    const total = files.length ?? 0;
+    let chunkCount = 0;
+    for (let start = 0; start < total; start += ReportWorkerClient.FOLDER_TRANSFER_CHUNK_SIZE) {
+      const end = Math.min(start + ReportWorkerClient.FOLDER_TRANSFER_CHUNK_SIZE, total);
+      const chunk: File[] = [];
+      for (let i = start; i < end; i += 1) {
+        const file = files[i];
+        if (file) chunk.push(file);
+      }
+
+      const chunkRequest: ReportWorkerRequest = {
+        requestId,
+        type: "load-folder-chunk",
+        files: chunk
+      };
+      this.worker.postMessage(chunkRequest);
+      chunkCount += 1;
+
+      if (options.onProgress && (chunkCount % ReportWorkerClient.FOLDER_TRANSFER_YIELD_EVERY === 0 || end === total)) {
+        options.onProgress({
+          phase: "scan",
+          detail: `Queuing SD-CARD files... ${end}/${total}`,
+          percent: Math.min(3, Math.max(1, Math.round((end / Math.max(1, total)) * 3)))
+        });
+      }
+
+      if (chunkCount % ReportWorkerClient.FOLDER_TRANSFER_YIELD_EVERY === 0) {
+        await new Promise((resolve) => window.setTimeout(resolve, 0));
+      }
+    }
+
+    const finishRequest: ReportWorkerRequest = {
+      requestId,
+      type: "load-folder-finish"
+    };
+    this.worker.postMessage(finishRequest);
   }
 
   async loadZip(
@@ -158,6 +214,8 @@ export class ReportWorkerClient {
       pending.resolve({
         sourceKind: message.sourceKind,
         files: message.files,
+        totalFileCount: message.totalFileCount,
+        totalBytes: message.totalBytes,
         statusMessage: message.statusMessage,
         selectedLoader: message.selectedLoader
       });

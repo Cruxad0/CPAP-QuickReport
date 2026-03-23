@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ReportWorkerClient } from "@/lib/report-worker-client";
 import { REPORT_RANGE_OPTIONS, type ReportRangeDays } from "@/lib/report-orchestrator";
 import { bytesToLabel, IMPORT_LOOKBACK_DAYS } from "@/lib/source-files";
@@ -236,11 +236,15 @@ export function QuickReportApp() {
   const headerInputRef = useRef<HTMLInputElement>(null);
   const workerClientRef = useRef<ReportWorkerClient | null>(null);
   const sourceSelectionAttemptRef = useRef(0);
+  const parseProgressRafRef = useRef<number | null>(null);
+  const queuedParseProgressRef = useRef<ParseProgress | null>(null);
 
   const [patientName, setPatientName] = useState("");
   const [dateOfBirthInput, setDateOfBirthInput] = useState("");
   const [physicianName, setPhysicianName] = useState("");
   const [sourceFiles, setSourceFiles] = useState<SourceFileSummary[]>([]);
+  const [sourceFileCount, setSourceFileCount] = useState(0);
+  const [sourceFileBytes, setSourceFileBytes] = useState(0);
   const [headerDataUrl, setHeaderDataUrl] = useState<string | undefined>(undefined);
   const [activeReportDays, setActiveReportDays] = useState<ReportRangeDays>(90);
 
@@ -272,6 +276,10 @@ export function QuickReportApp() {
     const client = new ReportWorkerClient();
     workerClientRef.current = client;
     return () => {
+      if (parseProgressRafRef.current !== null) {
+        window.cancelAnimationFrame(parseProgressRafRef.current);
+        parseProgressRafRef.current = null;
+      }
       workerClientRef.current = null;
       client.dispose();
     };
@@ -294,10 +302,9 @@ export function QuickReportApp() {
   }, [generatedReports]);
 
   const selectedCountLabel = useMemo(() => {
-    if (sourceFiles.length === 0) return "No files selected";
-    const total = sourceFiles.reduce((sum, f) => sum + f.size, 0);
-    return `${sourceFiles.length} files selected (${bytesToLabel(total)})`;
-  }, [sourceFiles]);
+    if (sourceFileCount === 0) return "No files selected";
+    return `${sourceFileCount} files selected (${bytesToLabel(sourceFileBytes)})`;
+  }, [sourceFileBytes, sourceFileCount]);
   const generatedReportDays = useMemo(
     () => REPORT_RANGE_OPTIONS.filter((days) => Boolean(generatedReports[days])),
     [generatedReports]
@@ -320,7 +327,7 @@ export function QuickReportApp() {
   const canGenerate =
     !isPatientNameMissing &&
     !isDobMissing &&
-    sourceFiles.length > 0 &&
+    sourceFileCount > 0 &&
     status !== "working";
   const isDataSourceLoading = status === "working" || isSourceLoading || pendingSourceSelection !== null;
   const dataSourceOverlayText =
@@ -365,6 +372,26 @@ export function QuickReportApp() {
     if (zipInputRef.current) zipInputRef.current.value = "";
   };
 
+  const setParseProgressImmediate = useCallback((progress: ParseProgress) => {
+    if (parseProgressRafRef.current !== null) {
+      window.cancelAnimationFrame(parseProgressRafRef.current);
+      parseProgressRafRef.current = null;
+    }
+    queuedParseProgressRef.current = null;
+    setParseProgress(progress);
+  }, []);
+
+  const queueParseProgress = useCallback((progress: ParseProgress) => {
+    queuedParseProgressRef.current = progress;
+    if (parseProgressRafRef.current !== null) return;
+    parseProgressRafRef.current = window.requestAnimationFrame(() => {
+      parseProgressRafRef.current = null;
+      const next = queuedParseProgressRef.current;
+      queuedParseProgressRef.current = null;
+      if (next) setParseProgress(next);
+    });
+  }, []);
+
   const resetResultState = () => {
     revokeGeneratedReportUrls(generatedReports);
     setGeneratedReports({});
@@ -372,11 +399,13 @@ export function QuickReportApp() {
     setErrors([]);
     setStatus("idle");
     setStatusMessage("Awaiting data source.");
-    setParseProgress({ phase: "idle", detail: "Idle", percent: 0 });
+    setParseProgressImmediate({ phase: "idle", detail: "Idle", percent: 0 });
     setIsPreviewCollapsed(false);
     setShowCalendarAlt(false);
     setIsSourceLoading(false);
     setPendingSourceSelection(null);
+    setSourceFileCount(0);
+    setSourceFileBytes(0);
   };
 
   const handleResetClearAll = async () => {
@@ -385,7 +414,7 @@ export function QuickReportApp() {
 
     setStatus("working");
     setStatusMessage("Clearing local data...");
-    setParseProgress({ phase: "reset", detail: "Clearing local cache and storage...", percent: 12 });
+    setParseProgressImmediate({ phase: "reset", detail: "Clearing local cache and storage...", percent: 12 });
     setIsSourceLoading(true);
     await new Promise((resolve) => window.setTimeout(resolve, 0));
 
@@ -394,10 +423,12 @@ export function QuickReportApp() {
 
     resetResultState();
     setSourceFiles([]);
+    setSourceFileCount(0);
+    setSourceFileBytes(0);
     setPatientName("");
     setDateOfBirthInput("");
     clearSourceInputs();
-    setParseProgress({ phase: "idle", detail: "Idle", percent: 0 });
+    setParseProgressImmediate({ phase: "idle", detail: "Idle", percent: 0 });
     setStatus("idle");
     setStatusMessage("Local data cleared. Attempting to close this tab...");
     await new Promise((resolve) => window.setTimeout(resolve, 0));
@@ -412,19 +443,19 @@ export function QuickReportApp() {
   const handleFolderSelection: React.ChangeEventHandler<HTMLInputElement> = async (event) => {
     sourceSelectionAttemptRef.current += 1;
     setPendingSourceSelection(null);
-    const files = Array.from(event.target.files ?? []);
-    if (files.length === 0) {
+    const files = event.target.files;
+    if (!files || files.length === 0) {
       setIsSourceLoading(false);
       setStatus("idle");
       setStatusMessage("Awaiting data source.");
-      setParseProgress({ phase: "idle", detail: "Idle", percent: 0 });
+      setParseProgressImmediate({ phase: "idle", detail: "Idle", percent: 0 });
       return;
     }
 
     setIsSourceLoading(true);
     setStatus("working");
     setStatusMessage("Loading SD folder...");
-    setParseProgress({ phase: "scan", detail: "Loading SD folder...", percent: 4 });
+    setParseProgressImmediate({ phase: "scan", detail: "Loading SD folder...", percent: 4 });
 
     try {
       const client = workerClientRef.current;
@@ -432,10 +463,12 @@ export function QuickReportApp() {
       const loaded = await client.loadFolder(files, {
         importLookbackDays: IMPORT_LOOKBACK_DAYS,
         parseLookbackDays: REPORT_RANGE_OPTIONS[0],
-        onProgress: (progress) => setParseProgress(progress)
+        onProgress: (progress) => queueParseProgress(progress)
       });
 
       setSourceFiles(loaded.files);
+      setSourceFileCount(loaded.totalFileCount);
+      setSourceFileBytes(loaded.totalBytes);
       revokeGeneratedReportUrls(generatedReports);
       setGeneratedReports({});
       setActiveReportDays(90);
@@ -448,7 +481,7 @@ export function QuickReportApp() {
       setStatus("error");
       setErrors([message]);
       setStatusMessage("Folder load failed.");
-      setParseProgress({ phase: "error", detail: "Folder load failed", percent: 0 });
+      setParseProgressImmediate({ phase: "error", detail: "Folder load failed", percent: 0 });
     } finally {
       setIsSourceLoading(false);
     }
@@ -462,14 +495,14 @@ export function QuickReportApp() {
       setIsSourceLoading(false);
       setStatus("idle");
       setStatusMessage("Awaiting data source.");
-      setParseProgress({ phase: "idle", detail: "Idle", percent: 0 });
+      setParseProgressImmediate({ phase: "idle", detail: "Idle", percent: 0 });
       return;
     }
 
     setIsSourceLoading(true);
     setStatus("working");
     setStatusMessage("Reading ZIP archive locally...");
-    setParseProgress({ phase: "zip", detail: "Opening ZIP file...", percent: 8 });
+    setParseProgressImmediate({ phase: "zip", detail: "Opening ZIP file...", percent: 8 });
 
     try {
       const client = workerClientRef.current;
@@ -477,10 +510,12 @@ export function QuickReportApp() {
       const loaded = await client.loadZip(zipFile, {
         importLookbackDays: IMPORT_LOOKBACK_DAYS,
         parseLookbackDays: REPORT_RANGE_OPTIONS[0],
-        onProgress: (progress) => setParseProgress(progress)
+        onProgress: (progress) => queueParseProgress(progress)
       });
 
       setSourceFiles(loaded.files);
+      setSourceFileCount(loaded.totalFileCount);
+      setSourceFileBytes(loaded.totalBytes);
       setStatus("idle");
       setStatusMessage(loaded.statusMessage);
       revokeGeneratedReportUrls(generatedReports);
@@ -493,7 +528,7 @@ export function QuickReportApp() {
       setStatus("error");
       setErrors([message]);
       setStatusMessage("ZIP import failed.");
-      setParseProgress({ phase: "error", detail: "ZIP import failed", percent: 0 });
+      setParseProgressImmediate({ phase: "error", detail: "ZIP import failed", percent: 0 });
     } finally {
       setIsSourceLoading(false);
     }
@@ -517,7 +552,7 @@ export function QuickReportApp() {
     setStatus("working");
     setErrors([]);
     setStatusMessage("Generating report...");
-    setParseProgress({ phase: "start", detail: "Generating report...", percent: 2 });
+    setParseProgressImmediate({ phase: "start", detail: "Generating report...", percent: 2 });
 
     try {
       const client = workerClientRef.current;
@@ -529,7 +564,7 @@ export function QuickReportApp() {
           physicianName,
           headerDataUrl
         },
-        (progress) => setParseProgress(progress)
+        (progress) => queueParseProgress(progress)
       );
 
       const generated: GeneratedReports = {};
@@ -549,14 +584,14 @@ export function QuickReportApp() {
       setIsPreviewCollapsed(false);
       setStatus("ready");
       setStatusMessage(result.statusMessage);
-      setParseProgress({ phase: "done", detail: "Done", percent: 100 });
+      setParseProgressImmediate({ phase: "done", detail: "Done", percent: 100 });
       setErrors([]);
     } catch (error) {
       const message = error instanceof Error ? error.message : "An unexpected error occurred.";
       setStatus("error");
       setStatusMessage("Report generation failed.");
       setErrors([message]);
-      setParseProgress({ phase: "error", detail: "Failed", percent: 0 });
+      setParseProgressImmediate({ phase: "error", detail: "Failed", percent: 0 });
     }
   };
 
@@ -784,13 +819,13 @@ export function QuickReportApp() {
 
           <div className="file-list" aria-live="polite">
             <ul>
-              {sourceFiles.slice(0, 25).map((file) => (
+              {sourceFiles.map((file) => (
                 <li key={`${file.path}:${file.size}`}>
                   {file.path} <span className="subtle">({bytesToLabel(file.size)})</span>
                 </li>
               ))}
             </ul>
-            {sourceFiles.length > 25 ? <p className="subtle">+ {sourceFiles.length - 25} more files</p> : null}
+            {sourceFileCount > sourceFiles.length ? <p className="subtle">+ {sourceFileCount - sourceFiles.length} more files</p> : null}
           </div>
 
           <div className="actions">
