@@ -205,7 +205,8 @@ function finalizeRecords(aggregates: Map<number, SleepStyleAggregate>): ParsedRe
       centralApneas: usageHours && usageHours > 0 ? aggregate.centralApneas / usageHours : undefined,
       leak,
       leakMax: aggregate.leakMax ?? undefined,
-      leakMaxSustained: aggregate.leakMax ?? undefined,
+      leakMax30s: aggregate.leakMax ?? undefined,
+      leakMax2m: aggregate.leakMax ?? undefined,
       pressureAvg,
       pressure95th: aggregate.pressure95th
     });

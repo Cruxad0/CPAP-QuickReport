@@ -73,7 +73,8 @@ type LeakStats = {
   sum: number;
   count: number;
   max: number;
-  sustainedMax: number | null;
+  sustainedMax30s: number | null;
+  sustainedMax2m: number | null;
 };
 
 const RESVENT_MODE_FROM_FILE = new Map<string, string>([
@@ -1166,7 +1167,8 @@ function sanitizeRecords(records: ParsedRecord[]): ParsedRecord[] {
       (typeof r.reraIndex === "number" && r.reraIndex >= 0 && r.reraIndex < 200) ||
       (typeof r.leak === "number" && r.leak >= 0 && r.leak < 500) ||
       (typeof r.leakMax === "number" && r.leakMax >= 0 && r.leakMax < 500) ||
-      (typeof r.leakMaxSustained === "number" && r.leakMaxSustained >= 0 && r.leakMaxSustained < 500) ||
+      (typeof r.leakMax30s === "number" && r.leakMax30s >= 0 && r.leakMax30s < 500) ||
+      (typeof r.leakMax2m === "number" && r.leakMax2m >= 0 && r.leakMax2m < 500) ||
       (typeof r.pressureAvg === "number" && r.pressureAvg >= 0 && r.pressureAvg <= 80) ||
       (typeof r.pressure95th === "number" && r.pressure95th >= 0 && r.pressure95th <= 80);
     return hasSignal;
@@ -1181,10 +1183,11 @@ function recordSignature(record: ParsedRecord): string {
   const re = typeof record.reraIndex === "number" ? record.reraIndex.toFixed(3) : "";
   const l = typeof record.leak === "number" ? record.leak.toFixed(3) : "";
   const lmax = typeof record.leakMax === "number" ? record.leakMax.toFixed(3) : "";
-  const lmaxs = typeof record.leakMaxSustained === "number" ? record.leakMaxSustained.toFixed(3) : "";
+  const lmax30 = typeof record.leakMax30s === "number" ? record.leakMax30s.toFixed(3) : "";
+  const lmax2m = typeof record.leakMax2m === "number" ? record.leakMax2m.toFixed(3) : "";
   const pa = typeof record.pressureAvg === "number" ? record.pressureAvg.toFixed(3) : "";
   const p95 = typeof record.pressure95th === "number" ? record.pressure95th.toFixed(3) : "";
-  return `${toIsoDate(record.date)}|${u}|${a}|${r}|${c}|${re}|${l}|${lmax}|${lmaxs}|${pa}|${p95}`;
+  return `${toIsoDate(record.date)}|${u}|${a}|${r}|${c}|${re}|${l}|${lmax}|${lmax30}|${lmax2m}|${pa}|${p95}`;
 }
 
 function dedupeParsedRecords(records: ParsedRecord[]): ParsedRecord[] {
@@ -1250,11 +1253,14 @@ function parseResventLeakFromBytes(bytes: Uint8Array): LeakStats | null {
     let sum = 0;
     let count = 0;
     let max = -Infinity;
-    let sustainedMax = -Infinity;
-    let sustainedWindowSeconds = 0;
-    let requiredSustainedSamples = 0;
-    let windowSum = 0;
-    const window: number[] = [];
+    let sustainedMax30s = -Infinity;
+    let sustainedMax2m = -Infinity;
+    let required30sSamples = 0;
+    let required2mSamples = 0;
+    let window30Sum = 0;
+    let window2mSum = 0;
+    const window30: number[] = [];
+    const window2m: number[] = [];
 
     while (pos < bytes.length) {
       let leakStart = -1;
@@ -1282,11 +1288,11 @@ function parseResventLeakFromBytes(bytes: Uint8Array): LeakStats | null {
       }
 
       const leakSamples = fixedStride ? maxSamples : descriptors[leakIndex].samples;
-      if (requiredSustainedSamples === 0) {
+      if (required30sSamples === 0 || required2mSamples === 0) {
         const sampleIntervalSec = leakSamples > 0 ? chunkDurationInSec / leakSamples : 0;
         if (sampleIntervalSec > 0 && Number.isFinite(sampleIntervalSec)) {
-          sustainedWindowSeconds = sampleIntervalSec;
-          requiredSustainedSamples = Math.max(1, Math.ceil(30 / sampleIntervalSec));
+          required30sSamples = Math.max(1, Math.ceil(30 / sampleIntervalSec));
+          required2mSamples = Math.max(1, Math.ceil(120 / sampleIntervalSec));
         }
       }
       for (let i = 0; i < leakSamples; i += 1) {
@@ -1296,23 +1302,36 @@ function parseResventLeakFromBytes(bytes: Uint8Array): LeakStats | null {
         const raw = view.getInt16(sampleOffset, true);
         const value = raw * 0.1;
         if (!Number.isFinite(value) || value < 0 || value > 500) {
-          window.length = 0;
-          windowSum = 0;
+          window30.length = 0;
+          window2m.length = 0;
+          window30Sum = 0;
+          window2mSum = 0;
           continue;
         }
 
         sum += value;
         count += 1;
         if (value > max) max = value;
-        if (requiredSustainedSamples > 0 && sustainedWindowSeconds > 0) {
-          window.push(value);
-          windowSum += value;
-          if (window.length > requiredSustainedSamples) {
-            windowSum -= window.shift() ?? 0;
+        if (required30sSamples > 0) {
+          window30.push(value);
+          window30Sum += value;
+          if (window30.length > required30sSamples) {
+            window30Sum -= window30.shift() ?? 0;
           }
-          if (window.length === requiredSustainedSamples) {
-            const sustainedAverage = windowSum / requiredSustainedSamples;
-            if (sustainedAverage > sustainedMax) sustainedMax = sustainedAverage;
+          if (window30.length === required30sSamples) {
+            const sustainedAverage30 = window30Sum / required30sSamples;
+            if (sustainedAverage30 > sustainedMax30s) sustainedMax30s = sustainedAverage30;
+          }
+        }
+        if (required2mSamples > 0) {
+          window2m.push(value);
+          window2mSum += value;
+          if (window2m.length > required2mSamples) {
+            window2mSum -= window2m.shift() ?? 0;
+          }
+          if (window2m.length === required2mSamples) {
+            const sustainedAverage2m = window2mSum / required2mSamples;
+            if (sustainedAverage2m > sustainedMax2m) sustainedMax2m = sustainedAverage2m;
           }
         }
       }
@@ -1326,7 +1345,8 @@ function parseResventLeakFromBytes(bytes: Uint8Array): LeakStats | null {
       sum,
       count,
       max,
-      sustainedMax: Number.isFinite(sustainedMax) ? sustainedMax : null
+      sustainedMax30s: Number.isFinite(sustainedMax30s) ? sustainedMax30s : null,
+      sustainedMax2m: Number.isFinite(sustainedMax2m) ? sustainedMax2m : null
     };
   };
 
@@ -1429,7 +1449,8 @@ function createEmptyDayBucket(): DayBucket {
     leakSum: 0,
     leakCount: 0,
     leakMax: null,
-    leakMaxSustained: null,
+    leakMax30s: null,
+    leakMax2m: null,
     pressureAvgSum: 0,
     pressureAvgCount: 0,
     pressure95Sum: 0,
@@ -1514,9 +1535,14 @@ function buildDayBucketsFromRecordsAndLeaks(
       bucket.leakMax = bucket.leakMax === null ? record.leakMax : Math.max(bucket.leakMax, record.leakMax);
     }
 
-    if (typeof record.leakMaxSustained === "number" && record.leakMaxSustained >= 0 && record.leakMaxSustained < 500) {
-      bucket.leakMaxSustained =
-        bucket.leakMaxSustained === null ? record.leakMaxSustained : Math.max(bucket.leakMaxSustained, record.leakMaxSustained);
+    if (typeof record.leakMax30s === "number" && record.leakMax30s >= 0 && record.leakMax30s < 500) {
+      bucket.leakMax30s =
+        bucket.leakMax30s === null ? record.leakMax30s : Math.max(bucket.leakMax30s, record.leakMax30s);
+    }
+
+    if (typeof record.leakMax2m === "number" && record.leakMax2m >= 0 && record.leakMax2m < 500) {
+      bucket.leakMax2m =
+        bucket.leakMax2m === null ? record.leakMax2m : Math.max(bucket.leakMax2m, record.leakMax2m);
     }
 
     dayMap.set(key, bucket);
@@ -1527,9 +1553,11 @@ function buildDayBucketsFromRecordsAndLeaks(
     bucket.leakSum += stats.sum / stats.count;
     bucket.leakCount += 1;
     bucket.leakMax = bucket.leakMax === null ? stats.max : Math.max(bucket.leakMax, stats.max);
-    if (typeof stats.sustainedMax === "number" && Number.isFinite(stats.sustainedMax)) {
-      bucket.leakMaxSustained =
-        bucket.leakMaxSustained === null ? stats.sustainedMax : Math.max(bucket.leakMaxSustained, stats.sustainedMax);
+    if (typeof stats.sustainedMax30s === "number" && Number.isFinite(stats.sustainedMax30s)) {
+      bucket.leakMax30s = bucket.leakMax30s === null ? stats.sustainedMax30s : Math.max(bucket.leakMax30s, stats.sustainedMax30s);
+    }
+    if (typeof stats.sustainedMax2m === "number" && Number.isFinite(stats.sustainedMax2m)) {
+      bucket.leakMax2m = bucket.leakMax2m === null ? stats.sustainedMax2m : Math.max(bucket.leakMax2m, stats.sustainedMax2m);
     }
     dayMap.set(day, bucket);
   }
@@ -1895,11 +1923,18 @@ async function prepareQuickReportSourceInternal(request: PrepareQuickReportSourc
             existing.count += leak.count;
             if (leak.max > existing.max) existing.max = leak.max;
             if (
-              typeof leak.sustainedMax === "number" &&
-              Number.isFinite(leak.sustainedMax) &&
-              (existing.sustainedMax === null || leak.sustainedMax > existing.sustainedMax)
+              typeof leak.sustainedMax30s === "number" &&
+              Number.isFinite(leak.sustainedMax30s) &&
+              (existing.sustainedMax30s === null || leak.sustainedMax30s > existing.sustainedMax30s)
             ) {
-              existing.sustainedMax = leak.sustainedMax;
+              existing.sustainedMax30s = leak.sustainedMax30s;
+            }
+            if (
+              typeof leak.sustainedMax2m === "number" &&
+              Number.isFinite(leak.sustainedMax2m) &&
+              (existing.sustainedMax2m === null || leak.sustainedMax2m > existing.sustainedMax2m)
+            ) {
+              existing.sustainedMax2m = leak.sustainedMax2m;
             }
           } else {
             leakStatsByDay.set(key, { ...leak });
@@ -2128,8 +2163,12 @@ export function buildQuickReportMetricsFromPreparedSource(
     .map((d) => d.leakMax)
     .filter((v): v is number => typeof v === "number" && Number.isFinite(v));
 
-  const sustainedLeakMaxValues = [...dayMap.values()]
-    .map((d) => d.leakMaxSustained)
+  const leakMax30sValues = [...dayMap.values()]
+    .map((d) => d.leakMax30s)
+    .filter((v): v is number => typeof v === "number" && Number.isFinite(v));
+
+  const leakMax2mValues = [...dayMap.values()]
+    .map((d) => d.leakMax2m)
     .filter((v): v is number => typeof v === "number" && Number.isFinite(v));
 
   const pressureAvgValues = [...dayMap.values()]
@@ -2167,14 +2206,10 @@ export function buildQuickReportMetricsFromPreparedSource(
   const centralApneas95th = centralApneaValues.length > 0 ? percentile(centralApneaValues, 95) : null;
   const rera95th = reraValues.length > 0 ? percentile(reraValues, 95) : null;
   const avgLeak = leakValues.length > 0 ? leakValues.reduce((a, b) => a + b, 0) / leakValues.length : null;
-  const maxLeak =
-    sustainedLeakMaxValues.length > 0
-      ? Math.max(...sustainedLeakMaxValues)
-      : leakMaxValues.length > 0
-        ? Math.max(...leakMaxValues)
-        : leakValues.length > 0
-          ? Math.max(...leakValues)
-          : null;
+  const rawMaxLeak = leakMaxValues.length > 0 ? Math.max(...leakMaxValues) : leakValues.length > 0 ? Math.max(...leakValues) : null;
+  const maxLeak30s = leakMax30sValues.length > 0 ? Math.max(...leakMax30sValues) : rawMaxLeak;
+  const maxLeak2m = leakMax2mValues.length > 0 ? Math.max(...leakMax2mValues) : rawMaxLeak;
+  const maxLeak = rawMaxLeak;
   const avgPressure =
     pressureAvgValues.length > 0 ? pressureAvgValues.reduce((a, b) => a + b, 0) / pressureAvgValues.length : null;
   const pressure95th =
@@ -2234,6 +2269,8 @@ export function buildQuickReportMetricsFromPreparedSource(
     rera95th: rera95th === null ? null : finite(rera95th),
     avgLeak: avgLeak === null ? null : finite(avgLeak),
     maxLeak: maxLeak === null ? null : finite(maxLeak),
+    maxLeak30s: maxLeak30s === null ? null : finite(maxLeak30s),
+    maxLeak2m: maxLeak2m === null ? null : finite(maxLeak2m),
     machine,
     warnings
   };
