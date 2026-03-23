@@ -5,6 +5,8 @@ const PAGE_WIDTH_A4 = 595.28;
 const PAGE_HEIGHT_A4 = 841.89;
 const PAGE_MARGIN = 18; // 0.25 in
 const NO_DATA_FALLBACK = "Data point not available";
+const HEADER_MAX_HEIGHT = 72;
+const FOOTER_BLOCK_HEIGHT = 64;
 
 type PdfLibModule = {
   PDFDocument: {
@@ -122,7 +124,7 @@ function drawHeader(
   if (headerImage) {
     const maxWidth = state.pageWidth - PAGE_MARGIN * 2;
     const ratio = headerImage.height / headerImage.width;
-    const height = Math.min(92, maxWidth * ratio);
+    const height = Math.min(HEADER_MAX_HEIGHT, maxWidth * ratio);
     state.page.drawImage(headerImage, {
       x: PAGE_MARGIN,
       y: state.y - height,
@@ -199,21 +201,16 @@ function drawBottomFooterBlock(
   fontBold: any,
   rgbFn: PdfLibModule["rgb"]
 ) {
-  const requiredHeight = 82;
-  if (state.y - requiredHeight < PAGE_MARGIN) {
-    startNewPage(pdfDoc, state, report.daysInWindow, report.machine.mode, headerImage, fontBold, rgbFn);
-  }
-
-  const baseY = PAGE_MARGIN + 6;
-  const physicianY = baseY + 52;
-  const signatureY = baseY + 30;
-  const generatedY = baseY + 8;
+  const baseY = PAGE_MARGIN + 4;
+  const physicianY = baseY + 42;
+  const signatureY = baseY + 22;
+  const generatedY = baseY + 4;
 
   const physicianNameText = report.physicianName?.trim() ?? "";
   state.page.drawText(`Physician:${physicianNameText ? ` ${physicianNameText}` : ""}`, {
     x: PAGE_MARGIN,
     y: physicianY,
-    size: 11,
+    size: 10,
     font: fontBold,
     color: rgbFn(0.12, 0.2, 0.27)
   });
@@ -221,7 +218,7 @@ function drawBottomFooterBlock(
   state.page.drawText("Signature:", {
     x: PAGE_MARGIN,
     y: signatureY,
-    size: 11,
+    size: 10,
     font: fontBold,
     color: rgbFn(0.12, 0.2, 0.27)
   });
@@ -235,13 +232,64 @@ function drawBottomFooterBlock(
   state.page.drawText(`Generated: ${report.generatedAtDisplay}`, {
     x: PAGE_MARGIN,
     y: generatedY,
-    size: 10,
+    size: 9,
     font: fontRegular,
     color: rgbFn(0.12, 0.22, 0.31)
   });
 }
 
 type TableRow = [string, string, boolean?];
+type CompactTableStyle = {
+  titleSize: number;
+  titleGap: number;
+  headerHeight: number;
+  headerFontSize: number;
+  bodyFontSize: number;
+  lineHeight: number;
+  insetX: number;
+  insetY: number;
+  leftRatio: number;
+  afterGap: number;
+};
+
+const TABLE_STYLE_CANDIDATES: CompactTableStyle[] = [
+  {
+    titleSize: 11,
+    titleGap: 5,
+    headerHeight: 18,
+    headerFontSize: 9,
+    bodyFontSize: 9,
+    lineHeight: 10,
+    insetX: 7,
+    insetY: 4,
+    leftRatio: 0.41,
+    afterGap: 8
+  },
+  {
+    titleSize: 10,
+    titleGap: 4,
+    headerHeight: 17,
+    headerFontSize: 8.5,
+    bodyFontSize: 8.5,
+    lineHeight: 9.5,
+    insetX: 6,
+    insetY: 3.5,
+    leftRatio: 0.4,
+    afterGap: 6
+  },
+  {
+    titleSize: 9,
+    titleGap: 3,
+    headerHeight: 16,
+    headerFontSize: 8,
+    bodyFontSize: 8,
+    lineHeight: 9,
+    insetX: 5,
+    insetY: 3,
+    leftRatio: 0.4,
+    afterGap: 5
+  }
+];
 
 function hasAutoPressureRange(report: QuickReportMetrics): boolean {
   return (
@@ -293,6 +341,123 @@ function machineSettingRows(report: QuickReportMetrics): TableRow[] {
 function leakRow(label: string, value: number | null): TableRow {
   if (value === null || !Number.isFinite(value)) return [label, NO_DATA_FALLBACK];
   return [label, `${valueText(value)} L/min`, value > 30];
+}
+
+function measureCompactTableHeight(
+  title: string,
+  rows: TableRow[],
+  width: number,
+  style: CompactTableStyle,
+  fontRegular: any,
+  fontBold: any
+): number {
+  const leftW = width * style.leftRatio;
+  const rightW = width - leftW;
+  let total = style.titleSize + style.titleGap + style.headerHeight;
+
+  for (const [label, value] of rows) {
+    const labelLines = splitLines(label, fontBold, style.bodyFontSize, leftW - style.insetX * 2);
+    const valueLines = splitLines(value, fontRegular, style.bodyFontSize, rightW - style.insetX * 2);
+    const lineCount = Math.max(labelLines.length, valueLines.length);
+    total += style.insetY * 2 + lineCount * style.lineHeight;
+  }
+
+  return total + style.afterGap;
+}
+
+function drawCompactTableAt(
+  state: PdfState,
+  x: number,
+  yTop: number,
+  width: number,
+  title: string,
+  rows: TableRow[],
+  style: CompactTableStyle,
+  fontRegular: any,
+  fontBold: any,
+  rgbFn: PdfLibModule["rgb"]
+): number {
+  const leftW = width * style.leftRatio;
+  const rightW = width - leftW;
+  let y = yTop;
+
+  state.page.drawText(title, {
+    x,
+    y: y - style.titleSize,
+    size: style.titleSize,
+    font: fontBold,
+    color: rgbFn(0.07, 0.31, 0.49)
+  });
+  y -= style.titleSize + style.titleGap;
+
+  state.page.drawRectangle({
+    x,
+    y: y - style.headerHeight,
+    width,
+    height: style.headerHeight,
+    color: rgbFn(0.05, 0.43, 0.57),
+    borderColor: rgbFn(0.05, 0.43, 0.57),
+    borderWidth: 0.5
+  });
+  state.page.drawText("Field", {
+    x: x + style.insetX,
+    y: y - style.headerHeight + 5,
+    size: style.headerFontSize,
+    font: fontBold,
+    color: rgbFn(1, 1, 1)
+  });
+  state.page.drawText("Value", {
+    x: x + leftW + style.insetX,
+    y: y - style.headerHeight + 5,
+    size: style.headerFontSize,
+    font: fontBold,
+    color: rgbFn(1, 1, 1)
+  });
+  y -= style.headerHeight;
+
+  rows.forEach(([label, value, emphasize], idx) => {
+    const labelLines = splitLines(label, fontBold, style.bodyFontSize, leftW - style.insetX * 2);
+    const valueLines = splitLines(value, fontRegular, style.bodyFontSize, rightW - style.insetX * 2);
+    const lineCount = Math.max(labelLines.length, valueLines.length);
+    const rowHeight = style.insetY * 2 + lineCount * style.lineHeight;
+    const fill = idx % 2 === 0 ? rgbFn(0.965, 0.98, 0.99) : rgbFn(1, 1, 1);
+
+    state.page.drawRectangle({
+      x,
+      y: y - rowHeight,
+      width,
+      height: rowHeight,
+      color: fill,
+      borderColor: rgbFn(0.82, 0.88, 0.93),
+      borderWidth: 0.5
+    });
+
+    const labelStartY = y - style.insetY - style.lineHeight + 3;
+    labelLines.forEach((line, i) => {
+      state.page.drawText(line, {
+        x: x + style.insetX,
+        y: labelStartY - i * style.lineHeight,
+        size: style.bodyFontSize,
+        font: fontBold,
+        color: rgbFn(0.19, 0.29, 0.37)
+      });
+    });
+
+    const valueStartY = y - style.insetY - style.lineHeight + 3;
+    valueLines.forEach((line, i) => {
+      state.page.drawText(line, {
+        x: x + leftW + style.insetX,
+        y: valueStartY - i * style.lineHeight,
+        size: style.bodyFontSize,
+        font: fontRegular,
+        color: emphasize ? rgbFn(0.73, 0.12, 0.12) : rgbFn(0.1, 0.15, 0.2)
+      });
+    });
+
+    y -= rowHeight;
+  });
+
+  return y - style.afterGap;
 }
 
 function drawTable(
@@ -408,61 +573,87 @@ export async function buildPdfReport(report: QuickReportMetrics, headerDataUrl?:
   };
   drawHeader(state, report.daysInWindow, report.machine.mode, headerImage, fontBold, rgbFn);
 
-  drawTable(
-    pdfDoc,
+  const patientRows: TableRow[] = [
+    ["Patient", textValue(report.patientName)],
+    ["Date of birth", textValue(report.dateOfBirth)]
+  ];
+  const machineRows = machineSettingRows(report);
+  const therapyRows: TableRow[] = [
+    ["Date range", `${report.dateRangeStart} to ${report.dateRangeEnd}`],
+    ["Days with data", `${report.daysWithData} / ${report.daysInWindow}`],
+    ["Usage days (% of range)", `${report.usageDaysPercent.toFixed(1)}%`],
+    ["Compliant days (>= 4h)", `${report.compliantDays} / ${report.daysInWindow}`],
+    ["Compliance (% of range)", `${report.compliancePercent.toFixed(1)}%`],
+    ["Avg usage per day", report.avgUsageHours === null ? NO_DATA_FALLBACK : `${valueText(report.avgUsageHours)} h`],
+    ["Avg AHI", valueText(report.avgAhi)],
+    ["95th AHI", valueText(report.ahi95th)],
+    ["Avg Residual apneas", valueText(report.avgResidualApneas)],
+    ["95th Residual apneas", valueText(report.residualApneas95th)],
+    ["Avg Central apneas", valueText(report.avgCentralApneas)],
+    ["95th Central apneas", valueText(report.centralApneas95th)],
+    ["Avg RERA index", valueText(report.avgReraIndex)],
+    leakRow("Avg Leak", report.avgLeak),
+    leakRow("95th Leak", report.leak95th),
+    leakRow("30 min Leak", report.maxLeak30m),
+    leakRow("60 min Leak", report.maxLeak60m)
+  ];
+
+  const fullWidth = state.pageWidth - PAGE_MARGIN * 2;
+  const columnGap = 10;
+  const halfWidth = (fullWidth - columnGap) / 2;
+  const availableHeight = state.y - (PAGE_MARGIN + FOOTER_BLOCK_HEIGHT);
+  const tableStyle =
+    TABLE_STYLE_CANDIDATES.find((style) => {
+      const topHeight = Math.max(
+        measureCompactTableHeight("Patient Details", patientRows, halfWidth, style, fontRegular, fontBold),
+        measureCompactTableHeight("Machine Settings", machineRows, halfWidth, style, fontRegular, fontBold)
+      );
+      const therapyHeight = measureCompactTableHeight(
+        `Therapy Summary (Last ${report.daysInWindow} Days)`,
+        therapyRows,
+        fullWidth,
+        style,
+        fontRegular,
+        fontBold
+      );
+      return topHeight + therapyHeight <= availableHeight;
+    }) ?? TABLE_STYLE_CANDIDATES[TABLE_STYLE_CANDIDATES.length - 1];
+
+  const topY = state.y;
+  const patientBottom = drawCompactTableAt(
     state,
-    report.daysInWindow,
-    report.machine.mode,
+    PAGE_MARGIN,
+    topY,
+    halfWidth,
     "Patient Details",
-    [
-      ["Patient", textValue(report.patientName)],
-      ["Date of birth", textValue(report.dateOfBirth)]
-    ],
-    headerImage,
+    patientRows,
+    tableStyle,
     fontRegular,
     fontBold,
     rgbFn
   );
-
-  drawTable(
-    pdfDoc,
+  const machineBottom = drawCompactTableAt(
     state,
-    report.daysInWindow,
-    report.machine.mode,
+    PAGE_MARGIN + halfWidth + columnGap,
+    topY,
+    halfWidth,
     "Machine Settings",
-    machineSettingRows(report),
-    headerImage,
+    machineRows,
+    tableStyle,
     fontRegular,
     fontBold,
     rgbFn
   );
 
-  drawTable(
-    pdfDoc,
+  state.y = Math.min(patientBottom, machineBottom);
+  state.y = drawCompactTableAt(
     state,
-    report.daysInWindow,
-    report.machine.mode,
+    PAGE_MARGIN,
+    state.y,
+    fullWidth,
     `Therapy Summary (Last ${report.daysInWindow} Days)`,
-    [
-      ["Date range", `${report.dateRangeStart} to ${report.dateRangeEnd}`],
-      ["Days with data", `${report.daysWithData} / ${report.daysInWindow}`],
-      ["Usage days (% of range)", `${report.usageDaysPercent.toFixed(1)}%`],
-      ["Compliant days (>= 4h)", `${report.compliantDays} / ${report.daysInWindow}`],
-      ["Compliance (% of range)", `${report.compliancePercent.toFixed(1)}%`],
-      ["Avg usage per day", report.avgUsageHours === null ? NO_DATA_FALLBACK : `${valueText(report.avgUsageHours)} h`],
-      ["Avg AHI", valueText(report.avgAhi)],
-      ["95th AHI", valueText(report.ahi95th)],
-      ["Avg Residual apneas", valueText(report.avgResidualApneas)],
-      ["95th Residual apneas", valueText(report.residualApneas95th)],
-      ["Avg Central apneas", valueText(report.avgCentralApneas)],
-      ["95th Central apneas", valueText(report.centralApneas95th)],
-      ["Avg RERA index", valueText(report.avgReraIndex)],
-      leakRow("Avg Leak", report.avgLeak),
-      leakRow("95th Leak", report.leak95th),
-      leakRow("30 min Leak", report.maxLeak30m),
-      leakRow("60 min Leak", report.maxLeak60m)
-    ],
-    headerImage,
+    therapyRows,
+    tableStyle,
     fontRegular,
     fontBold,
     rgbFn
