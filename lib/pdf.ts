@@ -7,6 +7,10 @@ const PAGE_MARGIN = 18; // 0.25 in
 const NO_DATA_FALLBACK = "Data point not available";
 const HEADER_MAX_HEIGHT = 72;
 const FOOTER_BLOCK_HEIGHT = 64;
+const CARLITO_REGULAR_URL = "/fonts/Carlito-Regular.ttf";
+const CARLITO_BOLD_URL = "/fonts/Carlito-Bold.ttf";
+const THERAPY_MIN_FONT_SIZE = 10;
+const THERAPY_MAX_FONT_SIZE = 15;
 
 type PdfLibModule = {
   PDFDocument: {
@@ -18,6 +22,13 @@ type PdfLibModule = {
   };
   rgb: (r: number, g: number, b: number) => any;
 };
+
+type EmbeddedPdfFonts = {
+  fontRegular: any;
+  fontBold: any;
+};
+
+let cachedCarlitoFontBytesPromise: Promise<{ regular: Uint8Array; bold: Uint8Array }> | null = null;
 
 function initialsFromName(name: string): string {
   const tokens = name.split(/\s+/).map((x) => x.trim()).filter(Boolean);
@@ -69,6 +80,55 @@ function decodeBase64(base64: string): Uint8Array {
     out[i] = binary.charCodeAt(i);
   }
   return out;
+}
+
+function buildTherapyFontSizes(): number[] {
+  const sizes: number[] = [];
+  for (let size = THERAPY_MAX_FONT_SIZE; size >= THERAPY_MIN_FONT_SIZE; size -= 0.5) {
+    sizes.push(Number(size.toFixed(1)));
+  }
+  return sizes;
+}
+
+const THERAPY_FONT_SIZES = buildTherapyFontSizes();
+
+async function fetchFontBytes(url: string): Promise<Uint8Array> {
+  const response = await fetch(url, { cache: "force-cache" });
+  if (!response.ok) {
+    throw new Error(`Failed to fetch font asset: ${url}`);
+  }
+  return new Uint8Array(await response.arrayBuffer());
+}
+
+async function loadCarlitoFontBytes(): Promise<{ regular: Uint8Array; bold: Uint8Array }> {
+  if (!cachedCarlitoFontBytesPromise) {
+    cachedCarlitoFontBytesPromise = Promise.all([
+      fetchFontBytes(CARLITO_REGULAR_URL),
+      fetchFontBytes(CARLITO_BOLD_URL)
+    ]).then(([regular, bold]) => ({ regular, bold }));
+  }
+  return cachedCarlitoFontBytesPromise;
+}
+
+async function embedReportFonts(pdfDoc: any, standardFonts: PdfLibModule["StandardFonts"]): Promise<EmbeddedPdfFonts> {
+  try {
+    const [{ default: fontkit }, fontBytes] = await Promise.all([
+      import("@pdf-lib/fontkit"),
+      loadCarlitoFontBytes()
+    ]);
+    pdfDoc.registerFontkit(fontkit);
+    const [fontRegular, fontBold] = await Promise.all([
+      pdfDoc.embedFont(fontBytes.regular, { subset: true }),
+      pdfDoc.embedFont(fontBytes.bold, { subset: true })
+    ]);
+    return { fontRegular, fontBold };
+  } catch {
+    const [fontRegular, fontBold] = await Promise.all([
+      pdfDoc.embedFont(standardFonts.Helvetica),
+      pdfDoc.embedFont(standardFonts.HelveticaBold)
+    ]);
+    return { fontRegular, fontBold };
+  }
 }
 
 async function tryEmbedHeaderImage(pdfDoc: any, headerDataUrl: string | undefined): Promise<any | undefined> {
@@ -290,6 +350,22 @@ const TABLE_STYLE_CANDIDATES: CompactTableStyle[] = [
     afterGap: 5
   }
 ];
+
+function therapyTableStyle(fontSize: number): CompactTableStyle {
+  const clampedFontSize = Math.max(THERAPY_MIN_FONT_SIZE, Math.min(THERAPY_MAX_FONT_SIZE, fontSize));
+  return {
+    titleSize: Math.min(16, clampedFontSize + 1.5),
+    titleGap: 4,
+    headerHeight: Math.max(18, clampedFontSize + 7),
+    headerFontSize: Math.max(10, clampedFontSize - 1),
+    bodyFontSize: clampedFontSize,
+    lineHeight: clampedFontSize + 1.5,
+    insetX: 6,
+    insetY: 3.5,
+    leftRatio: 0.41,
+    afterGap: 5
+  };
+}
 
 function hasAutoPressureRange(report: QuickReportMetrics): boolean {
   return (
@@ -561,8 +637,7 @@ export async function buildPdfReport(report: QuickReportMetrics, headerDataUrl?:
   const { PDFDocument, StandardFonts, rgb: rgbFn } = pdfLib;
 
   const pdfDoc = await PDFDocument.create();
-  const fontRegular = await pdfDoc.embedFont(StandardFonts.Helvetica);
-  const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+  const { fontRegular, fontBold } = await embedReportFonts(pdfDoc, StandardFonts);
   const headerImage = await tryEmbedHeaderImage(pdfDoc, headerDataUrl);
 
   const state: PdfState = {
@@ -602,22 +677,30 @@ export async function buildPdfReport(report: QuickReportMetrics, headerDataUrl?:
   const columnGap = 10;
   const halfWidth = (fullWidth - columnGap) / 2;
   const availableHeight = state.y - (PAGE_MARGIN + FOOTER_BLOCK_HEIGHT);
-  const tableStyle =
-    TABLE_STYLE_CANDIDATES.find((style) => {
+  const layoutChoice =
+    THERAPY_FONT_SIZES.flatMap((therapyFontSize) =>
+      TABLE_STYLE_CANDIDATES.map((topStyle) => ({
+        topStyle,
+        therapyStyle: therapyTableStyle(therapyFontSize)
+      }))
+    ).find(({ topStyle, therapyStyle }) => {
       const topHeight = Math.max(
-        measureCompactTableHeight("Patient Details", patientRows, halfWidth, style, fontRegular, fontBold),
-        measureCompactTableHeight("Machine Settings", machineRows, halfWidth, style, fontRegular, fontBold)
+        measureCompactTableHeight("Patient Details", patientRows, halfWidth, topStyle, fontRegular, fontBold),
+        measureCompactTableHeight("Machine Settings", machineRows, halfWidth, topStyle, fontRegular, fontBold)
       );
       const therapyHeight = measureCompactTableHeight(
         `Therapy Summary (Last ${report.daysInWindow} Days)`,
         therapyRows,
         fullWidth,
-        style,
+        therapyStyle,
         fontRegular,
         fontBold
       );
       return topHeight + therapyHeight <= availableHeight;
-    }) ?? TABLE_STYLE_CANDIDATES[TABLE_STYLE_CANDIDATES.length - 1];
+    }) ?? {
+      topStyle: TABLE_STYLE_CANDIDATES[TABLE_STYLE_CANDIDATES.length - 1],
+      therapyStyle: therapyTableStyle(THERAPY_MIN_FONT_SIZE)
+    };
 
   const topY = state.y;
   const patientBottom = drawCompactTableAt(
@@ -627,7 +710,7 @@ export async function buildPdfReport(report: QuickReportMetrics, headerDataUrl?:
     halfWidth,
     "Patient Details",
     patientRows,
-    tableStyle,
+    layoutChoice.topStyle,
     fontRegular,
     fontBold,
     rgbFn
@@ -639,7 +722,7 @@ export async function buildPdfReport(report: QuickReportMetrics, headerDataUrl?:
     halfWidth,
     "Machine Settings",
     machineRows,
-    tableStyle,
+    layoutChoice.topStyle,
     fontRegular,
     fontBold,
     rgbFn
@@ -653,7 +736,7 @@ export async function buildPdfReport(report: QuickReportMetrics, headerDataUrl?:
     fullWidth,
     `Therapy Summary (Last ${report.daysInWindow} Days)`,
     therapyRows,
-    tableStyle,
+    layoutChoice.therapyStyle,
     fontRegular,
     fontBold,
     rgbFn
