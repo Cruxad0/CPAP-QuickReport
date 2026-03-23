@@ -21,6 +21,15 @@ export type FolderSourceEntry = {
   relativePath: string;
 };
 
+export type RecentFolderEntryFilterResult = {
+  entries: FolderSourceEntry[];
+  originalCount: number;
+  filteredOutCount: number;
+  filteredOutBytes: number;
+  latestDateIso: string | null;
+  hadDatedFiles: boolean;
+};
+
 type ProgressCallback = (progress: ParseProgress) => void;
 
 function emit(onProgress: ProgressCallback | undefined, progress: ParseProgress) {
@@ -71,7 +80,7 @@ function extractDateFromPath(path: string): Date | null {
   return null;
 }
 
-function detectLikelyFamilyId(files: Pick<SourceFile, "path">[]): string | null {
+function detectLikelyFamilyId(files: Array<{ path: string }>): string | null {
   const ranking = rankParserFamilies(files.map((file) => ({ normalizedPath: normalizePath(file.path) })));
   return ranking[0]?.id ?? null;
 }
@@ -229,6 +238,84 @@ export function filterSourceFilesToRecentWindow(files: SourceFile[], lookbackDay
     originalCount: files.length,
     filteredOutCount: outputFiles === files ? 0 : filteredOutCount,
     filteredOutBytes: outputFiles === files ? 0 : filteredOutBytes,
+    latestDateIso,
+    hadDatedFiles: true
+  };
+}
+
+export function filterFolderEntriesToRecentWindow(
+  entries: FolderSourceEntry[],
+  lookbackDays: number
+): RecentFolderEntryFilterResult {
+  const datedEntries = entries.map((entry) => ({
+    entry,
+    path: entry.relativePath,
+    size: entry.file.size,
+    date: extractDateFromPath(entry.relativePath)
+  }));
+
+  const dated = datedEntries.filter((item): item is typeof item & { date: Date } => item.date !== null);
+  if (dated.length === 0) {
+    return {
+      entries,
+      originalCount: entries.length,
+      filteredOutCount: 0,
+      filteredOutBytes: 0,
+      latestDateIso: null,
+      hadDatedFiles: false
+    };
+  }
+
+  const likelyFamilyId = detectLikelyFamilyId(datedEntries.map((item) => ({ path: item.path })));
+  const datedCoverage = dated.length / Math.max(1, entries.length);
+  if (!likelyFamilyId && datedCoverage < 0.1) {
+    return {
+      entries,
+      originalCount: entries.length,
+      filteredOutCount: 0,
+      filteredOutBytes: 0,
+      latestDateIso: null,
+      hadDatedFiles: false
+    };
+  }
+
+  const latestMs = dated.reduce((max, item) => Math.max(max, item.date.getTime()), dated[0].date.getTime());
+  const now = new Date();
+  const todayNoon = createUtcDateNoon(now.getUTCFullYear(), now.getUTCMonth() + 1, now.getUTCDate());
+  const anchoredWindowEndMs = (todayNoon?.getTime() ?? latestMs) - DAY_MS;
+  const windowStartMs = anchoredWindowEndMs - (lookbackDays - 1) * DAY_MS;
+
+  let filteredOutCount = 0;
+  let filteredOutBytes = 0;
+  const kept = datedEntries
+    .filter((item) => {
+      if (item.date) {
+        const t = item.date.getTime();
+        const keep = t >= windowStartMs && t <= anchoredWindowEndMs;
+        if (!keep) {
+          filteredOutCount += 1;
+          filteredOutBytes += item.size;
+        }
+        return keep;
+      }
+
+      const keepUndated = shouldKeepUndatedFile(item.path, item.size, likelyFamilyId);
+      if (!keepUndated) {
+        filteredOutCount += 1;
+        filteredOutBytes += item.size;
+      }
+      return keepUndated;
+    })
+    .map((item) => item.entry);
+
+  const outputEntries = kept.length > 0 ? kept : entries;
+  const latestDateIso = new Date(anchoredWindowEndMs).toISOString().slice(0, 10);
+
+  return {
+    entries: outputEntries,
+    originalCount: entries.length,
+    filteredOutCount: outputEntries === entries ? 0 : filteredOutCount,
+    filteredOutBytes: outputEntries === entries ? 0 : filteredOutBytes,
     latestDateIso,
     hadDatedFiles: true
   };

@@ -1,4 +1,4 @@
-import type { FolderSourceEntry } from "@/lib/source-files";
+import { filterFolderEntriesToRecentWindow, type FolderSourceEntry } from "@/lib/source-files";
 import type { ReportWorkerRequest, ReportWorkerResponse } from "@/lib/report-worker-types";
 import type { GeneratedPdfArtifact, ParseProgress, SourceFileSummary } from "@/lib/types";
 
@@ -36,7 +36,8 @@ type PendingRequest =
     };
 
 export class ReportWorkerClient {
-  private static readonly FOLDER_TRANSFER_CHUNK_SIZE = 64;
+  private static readonly FOLDER_ENTRY_SCAN_CHUNK_SIZE = 256;
+  private static readonly FOLDER_TRANSFER_CHUNK_SIZE = 24;
   private static readonly FOLDER_TRANSFER_YIELD_EVERY = 1;
   private static readonly FOLDER_TRANSFER_PROGRESS_EVERY = 4;
   private readonly worker: Worker;
@@ -87,6 +88,8 @@ export class ReportWorkerClient {
     files: FileList | readonly File[],
     options: { importLookbackDays: number; parseLookbackDays: number; onProgress?: (progress: ParseProgress) => void }
   ) {
+    const recentEntries = await this.buildRecentFolderEntries(files, options);
+
     const startRequest: ReportWorkerRequest = {
       requestId,
       type: "load-folder-start",
@@ -95,20 +98,11 @@ export class ReportWorkerClient {
     };
     this.worker.postMessage(startRequest);
 
-    const total = files.length ?? 0;
+    const total = recentEntries.length;
     let chunkCount = 0;
     for (let start = 0; start < total; start += ReportWorkerClient.FOLDER_TRANSFER_CHUNK_SIZE) {
       const end = Math.min(start + ReportWorkerClient.FOLDER_TRANSFER_CHUNK_SIZE, total);
-      const chunk: FolderSourceEntry[] = [];
-      for (let i = start; i < end; i += 1) {
-        const file = files[i];
-        if (file) {
-          chunk.push({
-            file,
-            relativePath: file.webkitRelativePath || file.name
-          });
-        }
-      }
+      const chunk = recentEntries.slice(start, end);
 
       const chunkRequest: ReportWorkerRequest = {
         requestId,
@@ -121,8 +115,8 @@ export class ReportWorkerClient {
       if (options.onProgress && (chunkCount % ReportWorkerClient.FOLDER_TRANSFER_PROGRESS_EVERY === 0 || end === total)) {
         options.onProgress({
           phase: "scan",
-          detail: `Queuing SD-CARD files... ${end}/${total}`,
-          percent: Math.min(3, Math.max(1, Math.round((end / Math.max(1, total)) * 3)))
+          detail: `Sending SD-CARD files... ${end}/${total}`,
+          percent: Math.min(4, Math.max(2, Math.round((end / Math.max(1, total)) * 4)))
         });
       }
 
@@ -136,6 +130,51 @@ export class ReportWorkerClient {
       type: "load-folder-finish"
     };
     this.worker.postMessage(finishRequest);
+  }
+
+  private async buildRecentFolderEntries(
+    files: FileList | readonly File[],
+    options: { importLookbackDays: number; onProgress?: (progress: ParseProgress) => void }
+  ): Promise<FolderSourceEntry[]> {
+    const total = files.length ?? 0;
+    const entries: FolderSourceEntry[] = [];
+
+    for (let start = 0; start < total; start += ReportWorkerClient.FOLDER_ENTRY_SCAN_CHUNK_SIZE) {
+      const end = Math.min(start + ReportWorkerClient.FOLDER_ENTRY_SCAN_CHUNK_SIZE, total);
+      for (let i = start; i < end; i += 1) {
+        const file = files[i];
+        if (!file) continue;
+        entries.push({
+          file,
+          relativePath: file.webkitRelativePath || file.name
+        });
+      }
+
+      if (options.onProgress && (end === total || end % (ReportWorkerClient.FOLDER_ENTRY_SCAN_CHUNK_SIZE * 4) === 0)) {
+        options.onProgress({
+          phase: "scan",
+          detail: `Scanning SD-CARD structure... ${end}/${total}`,
+          percent: Math.min(2, Math.max(1, Math.round((end / Math.max(1, total)) * 2)))
+        });
+      }
+
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+    }
+
+    const filtered = filterFolderEntriesToRecentWindow(entries, options.importLookbackDays);
+
+    if (options.onProgress) {
+      options.onProgress({
+        phase: "scan",
+        detail:
+          filtered.filteredOutCount > 0
+            ? `Keeping recent ${options.importLookbackDays}-day files... ${filtered.entries.length}/${filtered.originalCount}`
+            : `Preparing recent SD-CARD files... ${filtered.entries.length}`,
+        percent: 2
+      });
+    }
+
+    return filtered.entries;
   }
 
   async loadZip(
