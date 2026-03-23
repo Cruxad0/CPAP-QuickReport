@@ -11,13 +11,14 @@ import {
 } from "@/lib/source-files";
 import type { ReportWorkerRequest, ReportWorkerResponse } from "@/lib/report-worker-types";
 import type { DataSourceKind, PreparedQuickReportSource } from "@/lib/types";
+import type { FolderSourceEntry } from "@/lib/source-files";
 
 declare const self: DedicatedWorkerGlobalScope;
 
 let preparedSource: PreparedQuickReportSource | null = null;
 let loadedSourceKind: DataSourceKind | null = null;
 let loadedSourceSummaries: Array<ReturnType<typeof createSourceFileSummary>> = [];
-const folderLoadState = new Map<number, { files: File[]; importLookbackDays: number; parseLookbackDays: number }>();
+const folderLoadState = new Map<number, { files: FolderSourceEntry[]; importLookbackDays: number; parseLookbackDays: number }>();
 
 function postMessageSafe(message: ReportWorkerResponse) {
   self.postMessage(message);

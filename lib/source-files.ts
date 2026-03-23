@@ -16,6 +16,11 @@ export type RecentWindowFilterResult = {
   hadDatedFiles: boolean;
 };
 
+export type FolderSourceEntry = {
+  file: File;
+  relativePath: string;
+};
+
 type ProgressCallback = (progress: ParseProgress) => void;
 
 function emit(onProgress: ProgressCallback | undefined, progress: ParseProgress) {
@@ -267,22 +272,23 @@ export function createSourceFileSummary(file: Pick<SourceFile, "name" | "path" |
 }
 
 export async function createCachedSourceFilesFromFolder(
-  files: File[],
+  entries: FolderSourceEntry[],
   onProgress?: ProgressCallback
 ): Promise<SourceFile[]> {
   const mapped: SourceFile[] = [];
   const chunkSize = 40;
   let chunkCount = 0;
 
-  for (let start = 0; start < files.length; start += chunkSize) {
+  for (let start = 0; start < entries.length; start += chunkSize) {
     chunkCount += 1;
-    const end = Math.min(start + chunkSize, files.length);
+    const end = Math.min(start + chunkSize, entries.length);
     for (let i = start; i < end; i += 1) {
-      const file = files[i];
+      const entry = entries[i];
+      const file = entry.file;
       mapped.push(
         createCachedSourceFile({
           name: file.name,
-          path: file.webkitRelativePath || file.name,
+          path: entry.relativePath || file.name,
           size: file.size,
           loadText: async () => await file.text(),
           loadBytes: async () => new Uint8Array(await file.arrayBuffer())
@@ -290,11 +296,11 @@ export async function createCachedSourceFilesFromFolder(
       );
     }
 
-    if (chunkCount % 6 === 0 || end === files.length) {
-      const pct = Math.min(45, 5 + Math.round((end / files.length) * 40));
+    if (chunkCount % 6 === 0 || end === entries.length) {
+      const pct = Math.min(45, 5 + Math.round((end / entries.length) * 40));
       emit(onProgress, {
         phase: "scan",
-        detail: `Indexing files... ${end}/${files.length}`,
+        detail: `Indexing files... ${end}/${entries.length}`,
         percent: pct
       });
     }

@@ -1,3 +1,4 @@
+import type { FolderSourceEntry } from "@/lib/source-files";
 import type { DataSourceKind, GeneratedPdfArtifact, ParseProgress, SourceFileSummary } from "@/lib/types";
 
 export type SourceSelectionKind = "folder" | "zip";
@@ -12,7 +13,7 @@ export type ReportWorkerRequest =
   | {
       requestId: number;
       type: "load-folder-chunk";
-      files: File[];
+      files: FolderSourceEntry[];
     }
   | {
       requestId: number;

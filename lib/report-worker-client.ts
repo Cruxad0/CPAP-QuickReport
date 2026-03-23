@@ -1,3 +1,4 @@
+import type { FolderSourceEntry } from "@/lib/source-files";
 import type { ReportWorkerRequest, ReportWorkerResponse } from "@/lib/report-worker-types";
 import type { GeneratedPdfArtifact, ParseProgress, SourceFileSummary } from "@/lib/types";
 
@@ -35,8 +36,9 @@ type PendingRequest =
     };
 
 export class ReportWorkerClient {
-  private static readonly FOLDER_TRANSFER_CHUNK_SIZE = 200;
-  private static readonly FOLDER_TRANSFER_YIELD_EVERY = 2;
+  private static readonly FOLDER_TRANSFER_CHUNK_SIZE = 64;
+  private static readonly FOLDER_TRANSFER_YIELD_EVERY = 1;
+  private static readonly FOLDER_TRANSFER_PROGRESS_EVERY = 4;
   private readonly worker: Worker;
   private readonly pending = new Map<number, PendingRequest>();
   private nextRequestId = 1;
@@ -97,10 +99,15 @@ export class ReportWorkerClient {
     let chunkCount = 0;
     for (let start = 0; start < total; start += ReportWorkerClient.FOLDER_TRANSFER_CHUNK_SIZE) {
       const end = Math.min(start + ReportWorkerClient.FOLDER_TRANSFER_CHUNK_SIZE, total);
-      const chunk: File[] = [];
+      const chunk: FolderSourceEntry[] = [];
       for (let i = start; i < end; i += 1) {
         const file = files[i];
-        if (file) chunk.push(file);
+        if (file) {
+          chunk.push({
+            file,
+            relativePath: file.webkitRelativePath || file.name
+          });
+        }
       }
 
       const chunkRequest: ReportWorkerRequest = {
@@ -111,7 +118,7 @@ export class ReportWorkerClient {
       this.worker.postMessage(chunkRequest);
       chunkCount += 1;
 
-      if (options.onProgress && (chunkCount % ReportWorkerClient.FOLDER_TRANSFER_YIELD_EVERY === 0 || end === total)) {
+      if (options.onProgress && (chunkCount % ReportWorkerClient.FOLDER_TRANSFER_PROGRESS_EVERY === 0 || end === total)) {
         options.onProgress({
           phase: "scan",
           detail: `Queuing SD-CARD files... ${end}/${total}`,
@@ -120,7 +127,7 @@ export class ReportWorkerClient {
       }
 
       if (chunkCount % ReportWorkerClient.FOLDER_TRANSFER_YIELD_EVERY === 0) {
-        await new Promise((resolve) => window.setTimeout(resolve, 0));
+        await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
       }
     }
 
