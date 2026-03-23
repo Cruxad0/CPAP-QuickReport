@@ -176,9 +176,21 @@ export async function parseWeinmannFamily(context: FamilyParserContext, deps: Fa
     }
   }
 
-  await runTextFamilyParser(context, deps, {
-    inferFamilyMachineSettings: (text, _candidate, machine, familyDeps) => {
-      inferWeinmannMachineSettingsFromText(text, machine, familyDeps);
+  const textCandidates = context.candidates.filter((candidate) =>
+    /\.(?:txt|csv|json|xml|log)$/i.test(candidate.baseName)
+  );
+  if (textCandidates.length === 0) return;
+
+  await runTextFamilyParser(
+    {
+      ...context,
+      candidates: textCandidates
+    },
+    deps,
+    {
+      inferFamilyMachineSettings: (text, _candidate, machine, familyDeps) => {
+        inferWeinmannMachineSettingsFromText(text, machine, familyDeps);
+      }
     }
-  });
+  );
 }

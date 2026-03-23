@@ -26,7 +26,17 @@ import { runTextFamilyParser } from "@/lib/parsers/text-family-runner";
 import type { FamilyParserDeps } from "@/lib/parsers/text-family-types";
 import { parseVremFamily } from "@/lib/parsers/vrem";
 import { parseWeinmannFamily } from "@/lib/parsers/weinmann";
-import { ParseRequest, ParsedRecord, ParseProgress, QuickReportMetrics, SourceFile } from "@/lib/types";
+import {
+  BuildQuickReportMetricsFromPreparedRequest,
+  ParseRequest,
+  ParsedRecord,
+  ParseProgress,
+  PrepareQuickReportSourceRequest,
+  PreparedDayBucket,
+  PreparedQuickReportSource,
+  QuickReportMetrics,
+  SourceFile
+} from "@/lib/types";
 
 const MAX_GENERIC_FILES_TO_SCAN = 2500;
 const MAX_GENERIC_TOTAL_BYTES = 220_000_000;
@@ -57,32 +67,13 @@ type SourceMeta = {
   recordDate: Date | null;
 };
 
-type DayBucket = {
-  usageSum: number;
-  usageCount: number;
-  ahiWeightedSum: number;
-  ahiWeightHours: number;
-  ahiSum: number;
-  ahiCount: number;
-  residualApneaSum: number;
-  residualApneaCount: number;
-  centralApneaSum: number;
-  centralApneaCount: number;
-  reraSum: number;
-  reraCount: number;
-  leakSum: number;
-  leakCount: number;
-  leakMax: number | null;
-  pressureAvgSum: number;
-  pressureAvgCount: number;
-  pressure95Sum: number;
-  pressure95Count: number;
-};
+type DayBucket = PreparedDayBucket;
 
 type LeakStats = {
   sum: number;
   count: number;
   max: number;
+  sustainedMax: number | null;
 };
 
 const RESVENT_MODE_FROM_FILE = new Map<string, string>([
@@ -1175,6 +1166,7 @@ function sanitizeRecords(records: ParsedRecord[]): ParsedRecord[] {
       (typeof r.reraIndex === "number" && r.reraIndex >= 0 && r.reraIndex < 200) ||
       (typeof r.leak === "number" && r.leak >= 0 && r.leak < 500) ||
       (typeof r.leakMax === "number" && r.leakMax >= 0 && r.leakMax < 500) ||
+      (typeof r.leakMaxSustained === "number" && r.leakMaxSustained >= 0 && r.leakMaxSustained < 500) ||
       (typeof r.pressureAvg === "number" && r.pressureAvg >= 0 && r.pressureAvg <= 80) ||
       (typeof r.pressure95th === "number" && r.pressure95th >= 0 && r.pressure95th <= 80);
     return hasSignal;
@@ -1189,9 +1181,10 @@ function recordSignature(record: ParsedRecord): string {
   const re = typeof record.reraIndex === "number" ? record.reraIndex.toFixed(3) : "";
   const l = typeof record.leak === "number" ? record.leak.toFixed(3) : "";
   const lmax = typeof record.leakMax === "number" ? record.leakMax.toFixed(3) : "";
+  const lmaxs = typeof record.leakMaxSustained === "number" ? record.leakMaxSustained.toFixed(3) : "";
   const pa = typeof record.pressureAvg === "number" ? record.pressureAvg.toFixed(3) : "";
   const p95 = typeof record.pressure95th === "number" ? record.pressure95th.toFixed(3) : "";
-  return `${toIsoDate(record.date)}|${u}|${a}|${r}|${c}|${re}|${l}|${lmax}|${pa}|${p95}`;
+  return `${toIsoDate(record.date)}|${u}|${a}|${r}|${c}|${re}|${l}|${lmax}|${lmaxs}|${pa}|${p95}`;
 }
 
 function dedupeParsedRecords(records: ParsedRecord[]): ParsedRecord[] {
@@ -1225,6 +1218,9 @@ function parseResventLeakFromBytes(bytes: Uint8Array): LeakStats | null {
   if (bytes.length < 0x24) return null;
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
 
+  const chunkDurationInSec = view.getUint16(0x10, true);
+  if (chunkDurationInSec <= 0 || chunkDurationInSec > 3600) return null;
+
   const descriptionCount = view.getUint16(0x12, true);
   if (descriptionCount < 1 || descriptionCount > 64) return null;
 
@@ -1254,6 +1250,11 @@ function parseResventLeakFromBytes(bytes: Uint8Array): LeakStats | null {
     let sum = 0;
     let count = 0;
     let max = -Infinity;
+    let sustainedMax = -Infinity;
+    let sustainedWindowSeconds = 0;
+    let requiredSustainedSamples = 0;
+    let windowSum = 0;
+    const window: number[] = [];
 
     while (pos < bytes.length) {
       let leakStart = -1;
@@ -1281,17 +1282,39 @@ function parseResventLeakFromBytes(bytes: Uint8Array): LeakStats | null {
       }
 
       const leakSamples = fixedStride ? maxSamples : descriptors[leakIndex].samples;
+      if (requiredSustainedSamples === 0) {
+        const sampleIntervalSec = leakSamples > 0 ? chunkDurationInSec / leakSamples : 0;
+        if (sampleIntervalSec > 0 && Number.isFinite(sampleIntervalSec)) {
+          sustainedWindowSeconds = sampleIntervalSec;
+          requiredSustainedSamples = Math.max(1, Math.ceil(30 / sampleIntervalSec));
+        }
+      }
       for (let i = 0; i < leakSamples; i += 1) {
         const sampleOffset = leakStart + i * 2;
         if (sampleOffset + 2 > bytes.length) break;
 
         const raw = view.getInt16(sampleOffset, true);
         const value = raw * 0.1;
-        if (!Number.isFinite(value) || value < 0 || value > 500) continue;
+        if (!Number.isFinite(value) || value < 0 || value > 500) {
+          window.length = 0;
+          windowSum = 0;
+          continue;
+        }
 
         sum += value;
         count += 1;
         if (value > max) max = value;
+        if (requiredSustainedSamples > 0 && sustainedWindowSeconds > 0) {
+          window.push(value);
+          windowSum += value;
+          if (window.length > requiredSustainedSamples) {
+            windowSum -= window.shift() ?? 0;
+          }
+          if (window.length === requiredSustainedSamples) {
+            const sustainedAverage = windowSum / requiredSustainedSamples;
+            if (sustainedAverage > sustainedMax) sustainedMax = sustainedAverage;
+          }
+        }
       }
 
       if (nextPos <= pos) break;
@@ -1299,7 +1322,12 @@ function parseResventLeakFromBytes(bytes: Uint8Array): LeakStats | null {
     }
 
     if (count === 0 || !Number.isFinite(max)) return null;
-    return { sum, count, max };
+    return {
+      sum,
+      count,
+      max,
+      sustainedMax: Number.isFinite(sustainedMax) ? sustainedMax : null
+    };
   };
 
   // OSCAR's Resvent loader behavior is closest to fixed-stride P-file parsing.
@@ -1401,6 +1429,7 @@ function createEmptyDayBucket(): DayBucket {
     leakSum: 0,
     leakCount: 0,
     leakMax: null,
+    leakMaxSustained: null,
     pressureAvgSum: 0,
     pressureAvgCount: 0,
     pressure95Sum: 0,
@@ -1410,6 +1439,102 @@ function createEmptyDayBucket(): DayBucket {
 
 function finite(value: number): number {
   return Number.isFinite(value) ? value : 0;
+}
+
+function cloneMachineSettings(machine: QuickReportMetrics["machine"]): QuickReportMetrics["machine"] {
+  return { ...machine };
+}
+
+function buildDayBucketsFromRecordsAndLeaks(
+  dedupedRecords: ParsedRecord[],
+  leakStatsByDay: Map<string, LeakStats>,
+  hasResventStructure: boolean
+): Map<string, DayBucket> {
+  const dayMap = new Map<string, DayBucket>();
+
+  for (const record of dedupedRecords) {
+    const key = toClinicalIsoDate(record.date);
+    const bucket = dayMap.get(key) ?? createEmptyDayBucket();
+    let usageForAhiWeight: number | undefined;
+
+    if (typeof record.usageHours === "number" && record.usageHours >= 0 && record.usageHours <= 24) {
+      bucket.usageSum += record.usageHours;
+      bucket.usageCount += 1;
+      usageForAhiWeight = record.usageHours;
+    }
+
+    if (typeof record.ahi === "number" && record.ahi >= 0 && record.ahi < 200) {
+      if (usageForAhiWeight && usageForAhiWeight > 0) {
+        bucket.ahiWeightedSum += record.ahi * usageForAhiWeight;
+        bucket.ahiWeightHours += usageForAhiWeight;
+      } else {
+        bucket.ahiSum += record.ahi;
+        bucket.ahiCount += 1;
+      }
+    }
+
+    if (typeof record.residualApneas === "number" && record.residualApneas >= 0 && record.residualApneas < 200) {
+      bucket.residualApneaSum += record.residualApneas;
+      bucket.residualApneaCount += 1;
+    }
+
+    if (typeof record.centralApneas === "number" && record.centralApneas >= 0 && record.centralApneas < 200) {
+      bucket.centralApneaSum += record.centralApneas;
+      bucket.centralApneaCount += 1;
+    }
+
+    if (typeof record.reraIndex === "number" && record.reraIndex >= 0 && record.reraIndex < 200) {
+      bucket.reraSum += record.reraIndex;
+      bucket.reraCount += 1;
+    }
+
+    if (typeof record.pressureAvg === "number" && record.pressureAvg >= 0 && record.pressureAvg <= 80) {
+      bucket.pressureAvgSum += record.pressureAvg;
+      bucket.pressureAvgCount += 1;
+    }
+
+    if (typeof record.pressure95th === "number" && record.pressure95th >= 0 && record.pressure95th <= 80) {
+      bucket.pressure95Sum += record.pressure95th;
+      bucket.pressure95Count += 1;
+    }
+
+    const hasWaveLeakForDay = leakStatsByDay.has(key);
+    if (
+      typeof record.leak === "number" &&
+      record.leak >= 0 &&
+      record.leak < 500 &&
+      !(hasResventStructure && hasWaveLeakForDay)
+    ) {
+      bucket.leakSum += record.leak;
+      bucket.leakCount += 1;
+      bucket.leakMax = bucket.leakMax === null ? record.leak : Math.max(bucket.leakMax, record.leak);
+    }
+
+    if (typeof record.leakMax === "number" && record.leakMax >= 0 && record.leakMax < 500) {
+      bucket.leakMax = bucket.leakMax === null ? record.leakMax : Math.max(bucket.leakMax, record.leakMax);
+    }
+
+    if (typeof record.leakMaxSustained === "number" && record.leakMaxSustained >= 0 && record.leakMaxSustained < 500) {
+      bucket.leakMaxSustained =
+        bucket.leakMaxSustained === null ? record.leakMaxSustained : Math.max(bucket.leakMaxSustained, record.leakMaxSustained);
+    }
+
+    dayMap.set(key, bucket);
+  }
+
+  for (const [day, stats] of leakStatsByDay.entries()) {
+    const bucket = dayMap.get(day) ?? createEmptyDayBucket();
+    bucket.leakSum += stats.sum / stats.count;
+    bucket.leakCount += 1;
+    bucket.leakMax = bucket.leakMax === null ? stats.max : Math.max(bucket.leakMax, stats.max);
+    if (typeof stats.sustainedMax === "number" && Number.isFinite(stats.sustainedMax)) {
+      bucket.leakMaxSustained =
+        bucket.leakMaxSustained === null ? stats.sustainedMax : Math.max(bucket.leakMaxSustained, stats.sustainedMax);
+    }
+    dayMap.set(day, bucket);
+  }
+
+  return dayMap;
 }
 
 function sanitizeMachineSettingsForResolvedMode(
@@ -1646,12 +1771,11 @@ async function refineSelectedFamily(
   return selectedFamily;
 }
 
-export async function buildQuickReportMetrics(request: ParseRequest): Promise<QuickReportMetrics> {
-  const { files, patientName, dateOfBirthIso, physicianName, lookbackDays, onProgress } = request;
+async function prepareQuickReportSourceInternal(request: PrepareQuickReportSourceRequest): Promise<PreparedQuickReportSource> {
+  const { files, lookbackDays, onProgress } = request;
   const normalizedLookbackDays = normalizeLookbackDays(lookbackDays);
 
   const warnings: string[] = [];
-  const now = new Date();
   const machine: QuickReportMetrics["machine"] = {};
   const records: ParsedRecord[] = [];
 
@@ -1666,6 +1790,7 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
   if (!selectedFamily.supportedQuickReport) {
     throw new Error(`${selectedFamily.label} data is not loadable in this webapp. Only supported CPAP/NIV device layouts are accepted.`);
   }
+
   const hasResventStructure =
     selectedFamily.id === "resvent" &&
     (hasFamilySignature(meta, "resvent") || meta.some((m) => /(?:^|\/)therapy\/(?:record|config)\//i.test(m.normalizedPath)));
@@ -1769,6 +1894,13 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
             existing.sum += leak.sum;
             existing.count += leak.count;
             if (leak.max > existing.max) existing.max = leak.max;
+            if (
+              typeof leak.sustainedMax === "number" &&
+              Number.isFinite(leak.sustainedMax) &&
+              (existing.sustainedMax === null || leak.sustainedMax > existing.sustainedMax)
+            ) {
+              existing.sustainedMax = leak.sustainedMax;
+            }
           } else {
             leakStatsByDay.set(key, { ...leak });
           }
@@ -1783,7 +1915,6 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
     }
   }
 
-  // Generic parsing is always executed so all loader families can contribute metrics.
   const runGenericPass = true;
   const genericTextCandidates = meta.filter(isGenericTextCandidate);
   const familyScopedGenericCandidates = selectedFamily
@@ -1793,11 +1924,7 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
     ? meta.filter((candidate) => isCandidateForFamily(candidate, selectedFamily))
     : meta;
   const genericCandidatesRaw = runGenericPass
-    ? selectGenericCandidates(
-        selectedFamily && usesDedicatedFamilyParser(selectedFamily.id) ? familyScopedAllCandidates : familyScopedGenericCandidates,
-        selectedFamily,
-        normalizedLookbackDays
-      )
+    ? selectGenericCandidates(familyScopedGenericCandidates, selectedFamily, normalizedLookbackDays)
     : [];
   const genericCandidates =
     hasResventStructure
@@ -1812,6 +1939,10 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
             )
         )
       : genericCandidatesRaw;
+  const familyParserCandidates =
+    selectedFamily && usesDedicatedFamilyParser(selectedFamily.id)
+      ? selectGenericCandidates(familyScopedAllCandidates, selectedFamily, normalizedLookbackDays)
+      : genericCandidates;
 
   if (runGenericPass && genericTextCandidates.length > MAX_GENERIC_FILES_TO_SCAN) {
     warnings.push(
@@ -1821,7 +1952,7 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
 
   const familyParserContext = {
     familyLabel: selectedFamily.label,
-    candidates: genericCandidates,
+    candidates: familyParserCandidates,
     machine,
     records,
     warnings,
@@ -1858,8 +1989,6 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
   emit(onProgress, { phase: "verify", detail: "Verifying therapy mode...", percent: 81 });
   resolveTherapyModeOrThrow(machine, selectedFamily.label);
 
-  emit(onProgress, { phase: "compute", detail: `Computing ${normalizedLookbackDays}-day metrics...`, percent: 82 });
-
   const dedupedRecords = dedupeParsedRecords(records);
   if (dedupedRecords.length < records.length) {
     warnings.push(`Deduplicated ${records.length - dedupedRecords.length} overlapping daily records.`);
@@ -1893,102 +2022,7 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
     );
   }
 
-  const { start: windowStart, end: windowEnd } = resolveRecentWindow(latest, normalizedLookbackDays);
-  const windowStartIso = toIsoDate(windowStart);
-  const windowEndIso = toIsoDate(windowEnd);
-  let effectiveWindowStartIso = windowStartIso;
-
-  const availableDayKeys = new Set<string>();
-  for (const record of dedupedRecords) {
-    const key = toClinicalIsoDate(record.date);
-    if (key < windowEndIso) availableDayKeys.add(key);
-  }
-  for (const day of leakStatsByDay.keys()) {
-    if (day < windowEndIso) availableDayKeys.add(day);
-  }
-  if (availableDayKeys.size > 0) {
-    const earliestAvailableIso = [...availableDayKeys].sort((a, b) => a.localeCompare(b))[0];
-    if (earliestAvailableIso > effectiveWindowStartIso) {
-      effectiveWindowStartIso = earliestAvailableIso;
-    }
-  }
-
-  const dayMap = new Map<string, DayBucket>();
-
-  for (const record of dedupedRecords) {
-    const key = toClinicalIsoDate(record.date);
-    if (key < effectiveWindowStartIso || key >= windowEndIso) continue;
-    const bucket = dayMap.get(key) ?? createEmptyDayBucket();
-    let usageForAhiWeight: number | undefined;
-
-    if (typeof record.usageHours === "number" && record.usageHours >= 0 && record.usageHours <= 24) {
-      bucket.usageSum += record.usageHours;
-      bucket.usageCount += 1;
-      usageForAhiWeight = record.usageHours;
-    }
-
-    if (typeof record.ahi === "number" && record.ahi >= 0 && record.ahi < 200) {
-      if (usageForAhiWeight && usageForAhiWeight > 0) {
-        bucket.ahiWeightedSum += record.ahi * usageForAhiWeight;
-        bucket.ahiWeightHours += usageForAhiWeight;
-      } else {
-        bucket.ahiSum += record.ahi;
-        bucket.ahiCount += 1;
-      }
-    }
-
-    if (typeof record.residualApneas === "number" && record.residualApneas >= 0 && record.residualApneas < 200) {
-      bucket.residualApneaSum += record.residualApneas;
-      bucket.residualApneaCount += 1;
-    }
-
-    if (typeof record.centralApneas === "number" && record.centralApneas >= 0 && record.centralApneas < 200) {
-      bucket.centralApneaSum += record.centralApneas;
-      bucket.centralApneaCount += 1;
-    }
-
-    if (typeof record.reraIndex === "number" && record.reraIndex >= 0 && record.reraIndex < 200) {
-      bucket.reraSum += record.reraIndex;
-      bucket.reraCount += 1;
-    }
-
-    if (typeof record.pressureAvg === "number" && record.pressureAvg >= 0 && record.pressureAvg <= 80) {
-      bucket.pressureAvgSum += record.pressureAvg;
-      bucket.pressureAvgCount += 1;
-    }
-
-    if (typeof record.pressure95th === "number" && record.pressure95th >= 0 && record.pressure95th <= 80) {
-      bucket.pressure95Sum += record.pressure95th;
-      bucket.pressure95Count += 1;
-    }
-
-    const hasWaveLeakForDay = leakStatsByDay.has(key);
-    if (
-      typeof record.leak === "number" &&
-      record.leak >= 0 &&
-      record.leak < 500 &&
-      !(hasResventStructure && hasWaveLeakForDay)
-    ) {
-      bucket.leakSum += record.leak;
-      bucket.leakCount += 1;
-      bucket.leakMax = bucket.leakMax === null ? record.leak : Math.max(bucket.leakMax, record.leak);
-    }
-
-    if (typeof record.leakMax === "number" && record.leakMax >= 0 && record.leakMax < 500) {
-      bucket.leakMax = bucket.leakMax === null ? record.leakMax : Math.max(bucket.leakMax, record.leakMax);
-    }
-
-    dayMap.set(key, bucket);
-  }
-
-  for (const [day, stats] of leakStatsByDay.entries()) {
-    if (day < effectiveWindowStartIso || day >= windowEndIso) continue;
-    const bucket = dayMap.get(day) ?? createEmptyDayBucket();
-    bucket.leakSum += stats.sum / stats.count;
-    bucket.leakCount += 1;
-    bucket.leakMax = bucket.leakMax === null ? stats.max : Math.max(bucket.leakMax, stats.max);
-    dayMap.set(day, bucket);
-  }
+  const dayMap = buildDayBucketsFromRecordsAndLeaks(dedupedRecords, leakStatsByDay, hasResventStructure);
 
   if (dayMap.size === 0) {
     if (fallbackWindowDateSet.size > 0 && hasResventStructure) {
@@ -1999,10 +2033,70 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
     throw new Error(`Data import succeeded but no records were found in the most recent ${normalizedLookbackDays}-day date range.`);
   }
 
+  if (selectedLoader) {
+    const top = loaderRanking.slice(0, 4).map((m) => `${m.label} (${m.score})`).join(", ");
+    warnings.unshift(`Selected loader: ${selectedFamily.label}. Candidate scores: ${top}.`);
+  } else if (likelyLoaders.length > 0) {
+    warnings.unshift(`Detected OSCAR-compatible loader signatures: ${likelyLoaders.join(", ")}.`);
+  }
+
+  return {
+    selectedLoader: selectedFamily.label,
+    machine: cloneMachineSettings(machine),
+    warnings,
+    latestClinicalDayIso: toIsoDate(latest),
+    maxLookbackDays: normalizedLookbackDays,
+    dayBuckets: Object.fromEntries(dayMap.entries())
+  };
+}
+
+export async function prepareQuickReportSource(request: PrepareQuickReportSourceRequest): Promise<PreparedQuickReportSource> {
+  return await prepareQuickReportSourceInternal(request);
+}
+
+export function buildQuickReportMetricsFromPreparedSource(
+  prepared: PreparedQuickReportSource,
+  request: BuildQuickReportMetricsFromPreparedRequest
+): QuickReportMetrics {
+  const { patientName, dateOfBirthIso, physicianName, lookbackDays, onProgress } = request;
+  const normalizedLookbackDays = Math.min(normalizeLookbackDays(lookbackDays), prepared.maxLookbackDays);
+  const warnings = [...prepared.warnings];
+  const now = new Date();
+  const machine = cloneMachineSettings(prepared.machine);
+
+  emit(onProgress, { phase: "compute", detail: `Computing ${normalizedLookbackDays}-day metrics...`, percent: 82 });
+
+  const latest = new Date(`${prepared.latestClinicalDayIso}T12:00:00Z`);
+  if (Number.isNaN(latest.getTime())) {
+    throw new Error("Prepared therapy history could not determine a valid latest clinical day.");
+  }
+
+  const { start: windowStart, end: windowEnd } = resolveRecentWindow(latest, normalizedLookbackDays);
+  const windowStartIso = toIsoDate(windowStart);
+  const windowEndIso = toIsoDate(windowEnd);
+  let effectiveWindowStartIso = windowStartIso;
+
+  const allDayEntries = Object.entries(prepared.dayBuckets);
+  const availableDayKeys = new Set(allDayEntries.map(([day]) => day).filter((day) => day < windowEndIso));
+  if (availableDayKeys.size > 0) {
+    const earliestAvailableIso = [...availableDayKeys].sort((a, b) => a.localeCompare(b))[0];
+    if (earliestAvailableIso > effectiveWindowStartIso) {
+      effectiveWindowStartIso = earliestAvailableIso;
+    }
+  }
+
+  const dayMap = new Map<string, DayBucket>(
+    allDayEntries
+      .filter(([day]) => day >= effectiveWindowStartIso && day < windowEndIso)
+      .map(([day, bucket]) => [day, { ...bucket }])
+  );
+
+  if (dayMap.size === 0) {
+    throw new Error(`Data import succeeded but no records were found in the most recent ${normalizedLookbackDays}-day date range.`);
+  }
+
   const usageValues = [...dayMap.values()]
     .filter((d) => d.usageCount > 0)
-    // Clinical usage is noon-to-noon total per day (sum sessions in that day).
-    // Cap to 24h/day to guard against malformed duplicate inputs.
     .map((d) => Math.min(24, d.usageSum))
     .filter((v) => Number.isFinite(v) && v >= 0 && v <= 24);
 
@@ -2032,6 +2126,10 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
 
   const leakMaxValues = [...dayMap.values()]
     .map((d) => d.leakMax)
+    .filter((v): v is number => typeof v === "number" && Number.isFinite(v));
+
+  const sustainedLeakMaxValues = [...dayMap.values()]
+    .map((d) => d.leakMaxSustained)
     .filter((v): v is number => typeof v === "number" && Number.isFinite(v));
 
   const pressureAvgValues = [...dayMap.values()]
@@ -2069,18 +2167,19 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
   const centralApneas95th = centralApneaValues.length > 0 ? percentile(centralApneaValues, 95) : null;
   const rera95th = reraValues.length > 0 ? percentile(reraValues, 95) : null;
   const avgLeak = leakValues.length > 0 ? leakValues.reduce((a, b) => a + b, 0) / leakValues.length : null;
-  const maxLeak = leakMaxValues.length > 0 ? Math.max(...leakMaxValues) : leakValues.length > 0 ? Math.max(...leakValues) : null;
+  const maxLeak =
+    sustainedLeakMaxValues.length > 0
+      ? Math.max(...sustainedLeakMaxValues)
+      : leakMaxValues.length > 0
+        ? Math.max(...leakMaxValues)
+        : leakValues.length > 0
+          ? Math.max(...leakValues)
+          : null;
   const avgPressure =
     pressureAvgValues.length > 0 ? pressureAvgValues.reduce((a, b) => a + b, 0) / pressureAvgValues.length : null;
   const pressure95th =
     pressure95Values.length > 0 ? percentile(pressure95Values, 95) : pressureAvgValues.length > 0 ? percentile(pressureAvgValues, 95) : null;
 
-  if (selectedLoader) {
-    const top = loaderRanking.slice(0, 4).map((m) => `${m.label} (${m.score})`).join(", ");
-    warnings.unshift(`Selected loader: ${selectedFamily.label}. Candidate scores: ${top}.`);
-  } else if (likelyLoaders.length > 0) {
-    warnings.unshift(`Detected OSCAR-compatible loader signatures: ${likelyLoaders.join(", ")}.`);
-  }
   if (usageValues.length === 0) {
     warnings.push("Usage-hour fields were not found in the selected data. Compliance metrics are shown as 0.");
   }
@@ -2097,7 +2196,7 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
   if (machine.pressure95th === undefined && pressure95th !== null) {
     machine.pressure95th = finite(pressure95th);
   }
-  verifyResolvedTherapyModeOrThrow(machine, selectedFamily.label);
+  verifyResolvedTherapyModeOrThrow(machine, prepared.selectedLoader);
 
   if (machine.device) {
     machine.device = machine.device.replace(/\s*\(\s*sd\s*card\s*\)\s*$/i, "").trim();
@@ -2112,7 +2211,7 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
       hour: "numeric",
       minute: "2-digit"
     }),
-    selectedLoader: selectedFamily.label,
+    selectedLoader: prepared.selectedLoader,
     patientName: patientName.trim(),
     dateOfBirth: formatDateHuman(dateOfBirthIso),
     physicianName: physicianName.trim(),
@@ -2145,8 +2244,24 @@ export async function buildQuickReportMetrics(request: ParseRequest): Promise<Qu
   }
 
   emit(onProgress, { phase: "finalize", detail: "Finalizing report...", percent: 96 });
-  await new Promise((resolve) => setTimeout(resolve, 0));
   emit(onProgress, { phase: "done", detail: "Report ready.", percent: 100 });
 
   return report;
+}
+
+export async function buildQuickReportMetrics(request: ParseRequest): Promise<QuickReportMetrics> {
+  const prepared = await prepareQuickReportSourceInternal({
+    sourceKind: request.sourceKind,
+    files: request.files,
+    lookbackDays: request.lookbackDays,
+    onProgress: request.onProgress
+  });
+
+  return buildQuickReportMetricsFromPreparedSource(prepared, {
+    patientName: request.patientName,
+    dateOfBirthIso: request.dateOfBirthIso,
+    physicianName: request.physicianName,
+    lookbackDays: request.lookbackDays,
+    onProgress: request.onProgress
+  });
 }

@@ -454,9 +454,21 @@ export async function parseResMedFamily(context: FamilyParserContext, deps: Fami
     }
   }
 
-  await runTextFamilyParser(context, deps, {
-    inferFamilyMachineSettings: (text, candidate, machine, familyDeps) => {
-      inferResMedMachineSettings(text, candidate, machine, familyDeps);
+  const textCandidates = context.candidates.filter((candidate) =>
+    /\.(?:txt|csv|json|xml|log)$/i.test(candidate.baseName)
+  );
+  if (textCandidates.length === 0) return;
+
+  await runTextFamilyParser(
+    {
+      ...context,
+      candidates: textCandidates
+    },
+    deps,
+    {
+      inferFamilyMachineSettings: (text, candidate, machine, familyDeps) => {
+        inferResMedMachineSettings(text, candidate, machine, familyDeps);
+      }
     }
-  });
+  );
 }

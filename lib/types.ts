@@ -8,6 +8,12 @@ export interface SourceFile {
   readBytes: () => Promise<Uint8Array>;
 }
 
+export interface SourceFileSummary {
+  name: string;
+  path: string;
+  size: number;
+}
+
 export interface ParseProgress {
   phase: string;
   detail: string;
@@ -23,6 +29,7 @@ export interface ParsedRecord {
   reraIndex?: number;
   leak?: number;
   leakMax?: number;
+  leakMaxSustained?: number;
   pressureAvg?: number;
   pressure95th?: number;
 }
@@ -80,4 +87,58 @@ export interface ParseRequest {
   physicianName: string;
   lookbackDays?: number;
   onProgress?: (p: ParseProgress) => void;
+}
+
+export interface PrepareQuickReportSourceRequest {
+  sourceKind: DataSourceKind;
+  files: SourceFile[];
+  lookbackDays?: number;
+  onProgress?: (p: ParseProgress) => void;
+}
+
+export interface BuildQuickReportMetricsFromPreparedRequest {
+  patientName: string;
+  dateOfBirthIso: string;
+  physicianName: string;
+  lookbackDays?: number;
+  onProgress?: (p: ParseProgress) => void;
+}
+
+export interface PreparedDayBucket {
+  usageSum: number;
+  usageCount: number;
+  ahiWeightedSum: number;
+  ahiWeightHours: number;
+  ahiSum: number;
+  ahiCount: number;
+  residualApneaSum: number;
+  residualApneaCount: number;
+  centralApneaSum: number;
+  centralApneaCount: number;
+  reraSum: number;
+  reraCount: number;
+  leakSum: number;
+  leakCount: number;
+  leakMax: number | null;
+  leakMaxSustained: number | null;
+  pressureAvgSum: number;
+  pressureAvgCount: number;
+  pressure95Sum: number;
+  pressure95Count: number;
+}
+
+export interface PreparedQuickReportSource {
+  selectedLoader: string;
+  machine: MachineSettings;
+  warnings: string[];
+  latestClinicalDayIso: string;
+  maxLookbackDays: number;
+  dayBuckets: Record<string, PreparedDayBucket>;
+}
+
+export interface GeneratedPdfArtifact {
+  days: number;
+  metrics: QuickReportMetrics;
+  blob: Blob;
+  filename: string;
 }

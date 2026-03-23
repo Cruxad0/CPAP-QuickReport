@@ -453,7 +453,7 @@ export async function buildPdfReport(report: QuickReportMetrics, headerDataUrl?:
       ["95th Central apneas", valueText(report.centralApneas95th)],
       ["Avg RERA index", valueText(report.avgReraIndex)],
       ["Avg Leak", report.avgLeak === null ? NO_DATA_FALLBACK : `${valueText(report.avgLeak)} L/min`],
-      ["Max leak", report.maxLeak === null ? NO_DATA_FALLBACK : `${valueText(report.maxLeak)} L/min`]
+      ["Max leak (>30s)", report.maxLeak === null ? NO_DATA_FALLBACK : `${valueText(report.maxLeak)} L/min`]
     ],
     headerImage,
     fontRegular,
