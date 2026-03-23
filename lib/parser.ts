@@ -88,6 +88,19 @@ const RESVENT_MODE_FROM_FILE = new Map<string, string>([
   ["N_PC", "PC"]
 ]);
 
+const RESVENT_SHARED_CONFIG_FILES = ["ALARM", "COMFORT", "CHECK.TXT", "SETTING", "VERSION", "SYSCFG", "TCTRL"] as const;
+
+const RESVENT_ACTIVE_CONFIG_BY_VENT_MODE = new Map<string, string>([
+  ["1", "N_CPAP"],
+  ["3", "N_APAP"],
+  ["10", "N_S30"],
+  ["11", "N_AS30"],
+  ["12", "N_ST30"],
+  ["13", "N_AST30"],
+  ["14", "N_T30"],
+  ["15", "N_PC"]
+]);
+
 function formatCmH2O(raw: unknown): string | null {
   const n = safeNumber(raw);
   if (n === undefined) return null;
@@ -1837,7 +1850,15 @@ async function prepareQuickReportSourceInternal(request: PrepareQuickReportSourc
       const totalResventWork = selected.configFiles.length + selected.statFiles.length + selected.pFiles.length;
       let processed = 0;
 
+      const resventConfigByBase = new Map<string, SourceMeta>();
       for (const configFile of selected.configFiles) {
+        resventConfigByBase.set(configFile.baseName.toUpperCase(), configFile);
+      }
+
+      const mergedResventConfig = new Map<string, string>();
+      let activeResventConfigBase: string | null = null;
+
+      const readResventConfigIntoMergedState = async (configFile: SourceMeta) => {
         processed += 1;
         const pct = 8 + Math.round((processed / Math.max(1, totalResventWork)) * 62);
         emit(onProgress, {
@@ -1849,15 +1870,44 @@ async function prepareQuickReportSourceInternal(request: PrepareQuickReportSourc
         try {
           const bytes = await configFile.file.readBytes();
           const text = decodeResventText(bytes, true);
-          if (text.trim().length === 0) continue;
+          if (text.trim().length === 0) return;
           const kv = parseKeyValueLines(text);
-          inferMachineSettingsFromConfigFilename(configFile.normalizedPath, machine);
-          inferMachineSettingsFromConfigMap(kv, machine);
           inferMachineSettingsFromText(text, machine);
+          for (const [key, value] of kv.entries()) {
+            mergedResventConfig.set(key, value);
+          }
+
+          if (configFile.baseName.toUpperCase() === "TCTRL") {
+            const ventMode = kv.get("VentMode") ?? kv.get("mode") ?? kv.get("ventmode");
+            if (ventMode) {
+              activeResventConfigBase = RESVENT_ACTIVE_CONFIG_BY_VENT_MODE.get(String(ventMode).trim()) ?? null;
+            }
+          }
         } catch {
           warnings.push(`Could not read ${configFile.normalizedPath}`);
         }
+      };
+
+      for (const baseName of RESVENT_SHARED_CONFIG_FILES) {
+        const configFile = resventConfigByBase.get(baseName);
+        if (!configFile) continue;
+        await readResventConfigIntoMergedState(configFile);
       }
+
+      if (!activeResventConfigBase) {
+        const inferredFromMode = [...RESVENT_MODE_FROM_FILE.entries()].find(([, mode]) => mode === machine.mode)?.[0];
+        activeResventConfigBase = inferredFromMode ?? null;
+      }
+
+      if (activeResventConfigBase) {
+        const activeConfigFile = resventConfigByBase.get(activeResventConfigBase);
+        if (activeConfigFile) {
+          await readResventConfigIntoMergedState(activeConfigFile);
+          inferMachineSettingsFromConfigFilename(activeConfigFile.normalizedPath, machine);
+        }
+      }
+
+      inferMachineSettingsFromConfigMap(mergedResventConfig, machine);
 
       for (const statFile of selected.statFiles) {
         processed += 1;

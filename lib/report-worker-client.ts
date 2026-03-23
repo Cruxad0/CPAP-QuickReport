@@ -36,10 +36,10 @@ type PendingRequest =
     };
 
 export class ReportWorkerClient {
-  private static readonly FOLDER_ENTRY_SCAN_CHUNK_SIZE = 256;
-  private static readonly FOLDER_TRANSFER_CHUNK_SIZE = 24;
+  private static readonly FOLDER_ENTRY_SCAN_CHUNK_SIZE = 64;
+  private static readonly FOLDER_TRANSFER_CHUNK_SIZE = 12;
   private static readonly FOLDER_TRANSFER_YIELD_EVERY = 1;
-  private static readonly FOLDER_TRANSFER_PROGRESS_EVERY = 4;
+  private static readonly FOLDER_TRANSFER_PROGRESS_EVERY = 6;
   private readonly worker: Worker;
   private readonly pending = new Map<number, PendingRequest>();
   private nextRequestId = 1;
@@ -121,7 +121,7 @@ export class ReportWorkerClient {
       }
 
       if (chunkCount % ReportWorkerClient.FOLDER_TRANSFER_YIELD_EVERY === 0) {
-        await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+        await this.yieldToBrowser();
       }
     }
 
@@ -158,7 +158,7 @@ export class ReportWorkerClient {
         });
       }
 
-      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+      await this.yieldToBrowser();
     }
 
     const filtered = filterFolderEntriesToRecentWindow(entries, options.importLookbackDays);
@@ -175,6 +175,20 @@ export class ReportWorkerClient {
     }
 
     return filtered.entries;
+  }
+
+  private async yieldToBrowser(): Promise<void> {
+    if (typeof window.requestIdleCallback === "function") {
+      await new Promise<void>((resolve) => {
+        window.requestIdleCallback(
+          () => resolve(),
+          { timeout: 40 }
+        );
+      });
+      return;
+    }
+
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
   }
 
   async loadZip(

@@ -456,6 +456,7 @@ export function QuickReportApp() {
     setStatus("working");
     setStatusMessage("Loading SD folder...");
     setParseProgressImmediate({ phase: "scan", detail: "Loading SD folder...", percent: 4 });
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
 
     try {
       const client = workerClientRef.current;

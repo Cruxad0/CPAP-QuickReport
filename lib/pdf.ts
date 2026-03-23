@@ -8,7 +8,7 @@ const NO_DATA_FALLBACK = "Data point not available";
 const HEADER_MAX_HEIGHT = 72;
 const FOOTER_BLOCK_HEIGHT = 64;
 const THERAPY_MIN_FONT_SIZE = 10;
-const THERAPY_MAX_FONT_SIZE = 13;
+const THERAPY_MAX_FONT_SIZE = 11;
 
 type PdfLibModule = {
   PDFDocument: {
@@ -110,11 +110,11 @@ function drawDefaultHeader(state: PdfState, reportDays: number, reportMode: stri
   state.page.drawText(`${headerModeText(reportMode)} ${reportDays}-Day Quick Report`, {
     x: PAGE_MARGIN,
     y: state.y - 16,
-    size: 18,
+    size: 11,
     font: fontBold,
     color: rgbFn(0.07, 0.31, 0.49)
   });
-  state.y -= 26;
+  state.y -= 18;
   state.page.drawLine({
     start: { x: PAGE_MARGIN, y: state.y },
     end: { x: state.pageWidth - PAGE_MARGIN, y: state.y },
@@ -196,11 +196,11 @@ function drawSectionTitle(
   state.page.drawText(title, {
     x: PAGE_MARGIN,
     y: state.y - 12,
-    size: 12,
+    size: 11,
     font: fontBold,
     color: rgbFn(0.07, 0.31, 0.49)
   });
-  state.y -= 18;
+  state.y -= 16;
 }
 
 function drawBottomFooterBlock(
@@ -243,7 +243,7 @@ function drawBottomFooterBlock(
   state.page.drawText(`Generated: ${report.generatedAtDisplay}`, {
     x: PAGE_MARGIN,
     y: generatedY,
-    size: 9,
+    size: 10,
     font: fontRegular,
     color: rgbFn(0.12, 0.22, 0.31)
   });
@@ -266,35 +266,35 @@ type CompactTableStyle = {
 const TABLE_STYLE_CANDIDATES: CompactTableStyle[] = [
   {
     titleSize: 11,
-    titleGap: 5,
-    headerHeight: 18,
-    headerFontSize: 9,
-    bodyFontSize: 9,
-    lineHeight: 10,
-    insetX: 7,
-    insetY: 4,
-    leftRatio: 0.41,
-    afterGap: 8
-  },
-  {
-    titleSize: 10,
     titleGap: 4,
     headerHeight: 17,
-    headerFontSize: 8.5,
-    bodyFontSize: 8.5,
-    lineHeight: 9.5,
+    headerFontSize: 10,
+    bodyFontSize: 10,
+    lineHeight: 11,
     insetX: 6,
     insetY: 3.5,
-    leftRatio: 0.4,
+    leftRatio: 0.41,
     afterGap: 6
   },
   {
-    titleSize: 9,
+    titleSize: 11,
+    titleGap: 3.5,
+    headerHeight: 16.5,
+    headerFontSize: 10,
+    bodyFontSize: 10,
+    lineHeight: 10.8,
+    insetX: 5.5,
+    insetY: 3.25,
+    leftRatio: 0.4,
+    afterGap: 5.5
+  },
+  {
+    titleSize: 11,
     titleGap: 3,
     headerHeight: 16,
-    headerFontSize: 8,
-    bodyFontSize: 8,
-    lineHeight: 9,
+    headerFontSize: 10,
+    bodyFontSize: 10,
+    lineHeight: 10.5,
     insetX: 5,
     insetY: 3,
     leftRatio: 0.4,
@@ -305,14 +305,14 @@ const TABLE_STYLE_CANDIDATES: CompactTableStyle[] = [
 function therapyTableStyle(fontSize: number): CompactTableStyle {
   const clampedFontSize = Math.max(THERAPY_MIN_FONT_SIZE, Math.min(THERAPY_MAX_FONT_SIZE, fontSize));
   return {
-    titleSize: Math.min(16, clampedFontSize + 1.5),
-    titleGap: 4,
-    headerHeight: Math.max(18, clampedFontSize + 7),
-    headerFontSize: Math.max(10, clampedFontSize - 1),
+    titleSize: 11,
+    titleGap: 3.5,
+    headerHeight: Math.max(16, clampedFontSize + 6),
+    headerFontSize: 10,
     bodyFontSize: clampedFontSize,
-    lineHeight: clampedFontSize + 1.5,
-    insetX: 6,
-    insetY: 3.5,
+    lineHeight: Math.max(10.5, clampedFontSize + 0.8),
+    insetX: 5.5,
+    insetY: 3.25,
     leftRatio: 0.41,
     afterGap: 5
   };
