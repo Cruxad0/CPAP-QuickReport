@@ -5,7 +5,7 @@ const PAGE_WIDTH_A4 = 595.28;
 const PAGE_HEIGHT_A4 = 841.89;
 const PAGE_MARGIN = 18; // 0.25 in
 const NO_DATA_FALLBACK = "Data point not available";
-const HEADER_MAX_HEIGHT = 72;
+const HEADER_MAX_HEIGHT = 42;
 const FOOTER_BLOCK_HEIGHT = 64;
 const THERAPY_MIN_FONT_SIZE = 10;
 const THERAPY_MAX_FONT_SIZE = 11;
@@ -36,6 +36,14 @@ function filenameDateStamp(date = new Date()): string {
 
 function valueText(value: number | null | undefined, digits = 2): string {
   return typeof value === "number" && Number.isFinite(value) ? value.toFixed(digits) : NO_DATA_FALLBACK;
+}
+
+function isBelowMedicareComplianceThreshold(report: QuickReportMetrics): boolean {
+  return Number.isFinite(report.compliancePercent) && report.compliancePercent < 70;
+}
+
+function isBelowMedicareNightlyUseThreshold(report: QuickReportMetrics): boolean {
+  return typeof report.avgUsageHours === "number" && Number.isFinite(report.avgUsageHours) && report.avgUsageHours < 4;
 }
 
 function textValue(value: string | null | undefined): string {
@@ -143,7 +151,6 @@ function drawHeader(
       height
     });
     state.y -= height + 6;
-    return;
   }
   drawDefaultHeader(state, reportDays, reportMode, fontBold, rgbFn);
 }
@@ -610,13 +617,15 @@ export async function buildPdfReport(report: QuickReportMetrics, headerDataUrl?:
     ["Date of birth", textValue(report.dateOfBirth)]
   ];
   const machineRows = machineSettingRows(report);
+  const belowMedicareCompliance = isBelowMedicareComplianceThreshold(report);
+  const belowMedicareNightlyUse = isBelowMedicareNightlyUseThreshold(report);
   const therapyRows: TableRow[] = [
     ["Date range", `${report.dateRangeStart} to ${report.dateRangeEnd}`],
     ["Days with data", `${report.daysWithData} / ${report.daysInWindow}`],
     ["Usage days (% of range)", `${report.usageDaysPercent.toFixed(1)}%`],
-    ["Compliant days (>= 4h)", `${report.compliantDays} / ${report.daysInWindow}`],
-    ["Compliance (% of range)", `${report.compliancePercent.toFixed(1)}%`],
-    ["Avg usage per day", report.avgUsageHours === null ? NO_DATA_FALLBACK : `${valueText(report.avgUsageHours)} h`],
+    ["Compliant days (>= 4h)", `${report.compliantDays} / ${report.daysInWindow}`, belowMedicareCompliance],
+    ["Compliance (% of range)", `${report.compliancePercent.toFixed(1)}%`, belowMedicareCompliance],
+    ["Avg usage per day", report.avgUsageHours === null ? NO_DATA_FALLBACK : `${valueText(report.avgUsageHours)} h`, belowMedicareNightlyUse],
     ["Avg AHI", valueText(report.avgAhi)],
     ["95th AHI", valueText(report.ahi95th)],
     ["Avg Residual apneas", valueText(report.avgResidualApneas)],

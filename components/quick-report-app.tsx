@@ -547,6 +547,11 @@ export function QuickReportApp() {
     }
   };
 
+  const clearBrandingImage = () => {
+    setHeaderDataUrl(undefined);
+    if (headerInputRef.current) headerInputRef.current.value = "";
+  };
+
   const handleGenerate = async () => {
     if (!canGenerate) return;
 
@@ -790,7 +795,12 @@ export function QuickReportApp() {
             Optional PDF header image
           </label>
           <input id="header-upload" ref={headerInputRef} type="file" accept="image/png,image/jpeg" onChange={handleHeaderUpload} />
-          <p className="subtle">Use a clinic branding image if desired. If omitted, a neutral header is used.</p>
+          {headerDataUrl ? (
+            <button type="button" className="link-button subtle-link-button" onClick={clearBrandingImage}>
+              Clear branding image
+            </button>
+          ) : null}
+          <p className="subtle">Use a clinic branding image if desired. The Quick Report header remains visible.</p>
         </article>
 
         <article className={`card col-8 ${isDataSourceLoading ? "card-loading" : ""}`} aria-busy={isDataSourceLoading}>

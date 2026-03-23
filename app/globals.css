@@ -243,6 +243,18 @@ textarea {
   font-size: 0.84rem;
 }
 
+.subtle-link-button {
+  margin-top: 0.35rem;
+  color: #5c7286;
+  text-decoration: none;
+  font-size: 0.8rem;
+}
+
+.subtle-link-button:hover {
+  color: var(--brand);
+  text-decoration: underline;
+}
+
 .calendar-panel {
   margin-top: 0.55rem;
   border: 1px solid #c8d8e6;
