@@ -105,13 +105,19 @@ function shouldKeepUndatedFile(path: string, size: number, likelyFamilyId: strin
   if (likelyFamilyId) {
     switch (likelyFamilyId) {
       case "resvent":
-        if (/(?:^|\/)therapy\/(?:config|record)\//i.test(normalized)) return true;
+        if (/(?:^|\/)(?:therapy\/)?(?:config|record)\//i.test(normalized)) return true;
         break;
       case "resmed":
-        if (/(?:^|\/)datalog\/.*\/(?:str|eve|pld|sad|brp|crc)\.edf$/i.test(normalized)) return true;
+        if (/(?:^|\/)datalog\/.*\/(?:str|eve|pld|sad|brp|crc)\.edf(?:\.gz)?$/i.test(normalized)) return true;
+        if (/(?:^|\/)(?:str|eve|pld|sad|brp|crc)\.edf(?:\.gz)?$/i.test(normalized)) return true;
+        if (/(?:^|\/)identification\.(?:tgt|json)$/i.test(normalized)) return true;
         break;
       case "prs1":
-        if (/(?:^|\/)(?:p-series\/|p\d{5}\.\d{3}$|summary\.(?:txt|csv|xml)$|compliance\.(?:txt|csv|xml)$)/i.test(normalized)) {
+        if (
+          /(?:^|\/)(?:p-series\/|p\d{5}\.\d{3}$|prop[^/]*\.(?:txt|bin)$|summary\.(?:txt|csv|xml)$|compliance\.(?:txt|csv|xml)$)/i.test(
+            normalized
+          )
+        ) {
           return true;
         }
         break;
@@ -122,12 +128,12 @@ function shouldKeepUndatedFile(path: string, size: number, likelyFamilyId: strin
         if (/(?:^|\/)[^/]+\.(?:usr|idx|000)$/i.test(normalized)) return true;
         break;
       case "intellipap":
-        if (/(?:^|\/)(?:sl\/(?:set1|u|l)|dv6\/(?:set\.bin|ver\.bin|s\.bin))$/i.test(normalized)) return true;
+        if (/(?:^|\/)(?:(?:sl\/)?(?:set1|u|l)|(?:dv6\/)?(?:set\.bin|ver\.bin|s\.bin))$/i.test(normalized)) return true;
         break;
       case "sleepstyle":
       case "icon":
-        if (/(?:^|\/)fphcare\/icon\/[^/]+\/(?:sum|det|his|flw).*\.(?:fph|FPH)$/i.test(normalized)) return true;
-        if (/(?:^|\/)fphcare\/icon\/[^/]+\/realtime\/hrd.*\.edf$/i.test(normalized)) return true;
+        if (/(?:^|\/)(?:fphcare\/)?icon\/[^/]+\/(?:sum|det|his|flw).*\.(?:fph|FPH)$/i.test(normalized)) return true;
+        if (/(?:^|\/)(?:fphcare\/)?icon\/[^/]+\/realtime\/hrd.*\.edf$/i.test(normalized)) return true;
         break;
       case "weinmann":
         if (/(?:^|\/)wm_data\.tdf$/i.test(normalized)) return true;
@@ -145,7 +151,7 @@ function shouldKeepUndatedFile(path: string, size: number, likelyFamilyId: strin
   }
 
   if (
-    /(?:^|\/)(?:therapy\/config|config|settings?|profile|profiles|wm_profiles\.xml|summary\.edf|detail\.edf|str\.edf|eve\.edf|pld\.edf|sad\.edf|brp\.edf|crc\.edf)(?:\/|$|[._-])/i.test(
+    /(?:^|\/)(?:therapy\/config|config|settings?|profile|profiles|wm_profiles\.xml|summary\.edf(?:\.gz)?|detail\.edf(?:\.gz)?|str\.edf(?:\.gz)?|eve\.edf(?:\.gz)?|pld\.edf(?:\.gz)?|sad\.edf(?:\.gz)?|brp\.edf(?:\.gz)?|crc\.edf(?:\.gz)?|identification\.(?:tgt|json))(?:\/|$|[._-])/i.test(
       normalized
     )
   ) {
@@ -153,7 +159,7 @@ function shouldKeepUndatedFile(path: string, size: number, likelyFamilyId: strin
   }
 
   if (
-    /(?:^|\/)(?:p-series\/|p\d{5}\.\d{3}$|p\d{4}\.(?:idx|000)$|therapy\.pdat$|therapy\.dat$|sl\/set1$|sl\/u$|sl\/l$|dv6\/set\.bin$|dv6\/ver\.bin$|dv6\/s\.bin$|wm_data\.tdf$)/i.test(
+    /(?:^|\/)(?:p-series\/|p\d{5}\.\d{3}$|prop[^/]*\.(?:txt|bin)$|p\d{4}\.(?:idx|000)$|therapy\.pdat$|therapy\.dat$|(?:sl\/)?set1$|(?:sl\/)?u$|(?:sl\/)?l$|(?:dv6\/)?set\.bin$|(?:dv6\/)?ver\.bin$|(?:dv6\/)?s\.bin$|wm_data\.tdf$)/i.test(
       normalized
     )
   ) {

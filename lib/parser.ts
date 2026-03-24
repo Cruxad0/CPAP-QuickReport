@@ -233,7 +233,7 @@ function normalizePath(path: string): string {
 }
 
 function extractResventRecordDate(path: string): Date | null {
-  const m = /(?:^|\/)therapy\/record\/(\d{4})(\d{2})\/(\d{2})(?:\/|$)/i.exec(path);
+  const m = /(?:^|\/)(?:therapy\/)?record\/(\d{4})(\d{2})\/(\d{2})(?:\/|$)/i.exec(path);
   if (!m) return null;
 
   const y = Number(m[1]);
@@ -287,7 +287,7 @@ function toSourceMeta(file: SourceFile): SourceMeta {
 }
 
 function isResventConfigFile(meta: SourceMeta): boolean {
-  return /(?:^|\/)therapy\/config\/[^/]+$/i.test(meta.normalizedPath);
+  return /(?:^|\/)(?:therapy\/)?config\/[^/]+$/i.test(meta.normalizedPath);
 }
 
 function isResventStatUsageFile(meta: SourceMeta): boolean {
@@ -1810,7 +1810,7 @@ async function refineSelectedFamily(
   }
 
   const summaryCandidate = meta.find((candidate) =>
-    /(?:^|\/)fphcare\/icon\/[^/]+\/sum.*\.fph$/i.test(candidate.normalizedPath)
+    /(?:^|\/)(?:fphcare\/)?icon\/[^/]+\/sum.*\.fph$/i.test(candidate.normalizedPath)
   );
   if (!summaryCandidate) return selectedFamily;
 
@@ -1849,7 +1849,7 @@ async function prepareQuickReportSourceInternal(request: PrepareQuickReportSourc
 
   const hasResventStructure =
     selectedFamily.id === "resvent" &&
-    (hasFamilySignature(meta, "resvent") || meta.some((m) => /(?:^|\/)therapy\/(?:record|config)\//i.test(m.normalizedPath)));
+    (hasFamilySignature(meta, "resvent") || meta.some((m) => /(?:^|\/)(?:therapy\/)?(?:record|config)\//i.test(m.normalizedPath)));
   const leakStatsByDay = new Map<string, LeakStats>();
   let fallbackWindowDateSet = new Set<string>();
   let latestPathDate: Date | null = null;

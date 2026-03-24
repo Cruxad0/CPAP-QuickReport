@@ -22,7 +22,7 @@ import { ZEO_FAMILY } from "@/lib/parsers/families/zeo";
 const BASE_PRIORITY_PATTERNS: RegExp[] = [
   /(?:^|\/)(?:therapy|record|datalog|summary|detail|session|usage|result|events?)\//i,
   /(?:^|\/)(?:stat\d{0,4}|ev\d{0,4}|summary|detail|session|usage|result|report|compliance)(?:\..*)?$/i,
-  /(?:^|\/)(?:str|eve|pld|sad|brp|crc)\.edf$/i
+  /(?:^|\/)(?:str|eve|pld|sad|brp|crc)\.edf(?:\.gz)?$/i
 ];
 
 export const PARSER_FAMILIES: ParserFamilyDefinition[] = [

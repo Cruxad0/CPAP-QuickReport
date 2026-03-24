@@ -236,12 +236,28 @@ function formatPressureValue(value: number | undefined): string | undefined {
   return `${Number(value.toFixed(2)).toString()} cmH2O`;
 }
 
+async function maybeGunzip(bytes: Uint8Array): Promise<Uint8Array> {
+  if (bytes.length < 2 || bytes[0] !== 0x1f || bytes[1] !== 0x8b) return bytes;
+  if (typeof DecompressionStream === "undefined") return bytes;
+
+  try {
+    const blobBytes = new Uint8Array(bytes.byteLength);
+    blobBytes.set(bytes);
+    const decompressed = await new Response(
+      new Blob([blobBytes.buffer]).stream().pipeThrough(new DecompressionStream("gzip"))
+    ).arrayBuffer();
+    return new Uint8Array(decompressed);
+  } catch {
+    return bytes;
+  }
+}
+
 function parseResMedStrEdf(
   candidate: FamilyParserCandidate,
   bytes: Uint8Array,
   machine: QuickReportMetrics["machine"]
 ): ParsedRecord[] {
-  if (!/str\.edf$/i.test(candidate.baseName)) return [];
+  if (!/str\.edf(?:\.gz)?$/i.test(candidate.baseName)) return [];
 
   const edf = parseResMedEdf(bytes);
   if (!edf) return [];
@@ -431,7 +447,7 @@ function inferResMedMachineSettings(
 export async function parseResMedFamily(context: FamilyParserContext, deps: FamilyParserDeps): Promise<void> {
   let processed = 0;
   for (const candidate of context.candidates) {
-    if (!/str\.edf$/i.test(candidate.baseName)) continue;
+    if (!/str\.edf(?:\.gz)?$/i.test(candidate.baseName)) continue;
     processed += 1;
     const pct =
       context.progressStart +
@@ -445,7 +461,7 @@ export async function parseResMedFamily(context: FamilyParserContext, deps: Fami
 
     try {
       const bytes = await candidate.file.readBytes();
-      const records = parseResMedStrEdf(candidate, bytes, context.machine);
+      const records = parseResMedStrEdf(candidate, await maybeGunzip(bytes), context.machine);
       if (records.length > 0) {
         context.records.push(...records);
       }
@@ -455,7 +471,7 @@ export async function parseResMedFamily(context: FamilyParserContext, deps: Fami
   }
 
   const textCandidates = context.candidates.filter((candidate) =>
-    /\.(?:txt|csv|json|xml|log)$/i.test(candidate.baseName)
+    /\.(?:txt|csv|json|xml|log|tgt)$/i.test(candidate.baseName)
   );
   if (textCandidates.length === 0) return;
 

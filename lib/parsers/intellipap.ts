@@ -316,13 +316,13 @@ export async function parseIntelliPapFamily(context: FamilyParserContext, deps: 
     }
   }
 
-  const dv5Set = [...files.entries()].find(([path]) => path.endsWith("/sl/set1"));
-  const dv6Set = [...files.entries()].find(([path]) => path.endsWith("/dv6/set.bin"));
+  const dv5Set = [...files.entries()].find(([path]) => /(?:^|\/)(?:sl\/)?set1$/i.test(path));
+  const dv6Set = [...files.entries()].find(([path]) => /(?:^|\/)(?:dv6\/)?set\.bin$/i.test(path));
 
   if (dv5Set) {
     parseDv5Set1(decodeString(dv5Set[1]), context.machine);
-    const uFile = [...files.entries()].find(([path]) => path.endsWith("/sl/u"));
-    const lFile = [...files.entries()].find(([path]) => path.endsWith("/sl/l"));
+    const uFile = [...files.entries()].find(([path]) => /(?:^|\/)(?:sl\/)?u$/i.test(path));
+    const lFile = [...files.entries()].find(([path]) => /(?:^|\/)(?:sl\/)?l$/i.test(path));
     if (uFile && lFile) {
       const sessions = parseDv5Sessions(uFile[1]);
       context.records.push(...parseDv5Records(lFile[1], sessions));
@@ -332,8 +332,8 @@ export async function parseIntelliPapFamily(context: FamilyParserContext, deps: 
 
   if (dv6Set) {
     parseDv6Settings(dv6Set[1], context.machine);
-    const verFile = [...files.entries()].find(([path]) => path.endsWith("/dv6/ver.bin"));
-    const summaryFile = [...files.entries()].find(([path]) => path.endsWith("/dv6/s.bin"));
+    const verFile = [...files.entries()].find(([path]) => /(?:^|\/)(?:dv6\/)?ver\.bin$/i.test(path));
+    const summaryFile = [...files.entries()].find(([path]) => /(?:^|\/)(?:dv6\/)?s\.bin$/i.test(path));
     if (verFile) parseDv6Version(verFile[1], context.machine);
     if (summaryFile) context.records.push(...parseDv6Summaries(summaryFile[1], context.machine));
   }
