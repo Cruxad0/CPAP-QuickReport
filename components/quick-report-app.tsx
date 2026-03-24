@@ -334,9 +334,8 @@ export function QuickReportApp() {
     !isDobMissing &&
     sourceFileCount > 0 &&
     status !== "working";
-  const isDataSourceLoading = status === "working" || isSourceLoading || pendingSourceSelection !== null;
-  const dataSourceOverlayText =
-    isSourceLoading || pendingSourceSelection !== null ? "Loading data. Please wait..." : "Generating report. Please wait...";
+  const isDataSourceLoading = status === "working" || isSourceLoading;
+  const dataSourceOverlayText = isSourceLoading ? "Loading data. Please wait..." : "Generating report. Please wait...";
 
   const beginSourceSelection = (kind: "folder" | "zip") => {
     const activeInput = kind === "folder" ? folderInputRef.current : zipInputRef.current;
@@ -346,7 +345,6 @@ export function QuickReportApp() {
     }
 
     setPendingSourceSelection(kind);
-    setIsSourceLoading(true);
     const attemptId = sourceSelectionAttemptRef.current + 1;
     sourceSelectionAttemptRef.current = attemptId;
 
@@ -359,10 +357,9 @@ export function QuickReportApp() {
         if (hasChosenFiles) return;
 
         // Use a longer timeout so large SD-card selections do not briefly clear
-        // the loading overlay before onChange starts.
+        // the pending selection state before onChange starts.
         if (Date.now() - startedAt >= SOURCE_SELECTION_CANCEL_TIMEOUT_MS) {
           setPendingSourceSelection((current) => (current === kind ? null : current));
-          setIsSourceLoading(false);
           return;
         }
         window.setTimeout(waitForSelection, 120);
@@ -496,14 +493,17 @@ export function QuickReportApp() {
   const handleDirectoryPickerSelection = async () => {
     sourceSelectionAttemptRef.current += 1;
     setPendingSourceSelection("folder");
-    setIsSourceLoading(true);
-    setStatus("working");
-    setStatusMessage("Opening SD-CARD folder...");
-    setParseProgressImmediate({ phase: "scan", detail: "Opening SD-CARD folder...", percent: 1 });
-    await new Promise((resolve) => window.setTimeout(resolve, 0));
 
     try {
-      const deferredEntries = await pickDeferredFolderEntries((progress) => queueParseProgress(progress));
+      const deferredEntries = await pickDeferredFolderEntries(
+        (progress) => queueParseProgress(progress),
+        () => {
+          setIsSourceLoading(true);
+          setStatus("working");
+          setStatusMessage("Loading SD-CARD...");
+          setParseProgressImmediate({ phase: "scan", detail: "Loading SD-CARD...", percent: 1 });
+        }
+      );
       if (deferredEntries.length === 0) {
         setStatus("idle");
         setStatusMessage("Awaiting data source.");

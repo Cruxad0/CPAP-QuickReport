@@ -44,23 +44,21 @@ export function supportsDirectoryPicker() {
   return typeof pickerWindow.showDirectoryPicker === "function";
 }
 
-export async function pickDeferredFolderEntries(onProgress?: ProgressCallback): Promise<DeferredFolderSourceEntry[]> {
+export async function pickDeferredFolderEntries(
+  onProgress?: ProgressCallback,
+  onPicked?: () => void
+): Promise<DeferredFolderSourceEntry[]> {
   const pickerWindow = window as DirectoryPickerWindow;
   const showDirectoryPicker = pickerWindow.showDirectoryPicker;
   if (typeof showDirectoryPicker !== "function") {
     throw new Error("Directory picker is not supported in this browser.");
   }
 
-  emit(onProgress, {
-    phase: "scan",
-    detail: "Opening SD-CARD directory picker...",
-    percent: 1
-  });
-
   const rootHandle = await showDirectoryPicker({
     mode: "read",
     id: "nimv-sd-card"
   });
+  onPicked?.();
 
   const deferredEntries: DeferredFolderSourceEntry[] = [];
   const stack: Array<{ handle: DirectoryPickerDirectoryHandle; prefix: string }> = [{ handle: rootHandle, prefix: "" }];
