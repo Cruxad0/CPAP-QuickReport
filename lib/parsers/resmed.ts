@@ -1,3 +1,4 @@
+import { resolveExplicitTherapyMode } from "@/lib/machine-mode";
 import { runTextFamilyParser } from "@/lib/parsers/text-family-runner";
 import type { FamilyParserCandidate, FamilyParserContext, FamilyParserDeps } from "@/lib/parsers/text-family-types";
 import type { ParsedRecord, QuickReportMetrics } from "@/lib/types";
@@ -236,6 +237,39 @@ function formatPressureValue(value: number | undefined): string | undefined {
   return `${Number(value.toFixed(2)).toString()} cmH2O`;
 }
 
+function inferResMedModeFromSignals(values: {
+  setPressure?: number;
+  minPressure?: number;
+  maxPressure?: number;
+  epap?: number;
+  minEpap?: number;
+  maxEpap?: number;
+  ipap?: number;
+  minIpap?: number;
+  maxIpap?: number;
+  ps?: number;
+}): "CPAP" | "APAP" | "BiPAP" | null {
+  const hasBilevelSignals =
+    values.epap !== undefined ||
+    values.minEpap !== undefined ||
+    values.maxEpap !== undefined ||
+    values.ipap !== undefined ||
+    values.minIpap !== undefined ||
+    values.maxIpap !== undefined ||
+    values.ps !== undefined;
+  if (hasBilevelSignals) return "BiPAP";
+
+  if (values.minPressure !== undefined || values.maxPressure !== undefined) {
+    return "APAP";
+  }
+
+  if (values.setPressure !== undefined) {
+    return "CPAP";
+  }
+
+  return null;
+}
+
 async function maybeGunzip(bytes: Uint8Array): Promise<Uint8Array> {
   if (bytes.length < 2 || bytes[0] !== 0x1f || bytes[1] !== 0x8b) return bytes;
   if (typeof DecompressionStream === "undefined") return bytes;
@@ -334,14 +368,33 @@ function parseResMedStrEdf(
       const maxIpap = readResMedValue(bytes, edf, maxIpapAliases, recordIndex);
       const ps = readResMedValue(bytes, edf, psAliases, recordIndex);
 
-      if (machine.mode === "CPAP" && setPressure !== undefined) {
+      const inferredSignalMode = inferResMedModeFromSignals({
+        setPressure,
+        minPressure,
+        maxPressure,
+        epap,
+        minEpap,
+        maxEpap,
+        ipap,
+        minIpap,
+        maxIpap,
+        ps
+      });
+
+      const existingMode = resolveExplicitTherapyMode(machine.mode);
+      const resolvedMode = mappedMode ?? existingMode ?? inferredSignalMode;
+      if (resolvedMode) {
+        machine.mode = resolvedMode;
+      }
+
+      if (resolvedMode === "CPAP" && setPressure !== undefined) {
         const fixed = formatPressureValue(setPressure);
         if (fixed) machine.pressure = `Fixed ${fixed}`;
-      } else if (machine.mode === "APAP") {
+      } else if (resolvedMode === "APAP") {
         machine.pressureIsAuto = true;
         if (minPressure !== undefined) machine.pressureMin = formatPressureValue(minPressure);
         if (maxPressure !== undefined) machine.pressureMax = formatPressureValue(maxPressure);
-      } else if (machine.mode === "BiPAP") {
+      } else if (resolvedMode === "BiPAP") {
         const epapText = formatPressureValue(epap);
         const minEpapText = formatPressureValue(minEpap);
         const maxEpapText = formatPressureValue(maxEpap);
@@ -445,6 +498,24 @@ function inferResMedMachineSettings(
 }
 
 export async function parseResMedFamily(context: FamilyParserContext, deps: FamilyParserDeps): Promise<void> {
+  const textCandidates = context.candidates.filter((candidate) =>
+    /\.(?:txt|csv|json|xml|log|tgt)$/i.test(candidate.baseName)
+  );
+  if (textCandidates.length > 0) {
+    await runTextFamilyParser(
+      {
+        ...context,
+        candidates: textCandidates
+      },
+      deps,
+      {
+        inferFamilyMachineSettings: (text, candidate, machine, familyDeps) => {
+          inferResMedMachineSettings(text, candidate, machine, familyDeps);
+        }
+      }
+    );
+  }
+
   let processed = 0;
   for (const candidate of context.candidates) {
     if (!/str\.edf(?:\.gz)?$/i.test(candidate.baseName)) continue;
@@ -469,22 +540,4 @@ export async function parseResMedFamily(context: FamilyParserContext, deps: Fami
       continue;
     }
   }
-
-  const textCandidates = context.candidates.filter((candidate) =>
-    /\.(?:txt|csv|json|xml|log|tgt)$/i.test(candidate.baseName)
-  );
-  if (textCandidates.length === 0) return;
-
-  await runTextFamilyParser(
-    {
-      ...context,
-      candidates: textCandidates
-    },
-    deps,
-    {
-      inferFamilyMachineSettings: (text, candidate, machine, familyDeps) => {
-        inferResMedMachineSettings(text, candidate, machine, familyDeps);
-      }
-    }
-  );
 }
