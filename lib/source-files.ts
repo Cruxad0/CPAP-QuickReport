@@ -1,5 +1,6 @@
 import JSZip from "jszip";
 
+import { hasBmcBundleStructure } from "@/lib/parsers/families/bmc";
 import { rankParserFamilies } from "@/lib/parsers/families";
 import type { ParseProgress, SourceFile, SourceFileSummary } from "@/lib/types";
 
@@ -95,7 +96,9 @@ function extractDateFromPath(path: string): Date | null {
 }
 
 function detectLikelyFamilyId(files: Array<{ path: string }>): string | null {
-  const ranking = rankParserFamilies(files.map((file) => ({ normalizedPath: normalizePath(file.path) })));
+  const normalizedFiles = files.map((file) => ({ normalizedPath: normalizePath(file.path) }));
+  if (hasBmcBundleStructure(normalizedFiles)) return "bmc";
+  const ranking = rankParserFamilies(normalizedFiles);
   return ranking[0]?.id ?? null;
 }
 
@@ -125,7 +128,7 @@ function shouldKeepUndatedFile(path: string, size: number, likelyFamilyId: strin
         if (/(?:^|\/)(?:config\.pscfg|config\.pcfg|therapy\.pdat)$/i.test(normalized)) return true;
         break;
       case "bmc":
-        if (/(?:^|\/)[^/]+\.(?:usr|idx|000)$/i.test(normalized)) return true;
+        if (/(?:^|\/)[^/]+\.(?:usr|idx|\d{3})$/i.test(normalized)) return true;
         break;
       case "intellipap":
         if (/(?:^|\/)(?:(?:sl\/)?(?:set1|u|l)|(?:dv6\/)?(?:set\.bin|ver\.bin|s\.bin))$/i.test(normalized)) return true;
@@ -159,7 +162,7 @@ function shouldKeepUndatedFile(path: string, size: number, likelyFamilyId: strin
   }
 
   if (
-    /(?:^|\/)(?:p-series\/|p\d{5}\.\d{3}$|prop[^/]*\.(?:txt|bin)$|p\d{4}\.(?:idx|000)$|therapy\.pdat$|therapy\.dat$|(?:sl\/)?set1$|(?:sl\/)?u$|(?:sl\/)?l$|(?:dv6\/)?set\.bin$|(?:dv6\/)?ver\.bin$|(?:dv6\/)?s\.bin$|wm_data\.tdf$)/i.test(
+    /(?:^|\/)(?:p-series\/|p\d{5}\.\d{3}$|prop[^/]*\.(?:txt|bin)$|p\d{4}\.(?:idx|000)$|therapy\.pdat$|therapy\.dat$|(?:sl\/)?set1$|(?:sl\/)?u$|(?:sl\/)?l$|(?:dv6\/)?set\.bin$|(?:dv6\/)?ver\.bin$|(?:dv6\/)?s\.bin$|wm_data\.tdf$|[^/]+\.(?:usr|idx|\d{3})$)/i.test(
       normalized
     )
   ) {

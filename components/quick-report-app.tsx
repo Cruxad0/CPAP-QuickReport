@@ -505,9 +505,13 @@ export function QuickReportApp() {
         }
       );
       if (deferredEntries.length === 0) {
+        setPendingSourceSelection(null);
+        setIsSourceLoading(false);
         setStatus("idle");
-        setStatusMessage("Awaiting data source.");
+        setStatusMessage("Directory picker returned no files. Falling back to browser folder selection...");
         setParseProgressImmediate({ phase: "idle", detail: "Idle", percent: 0 });
+        beginSourceSelection("folder");
+        folderInputRef.current?.click();
         return;
       }
 

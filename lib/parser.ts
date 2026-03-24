@@ -14,6 +14,7 @@ import {
   type LoaderMatch,
   type ParserFamilyDefinition
 } from "@/lib/parsers/families";
+import { hasBmcBundleStructure } from "@/lib/parsers/families/bmc";
 import { parseBmcFamily } from "@/lib/parsers/bmc";
 import { parseIconFamily } from "@/lib/parsers/icon";
 import { parseIntelliPapFamily } from "@/lib/parsers/intellipap";
@@ -1750,6 +1751,10 @@ async function refineSelectedFamily(
   loaderRanking: LoaderMatch[],
   meta: SourceMeta[]
 ): Promise<ParserFamilyDefinition | null> {
+  if (hasBmcBundleStructure(meta)) {
+    return getParserFamily("bmc") ?? selectedFamily;
+  }
+
   if (!selectedFamily) {
     for (const candidate of meta.slice(0, 20)) {
       const lowerPath = candidate.normalizedPath.toLowerCase();
