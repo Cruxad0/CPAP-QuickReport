@@ -1,4 +1,4 @@
-import { BMC_FAMILY, hasBmcBundleStructure } from "@/lib/parsers/families/bmc";
+import { BMC_FAMILY, hasBmcBundleStructure, hasBmcUsrStructure } from "@/lib/parsers/families/bmc";
 import { CMS50_FAMILY } from "@/lib/parsers/families/cms50";
 import { CMS50F37_FAMILY } from "@/lib/parsers/families/cms50f37";
 import { DREEM_FAMILY } from "@/lib/parsers/families/dreem";
@@ -67,6 +67,9 @@ function scoreFamily(files: SourceMetaLike[], family: ParserFamilyDefinition): n
   if (family.id === "bmc" && hasBmcBundleStructure(files)) {
     score += 10;
   }
+  if (family.id === "bmc" && !hasBmcBundleStructure(files) && hasBmcUsrStructure(files)) {
+    score += 4;
+  }
 
   return score;
 }
@@ -78,7 +81,9 @@ export function getParserFamily(familyId: string): ParserFamilyDefinition | null
 export function hasFamilySignature(files: SourceMetaLike[], familyId: string): boolean {
   const family = getParserFamily(familyId);
   if (!family) return false;
-  if (family.id === "bmc") return hasBmcBundleStructure(files);
+  if (family.id === "bmc") {
+    return hasBmcBundleStructure(files) || hasBmcUsrStructure(files);
+  }
   return family.signaturePatterns.some((pattern) => familyHit(files, pattern));
 }
 

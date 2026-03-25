@@ -20,6 +20,10 @@ function getBmcBundleInfo(path: string): { key: string; extension: string } | nu
   };
 }
 
+export function hasBmcUsrStructure(files: Array<{ normalizedPath: string }>): boolean {
+  return files.some((file) => /(?:^|\/)[^/]+\.usr$/i.test(normalizePath(file.normalizedPath)));
+}
+
 export function isBmcWaveformPath(path: string): boolean {
   return /(?:^|\/)[^/]+\.\d{3}$/i.test(normalizePath(path));
 }
