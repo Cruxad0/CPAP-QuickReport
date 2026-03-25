@@ -191,7 +191,7 @@ function normalizeUsageHours(raw: number | undefined): number | undefined {
   return undefined;
 }
 
-function mapResMedModeCode(modeCode: number | undefined, device: string | undefined): "CPAP" | "APAP" | "BiPAP" | null {
+export function mapResMedModeCode(modeCode: number | undefined, device: string | undefined): "CPAP" | "APAP" | "BiPAP" | null {
   if (modeCode === undefined || !Number.isFinite(modeCode)) return null;
   const isSeries11 = /\b(?:airsense|aircurve)\s*11\b/i.test(device ?? "");
   if (isSeries11) {
@@ -237,7 +237,7 @@ function formatPressureValue(value: number | undefined): string | undefined {
   return `${Number(value.toFixed(2)).toString()} cmH2O`;
 }
 
-function inferResMedModeFromSignals(values: {
+export function inferResMedModeFromSignals(values: {
   setPressure?: number;
   minPressure?: number;
   maxPressure?: number;

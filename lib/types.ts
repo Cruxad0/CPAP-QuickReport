@@ -105,6 +105,7 @@ export interface BuildQuickReportMetricsFromPreparedRequest {
   dateOfBirthIso: string;
   physicianName: string;
   lookbackDays?: number;
+  windowEndClinicalDayIso?: string;
   onProgress?: (p: ParseProgress) => void;
 }
 

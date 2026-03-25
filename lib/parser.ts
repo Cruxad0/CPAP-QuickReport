@@ -605,6 +605,18 @@ function resolveRecentWindow(_latestDate: Date, lookbackDays: number): DateWindo
   return { start: windowStart, end: windowEnd };
 }
 
+function resolveWindowFromClinicalEndIso(windowEndClinicalDayIso: string, lookbackDays: number): DateWindow {
+  const normalizedLookbackDays = normalizeLookbackDays(lookbackDays);
+  const windowEnd = new Date(`${windowEndClinicalDayIso}T12:00:00Z`);
+  if (Number.isNaN(windowEnd.getTime())) {
+    throw new Error(`Invalid window end clinical day: ${windowEndClinicalDayIso}`);
+  }
+
+  const windowStart = new Date(windowEnd);
+  windowStart.setUTCDate(windowStart.getUTCDate() - normalizedLookbackDays);
+  return { start: windowStart, end: windowEnd };
+}
+
 function scoreGenericCandidate(meta: SourceMeta, window: DateWindow | null, priorityPatterns: RegExp[]): number {
   let score = 0;
   const path = meta.normalizedPath;
@@ -2163,7 +2175,7 @@ export function buildQuickReportMetricsFromPreparedSource(
   prepared: PreparedQuickReportSource,
   request: BuildQuickReportMetricsFromPreparedRequest
 ): QuickReportMetrics {
-  const { patientName, dateOfBirthIso, physicianName, lookbackDays, onProgress } = request;
+  const { patientName, dateOfBirthIso, physicianName, lookbackDays, windowEndClinicalDayIso, onProgress } = request;
   const normalizedLookbackDays = Math.min(normalizeLookbackDays(lookbackDays), prepared.maxLookbackDays);
   const warnings = [...prepared.warnings];
   const now = new Date();
@@ -2176,7 +2188,9 @@ export function buildQuickReportMetricsFromPreparedSource(
     throw new Error("Prepared therapy history could not determine a valid latest clinical day.");
   }
 
-  const { start: windowStart, end: windowEnd } = resolveRecentWindow(latest, normalizedLookbackDays);
+  const { start: windowStart, end: windowEnd } = windowEndClinicalDayIso
+    ? resolveWindowFromClinicalEndIso(windowEndClinicalDayIso, normalizedLookbackDays)
+    : resolveRecentWindow(latest, normalizedLookbackDays);
   const windowStartIso = toIsoDate(windowStart);
   const windowEndIso = toIsoDate(windowEnd);
   let effectiveWindowStartIso = windowStartIso;

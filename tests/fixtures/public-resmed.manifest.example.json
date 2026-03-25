@@ -1,0 +1,31 @@
+{
+  "fixtures": [
+    {
+      "name": "Public ResMed AirSense 11 fixture",
+      "path": "/absolute/path/to/CPAP-Exporter/CPAP-Exporter.Integration.Tests/MachineData/ResMed/AirSense/11/APAP",
+      "sourceKind": "folder",
+      "lookbackDays": 90,
+      "anchorToLatestData": true,
+      "expect": {
+        "selectedLoaderIncludes": "ResMed",
+        "deviceIncludes": "AirSense",
+        "minDaysWithData": 1,
+        "minDaysWithUsage": 1
+      }
+    },
+    {
+      "name": "Public ResMed AirCurve 10 VAuto fixture",
+      "path": "/absolute/path/to/CPAP-Exporter/CPAP-Exporter.Integration.Tests/MachineData/ResMed/AirCurve/10/VAuto",
+      "sourceKind": "folder",
+      "lookbackDays": 90,
+      "anchorToLatestData": true,
+      "expect": {
+        "selectedLoaderIncludes": "ResMed",
+        "mode": "BiPAP",
+        "deviceIncludes": "AirCurve",
+        "minDaysWithData": 1,
+        "minDaysWithUsage": 1
+      }
+    }
+  ]
+}

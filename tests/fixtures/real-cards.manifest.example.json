@@ -1,0 +1,41 @@
+{
+  "fixtures": [
+    {
+      "name": "ResMed AirSense 11 sample",
+      "path": "/absolute/path/to/resmed/card/root",
+      "sourceKind": "folder",
+      "lookbackDays": 90,
+      "windowEndClinicalDayIso": "2026-03-23",
+      "expect": {
+        "selectedLoaderIncludes": "ResMed",
+        "mode": "APAP",
+        "deviceIncludes": "AirSense",
+        "minDaysWithData": 7,
+        "minDaysWithUsage": 7
+      }
+    },
+    {
+      "name": "Luna II sample",
+      "path": "/absolute/path/to/luna/card/root",
+      "sourceKind": "folder",
+      "lookbackDays": 90,
+      "windowEndClinicalDayIso": "2026-03-23",
+      "expect": {
+        "selectedLoaderIncludes": "BMC",
+        "mode": "APAP",
+        "minDaysWithData": 7
+      }
+    },
+    {
+      "name": "Philips DreamStation sample",
+      "path": "/absolute/path/to/prs1/card/root",
+      "sourceKind": "folder",
+      "lookbackDays": 90,
+      "windowEndClinicalDayIso": "2026-03-23",
+      "expect": {
+        "selectedLoaderIncludes": "Philips",
+        "minDaysWithData": 7
+      }
+    }
+  ]
+}
