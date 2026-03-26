@@ -25,6 +25,220 @@ type PdfLibModule = {
   rgb: (r: number, g: number, b: number) => any;
 };
 
+type ThemeColor = {
+  r: number;
+  g: number;
+  b: number;
+};
+
+type PdfTheme = {
+  primary: ThemeColor;
+  primaryAccent: ThemeColor;
+  heading: ThemeColor;
+  body: ThemeColor;
+  muted: ThemeColor;
+  border: ThemeColor;
+  rowAlt: ThemeColor;
+  rowBase: ThemeColor;
+  danger: ThemeColor;
+  onPrimary: ThemeColor;
+};
+
+function themeColor(r: number, g: number, b: number): ThemeColor {
+  return { r, g, b };
+}
+
+const DEFAULT_PDF_THEME: PdfTheme = {
+  primary: themeColor(0.05, 0.43, 0.57),
+  primaryAccent: themeColor(0.06, 0.46, 0.6),
+  heading: themeColor(0.07, 0.31, 0.49),
+  body: themeColor(0.1, 0.15, 0.2),
+  muted: themeColor(0.12, 0.22, 0.31),
+  border: themeColor(0.82, 0.88, 0.93),
+  rowAlt: themeColor(0.965, 0.98, 0.99),
+  rowBase: themeColor(1, 1, 1),
+  danger: themeColor(0.73, 0.12, 0.12),
+  onPrimary: themeColor(1, 1, 1)
+};
+
+function pdfColor(rgbFn: PdfLibModule["rgb"], color: ThemeColor) {
+  return rgbFn(color.r, color.g, color.b);
+}
+
+function clamp01(value: number): number {
+  return Math.max(0, Math.min(1, value));
+}
+
+function mixThemeColor(a: ThemeColor, b: ThemeColor, ratio: number): ThemeColor {
+  const t = clamp01(ratio);
+  return themeColor(a.r * (1 - t) + b.r * t, a.g * (1 - t) + b.g * t, a.b * (1 - t) + b.b * t);
+}
+
+function rgbToHsl(color: ThemeColor): { h: number; s: number; l: number } {
+  const { r, g, b } = color;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  if (max === min) return { h: 0, s: 0, l };
+
+  const d = max - min;
+  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+  let h = 0;
+  switch (max) {
+    case r:
+      h = (g - b) / d + (g < b ? 6 : 0);
+      break;
+    case g:
+      h = (b - r) / d + 2;
+      break;
+    default:
+      h = (r - g) / d + 4;
+      break;
+  }
+  h /= 6;
+  return { h, s, l };
+}
+
+function hslToRgb(h: number, s: number, l: number): ThemeColor {
+  if (s === 0) return themeColor(l, l, l);
+
+  const hue2rgb = (p: number, q: number, t: number): number => {
+    let tt = t;
+    if (tt < 0) tt += 1;
+    if (tt > 1) tt -= 1;
+    if (tt < 1 / 6) return p + (q - p) * 6 * tt;
+    if (tt < 1 / 2) return q;
+    if (tt < 2 / 3) return p + (q - p) * (2 / 3 - tt) * 6;
+    return p;
+  };
+
+  const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+  const p = 2 * l - q;
+  return themeColor(hue2rgb(p, q, h + 1 / 3), hue2rgb(p, q, h), hue2rgb(p, q, h - 1 / 3));
+}
+
+function quantizeChannel(value: number): number {
+  const bucket = 24;
+  return Math.min(255, Math.round(value / bucket) * bucket);
+}
+
+async function extractDominantThemeColor(headerDataUrl: string | undefined): Promise<ThemeColor | null> {
+  if (!headerDataUrl || typeof Image === "undefined" || typeof document === "undefined") return null;
+
+  return await new Promise<ThemeColor | null>((resolve) => {
+    const image = new Image();
+    image.onload = () => {
+      try {
+        const maxDimension = 64;
+        const scale = Math.min(1, maxDimension / Math.max(image.width || 1, image.height || 1));
+        const width = Math.max(1, Math.round((image.width || 1) * scale));
+        const height = Math.max(1, Math.round((image.height || 1) * scale));
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d", { willReadFrequently: true });
+        if (!ctx) {
+          resolve(null);
+          return;
+        }
+
+        ctx.drawImage(image, 0, 0, width, height);
+        const { data } = ctx.getImageData(0, 0, width, height);
+        const colorCounts = new Map<string, { count: number; color: ThemeColor }>();
+        let fallbackSum = themeColor(0, 0, 0);
+        let fallbackCount = 0;
+
+        for (let i = 0; i < data.length; i += 4) {
+          const alpha = data[i + 3] / 255;
+          if (alpha < 0.6) continue;
+
+          const color = themeColor(data[i] / 255, data[i + 1] / 255, data[i + 2] / 255);
+          const { s, l } = rgbToHsl(color);
+
+          if ((l > 0.96 && s < 0.08) || (l < 0.04 && s < 0.08)) continue;
+
+          const qr = quantizeChannel(data[i]);
+          const qg = quantizeChannel(data[i + 1]);
+          const qb = quantizeChannel(data[i + 2]);
+          const key = `${qr},${qg},${qb}`;
+          const existing = colorCounts.get(key);
+          if (existing) {
+            existing.count += 1;
+          } else {
+            colorCounts.set(key, {
+              count: 1,
+              color: themeColor(qr / 255, qg / 255, qb / 255)
+            });
+          }
+
+          fallbackSum = themeColor(fallbackSum.r + color.r, fallbackSum.g + color.g, fallbackSum.b + color.b);
+          fallbackCount += 1;
+        }
+
+        if (colorCounts.size > 0) {
+          let best: { count: number; color: ThemeColor } | null = null;
+          for (const value of colorCounts.values()) {
+            if (!best || value.count > best.count) best = value;
+          }
+          resolve(best?.color ?? null);
+          return;
+        }
+
+        if (fallbackCount > 0) {
+          resolve(themeColor(fallbackSum.r / fallbackCount, fallbackSum.g / fallbackCount, fallbackSum.b / fallbackCount));
+          return;
+        }
+
+        resolve(null);
+      } catch {
+        resolve(null);
+      }
+    };
+    image.onerror = () => resolve(null);
+    image.src = headerDataUrl;
+  });
+}
+
+function buildPdfThemeFromColor(baseColor: ThemeColor | null): PdfTheme {
+  if (!baseColor) return DEFAULT_PDF_THEME;
+
+  const hsl = rgbToHsl(baseColor);
+  const isNeutral = hsl.s < 0.08;
+
+  const primary = isNeutral
+    ? themeColor(clamp01(hsl.l * 0.55), clamp01(hsl.l * 0.55), clamp01(hsl.l * 0.58))
+    : hslToRgb(hsl.h, clamp01(Math.max(0.25, Math.min(0.72, hsl.s))), clamp01(Math.max(0.28, Math.min(0.42, hsl.l))));
+
+  const primaryAccent = isNeutral
+    ? mixThemeColor(primary, themeColor(1, 1, 1), 0.12)
+    : hslToRgb(hsl.h, clamp01(Math.max(0.22, Math.min(0.68, hsl.s * 0.95))), clamp01(Math.max(0.38, Math.min(0.54, hsl.l + 0.08))));
+
+  const heading = mixThemeColor(primary, themeColor(0.04, 0.06, 0.1), 0.28);
+  const body = mixThemeColor(primary, themeColor(0.07, 0.1, 0.14), 0.8);
+  const muted = mixThemeColor(primary, themeColor(0.16, 0.2, 0.26), 0.72);
+  const border = mixThemeColor(primary, themeColor(1, 1, 1), 0.78);
+  const rowAlt = mixThemeColor(primary, themeColor(1, 1, 1), 0.93);
+  const onPrimary = rgbToHsl(primary).l > 0.6 ? themeColor(0.1, 0.15, 0.2) : themeColor(1, 1, 1);
+
+  return {
+    primary,
+    primaryAccent,
+    heading,
+    body,
+    muted,
+    border,
+    rowAlt,
+    rowBase: themeColor(1, 1, 1),
+    danger: DEFAULT_PDF_THEME.danger,
+    onPrimary
+  };
+}
+
+async function resolvePdfTheme(headerDataUrl: string | undefined): Promise<PdfTheme> {
+  const dominantColor = await extractDominantThemeColor(headerDataUrl);
+  return buildPdfThemeFromColor(dominantColor);
+}
+
 function initialsFromName(name: string): string {
   const tokens = name.split(/\s+/).map((x) => x.trim()).filter(Boolean);
   const initials = tokens.map((x) => x[0]?.toUpperCase() ?? "").join("");
@@ -151,19 +365,26 @@ function measureBrandingImagePlacement(state: PdfState, headerImage: any): Brand
   };
 }
 
-function drawDefaultHeader(state: PdfState, reportDays: number, reportMode: string | undefined, fontBold: any, rgbFn: PdfLibModule["rgb"]) {
+function drawDefaultHeader(
+  state: PdfState,
+  reportDays: number,
+  reportMode: string | undefined,
+  fontBold: any,
+  rgbFn: PdfLibModule["rgb"],
+  theme: PdfTheme
+) {
   state.page.drawText(`${headerModeText(reportMode)} ${reportDays}-Day Quick Report`, {
     x: PAGE_MARGIN,
     y: state.y - 16,
     size: 11,
     font: fontBold,
-    color: rgbFn(0.07, 0.31, 0.49)
+    color: pdfColor(rgbFn, theme.heading)
   });
   state.y -= 18;
   state.page.drawLine({
     start: { x: PAGE_MARGIN, y: state.y },
     end: { x: state.pageWidth - PAGE_MARGIN, y: state.y },
-    color: rgbFn(0.06, 0.46, 0.6),
+    color: pdfColor(rgbFn, theme.primaryAccent),
     thickness: 1.1
   });
   state.y -= 10;
@@ -175,7 +396,8 @@ function drawHeader(
   reportMode: string | undefined,
   headerImage: any | undefined,
   fontBold: any,
-  rgbFn: PdfLibModule["rgb"]
+  rgbFn: PdfLibModule["rgb"],
+  theme: PdfTheme
 ) {
   if (headerImage) {
     const placement = measureBrandingImagePlacement(state, headerImage);
@@ -187,7 +409,7 @@ function drawHeader(
     });
     state.y -= placement.height + placement.afterGap;
   }
-  drawDefaultHeader(state, reportDays, reportMode, fontBold, rgbFn);
+  drawDefaultHeader(state, reportDays, reportMode, fontBold, rgbFn, theme);
 }
 
 function ensureSpace(
@@ -198,14 +420,15 @@ function ensureSpace(
   reportMode: string | undefined,
   headerImage: any | undefined,
   fontBold: any,
-  rgbFn: PdfLibModule["rgb"]
+  rgbFn: PdfLibModule["rgb"],
+  theme: PdfTheme
 ) {
   if (state.y - neededHeight >= PAGE_MARGIN) return;
   state.page = pdfDoc.addPage([PAGE_WIDTH_A4, PAGE_HEIGHT_A4]);
   state.pageWidth = state.page.getWidth();
   state.pageHeight = state.page.getHeight();
   state.y = state.pageHeight - PAGE_MARGIN;
-  drawHeader(state, reportDays, reportMode, headerImage, fontBold, rgbFn);
+  drawHeader(state, reportDays, reportMode, headerImage, fontBold, rgbFn, theme);
 }
 
 function startNewPage(
@@ -215,13 +438,14 @@ function startNewPage(
   reportMode: string | undefined,
   headerImage: any | undefined,
   fontBold: any,
-  rgbFn: PdfLibModule["rgb"]
+  rgbFn: PdfLibModule["rgb"],
+  theme: PdfTheme
 ) {
   state.page = pdfDoc.addPage([PAGE_WIDTH_A4, PAGE_HEIGHT_A4]);
   state.pageWidth = state.page.getWidth();
   state.pageHeight = state.page.getHeight();
   state.y = state.pageHeight - PAGE_MARGIN;
-  drawHeader(state, reportDays, reportMode, headerImage, fontBold, rgbFn);
+  drawHeader(state, reportDays, reportMode, headerImage, fontBold, rgbFn, theme);
 }
 
 function drawSectionTitle(
@@ -232,15 +456,16 @@ function drawSectionTitle(
   reportMode: string | undefined,
   headerImage: any | undefined,
   fontBold: any,
-  rgbFn: PdfLibModule["rgb"]
+  rgbFn: PdfLibModule["rgb"],
+  theme: PdfTheme
 ) {
-  ensureSpace(pdfDoc, state, 30, reportDays, reportMode, headerImage, fontBold, rgbFn);
+  ensureSpace(pdfDoc, state, 30, reportDays, reportMode, headerImage, fontBold, rgbFn, theme);
   state.page.drawText(title, {
     x: PAGE_MARGIN,
     y: state.y - 12,
     size: 11,
     font: fontBold,
-    color: rgbFn(0.07, 0.31, 0.49)
+    color: pdfColor(rgbFn, theme.heading)
   });
   state.y -= 16;
 }
@@ -252,7 +477,8 @@ function drawBottomFooterBlock(
   headerImage: any | undefined,
   fontRegular: any,
   fontBold: any,
-  rgbFn: PdfLibModule["rgb"]
+  rgbFn: PdfLibModule["rgb"],
+  theme: PdfTheme
 ) {
   const baseY = PAGE_MARGIN + 4;
   const physicianY = baseY + 42;
@@ -265,7 +491,7 @@ function drawBottomFooterBlock(
     y: physicianY,
     size: 10,
     font: fontBold,
-    color: rgbFn(0.12, 0.2, 0.27)
+    color: pdfColor(rgbFn, theme.muted)
   });
 
   state.page.drawText("Signature:", {
@@ -273,12 +499,12 @@ function drawBottomFooterBlock(
     y: signatureY,
     size: 10,
     font: fontBold,
-    color: rgbFn(0.12, 0.2, 0.27)
+    color: pdfColor(rgbFn, theme.muted)
   });
   state.page.drawLine({
     start: { x: PAGE_MARGIN + 74, y: signatureY + 1 },
     end: { x: state.pageWidth - PAGE_MARGIN, y: signatureY + 1 },
-    color: rgbFn(0.35, 0.43, 0.5),
+    color: pdfColor(rgbFn, mixThemeColor(theme.muted, theme.rowBase, 0.45)),
     thickness: 0.9
   });
 
@@ -287,7 +513,7 @@ function drawBottomFooterBlock(
     y: generatedY,
     size: 10,
     font: fontRegular,
-    color: rgbFn(0.12, 0.22, 0.31)
+    color: pdfColor(rgbFn, theme.muted)
   });
 }
 
@@ -349,12 +575,12 @@ function therapyTableStyle(fontSize: number): CompactTableStyle {
   return {
     titleSize: 11,
     titleGap: 3.5,
-    headerHeight: Math.max(16, clampedFontSize + 6),
+    headerHeight: Math.max(16.5, clampedFontSize + 6.5),
     headerFontSize: 10,
     bodyFontSize: clampedFontSize,
-    lineHeight: Math.max(10.5, clampedFontSize + 0.8),
+    lineHeight: Math.max(11.2, clampedFontSize + 1.6),
     insetX: 5.5,
-    insetY: 3.25,
+    insetY: 4,
     leftRatio: 0.41,
     afterGap: 5
   };
@@ -433,6 +659,13 @@ function therapyPressureRows(report: QuickReportMetrics): TableRow[] {
   ];
 }
 
+function reraValueText(report: QuickReportMetrics): string {
+  if (/apex\s*\/\s*bmc\s*\/\s*luna/i.test(report.selectedLoader)) {
+    return "Not supported by this device";
+  }
+  return valueText(report.avgReraIndex);
+}
+
 function leakRow(label: string, value: number | null): TableRow {
   if (value === null || !Number.isFinite(value)) return [label, NO_DATA_FALLBACK];
   return [label, `${valueText(value)} L/min`, value > 30];
@@ -470,7 +703,8 @@ function drawCompactTableAt(
   style: CompactTableStyle,
   fontRegular: any,
   fontBold: any,
-  rgbFn: PdfLibModule["rgb"]
+  rgbFn: PdfLibModule["rgb"],
+  theme: PdfTheme
 ): number {
   const leftW = width * style.leftRatio;
   const rightW = width - leftW;
@@ -481,7 +715,7 @@ function drawCompactTableAt(
     y: y - style.titleSize,
     size: style.titleSize,
     font: fontBold,
-    color: rgbFn(0.07, 0.31, 0.49)
+    color: pdfColor(rgbFn, theme.heading)
   });
   y -= style.titleSize + style.titleGap;
 
@@ -490,8 +724,8 @@ function drawCompactTableAt(
     y: y - style.headerHeight,
     width,
     height: style.headerHeight,
-    color: rgbFn(0.05, 0.43, 0.57),
-    borderColor: rgbFn(0.05, 0.43, 0.57),
+    color: pdfColor(rgbFn, theme.primary),
+    borderColor: pdfColor(rgbFn, theme.primary),
     borderWidth: 0.5
   });
   state.page.drawText("Field", {
@@ -499,14 +733,14 @@ function drawCompactTableAt(
     y: y - style.headerHeight + 5,
     size: style.headerFontSize,
     font: fontBold,
-    color: rgbFn(1, 1, 1)
+    color: pdfColor(rgbFn, theme.onPrimary)
   });
   state.page.drawText("Value", {
     x: x + leftW + style.insetX,
     y: y - style.headerHeight + 5,
     size: style.headerFontSize,
     font: fontBold,
-    color: rgbFn(1, 1, 1)
+    color: pdfColor(rgbFn, theme.onPrimary)
   });
   y -= style.headerHeight;
 
@@ -515,7 +749,7 @@ function drawCompactTableAt(
     const valueLines = splitLines(value, fontRegular, style.bodyFontSize, rightW - style.insetX * 2);
     const lineCount = Math.max(labelLines.length, valueLines.length);
     const rowHeight = style.insetY * 2 + lineCount * style.lineHeight;
-    const fill = idx % 2 === 0 ? rgbFn(0.965, 0.98, 0.99) : rgbFn(1, 1, 1);
+    const fill = idx % 2 === 0 ? pdfColor(rgbFn, theme.rowAlt) : pdfColor(rgbFn, theme.rowBase);
 
     state.page.drawRectangle({
       x,
@@ -523,7 +757,7 @@ function drawCompactTableAt(
       width,
       height: rowHeight,
       color: fill,
-      borderColor: rgbFn(0.82, 0.88, 0.93),
+      borderColor: pdfColor(rgbFn, theme.border),
       borderWidth: 0.5
     });
 
@@ -534,7 +768,7 @@ function drawCompactTableAt(
         y: labelStartY - i * style.lineHeight,
         size: style.bodyFontSize,
         font: fontBold,
-        color: rgbFn(0.19, 0.29, 0.37)
+        color: pdfColor(rgbFn, theme.muted)
       });
     });
 
@@ -545,7 +779,7 @@ function drawCompactTableAt(
         y: valueStartY - i * style.lineHeight,
         size: style.bodyFontSize,
         font: fontRegular,
-        color: emphasize ? rgbFn(0.73, 0.12, 0.12) : rgbFn(0.1, 0.15, 0.2)
+        color: emphasize ? pdfColor(rgbFn, theme.danger) : pdfColor(rgbFn, theme.body)
       });
     });
 
@@ -565,7 +799,8 @@ function drawTable(
   headerImage: any | undefined,
   fontRegular: any,
   fontBold: any,
-  rgbFn: PdfLibModule["rgb"]
+  rgbFn: PdfLibModule["rgb"],
+  theme: PdfTheme
 ) {
   const tableWidth = state.pageWidth - PAGE_MARGIN * 2;
   const leftW = tableWidth * 0.42;
@@ -574,17 +809,17 @@ function drawTable(
   const insetX = 8;
   const insetY = 6;
 
-  drawSectionTitle(pdfDoc, state, title, reportDays, reportMode, headerImage, fontBold, rgbFn);
+  drawSectionTitle(pdfDoc, state, title, reportDays, reportMode, headerImage, fontBold, rgbFn, theme);
 
   const headerHeight = 22;
-  ensureSpace(pdfDoc, state, headerHeight + 12, reportDays, reportMode, headerImage, fontBold, rgbFn);
+  ensureSpace(pdfDoc, state, headerHeight + 12, reportDays, reportMode, headerImage, fontBold, rgbFn, theme);
   state.page.drawRectangle({
     x: PAGE_MARGIN,
     y: state.y - headerHeight,
     width: tableWidth,
     height: headerHeight,
-    color: rgbFn(0.05, 0.43, 0.57),
-    borderColor: rgbFn(0.05, 0.43, 0.57),
+    color: pdfColor(rgbFn, theme.primary),
+    borderColor: pdfColor(rgbFn, theme.primary),
     borderWidth: 0.5
   });
   state.page.drawText("Field", {
@@ -592,14 +827,14 @@ function drawTable(
     y: state.y - headerHeight + 7,
     size: 10,
     font: fontBold,
-    color: rgbFn(1, 1, 1)
+    color: pdfColor(rgbFn, theme.onPrimary)
   });
   state.page.drawText("Value", {
     x: PAGE_MARGIN + leftW + insetX,
     y: state.y - headerHeight + 7,
     size: 10,
     font: fontBold,
-    color: rgbFn(1, 1, 1)
+    color: pdfColor(rgbFn, theme.onPrimary)
   });
   state.y -= headerHeight;
 
@@ -609,8 +844,8 @@ function drawTable(
     const lineCount = Math.max(labelLines.length, valueLines.length);
     const rowHeight = insetY * 2 + lineCount * lineHeight;
 
-    ensureSpace(pdfDoc, state, rowHeight + 10, reportDays, reportMode, headerImage, fontBold, rgbFn);
-    const fill = idx % 2 === 0 ? rgbFn(0.965, 0.98, 0.99) : rgbFn(1, 1, 1);
+    ensureSpace(pdfDoc, state, rowHeight + 10, reportDays, reportMode, headerImage, fontBold, rgbFn, theme);
+    const fill = idx % 2 === 0 ? pdfColor(rgbFn, theme.rowAlt) : pdfColor(rgbFn, theme.rowBase);
 
     state.page.drawRectangle({
       x: PAGE_MARGIN,
@@ -618,7 +853,7 @@ function drawTable(
       width: tableWidth,
       height: rowHeight,
       color: fill,
-      borderColor: rgbFn(0.82, 0.88, 0.93),
+      borderColor: pdfColor(rgbFn, theme.border),
       borderWidth: 0.5
     });
 
@@ -629,7 +864,7 @@ function drawTable(
         y: labelStartY - i * lineHeight,
         size: 10,
         font: fontBold,
-        color: rgbFn(0.19, 0.29, 0.37)
+        color: pdfColor(rgbFn, theme.muted)
       });
     });
 
@@ -640,7 +875,7 @@ function drawTable(
         y: valueStartY - i * lineHeight,
         size: 10,
         font: fontRegular,
-        color: emphasize ? rgbFn(0.73, 0.12, 0.12) : rgbFn(0.1, 0.15, 0.2)
+        color: emphasize ? pdfColor(rgbFn, theme.danger) : pdfColor(rgbFn, theme.body)
       });
     });
 
@@ -658,6 +893,7 @@ export async function buildPdfReport(report: QuickReportMetrics, headerDataUrl?:
   const pdfDoc = await PDFDocument.create();
   const fontRegular = await pdfDoc.embedFont(StandardFonts.Helvetica);
   const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+  const theme = await resolvePdfTheme(headerDataUrl);
   const headerImage = await tryEmbedHeaderImage(pdfDoc, headerDataUrl);
 
   const state: PdfState = {
@@ -666,7 +902,7 @@ export async function buildPdfReport(report: QuickReportMetrics, headerDataUrl?:
     pageWidth: PAGE_WIDTH_A4,
     pageHeight: PAGE_HEIGHT_A4
   };
-  drawHeader(state, report.daysInWindow, report.machine.mode, headerImage, fontBold, rgbFn);
+  drawHeader(state, report.daysInWindow, report.machine.mode, headerImage, fontBold, rgbFn, theme);
 
   const patientRows: TableRow[] = [
     ["Patient", textValue(report.patientName)],
@@ -690,7 +926,7 @@ export async function buildPdfReport(report: QuickReportMetrics, headerDataUrl?:
     ["95th Residual apneas", valueText(report.residualApneas95th)],
     ["Avg Central apneas", valueText(report.avgCentralApneas)],
     ["95th Central apneas", valueText(report.centralApneas95th)],
-    ["Avg RERA index", valueText(report.avgReraIndex)],
+    ["Avg RERA index", reraValueText(report)],
     leakRow("Avg Leak", report.avgLeak),
     leakRow("95th Leak", report.leak95th),
     leakRow("30 min Leak", report.maxLeak30m),
@@ -737,7 +973,8 @@ export async function buildPdfReport(report: QuickReportMetrics, headerDataUrl?:
     layoutChoice.topStyle,
     fontRegular,
     fontBold,
-    rgbFn
+    rgbFn,
+    theme
   );
   const machineBottom = drawCompactTableAt(
     state,
@@ -749,7 +986,8 @@ export async function buildPdfReport(report: QuickReportMetrics, headerDataUrl?:
     layoutChoice.topStyle,
     fontRegular,
     fontBold,
-    rgbFn
+    rgbFn,
+    theme
   );
 
   state.y = Math.min(patientBottom, machineBottom);
@@ -763,10 +1001,11 @@ export async function buildPdfReport(report: QuickReportMetrics, headerDataUrl?:
     layoutChoice.therapyStyle,
     fontRegular,
     fontBold,
-    rgbFn
+    rgbFn,
+    theme
   );
 
-  drawBottomFooterBlock(pdfDoc, state, report, headerImage, fontRegular, fontBold, rgbFn);
+  drawBottomFooterBlock(pdfDoc, state, report, headerImage, fontRegular, fontBold, rgbFn, theme);
 
   const bytes = await pdfDoc.save();
   const blob = new Blob([bytes], { type: "application/pdf" });
