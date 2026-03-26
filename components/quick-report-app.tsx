@@ -747,7 +747,7 @@ export function QuickReportApp() {
           <h3>How-To Use</h3>
           <ol className="usage-steps">
             <li>Enter the patient name and date of birth.</li>
-            <li>Click <strong>Select SD-CARD</strong> and choose the SD card folder.</li>
+            <li>Click <strong>Select SD-CARD</strong> and choose the SD-card root folder.</li>
             <li>Click <strong>Generate Reports</strong> to create 90, 60, 30, and 7 day reports.</li>
             <li>Use the report tabs in preview, then click <strong>Export PDF</strong> to save.</li>
           </ol>
@@ -881,7 +881,7 @@ export function QuickReportApp() {
         <article className={`card col-8 ${isDataSourceLoading ? "card-loading" : ""}`} aria-busy={isDataSourceLoading}>
           {isDataSourceLoading ? <div className="loading-overlay">{dataSourceOverlayText}</div> : null}
           <h3>Data Source</h3>
-          <p className="subtle">Choose an SD-card folder. The webapp keeps only the most recent 90 days NIMV data locally in browser.</p>
+          <p className="subtle">Choose the SD-card root folder. Do not select a subfolder. The webapp keeps only the most recent 90 days NIMV data locally in browser.</p>
 
           <div className="actions">
             <button

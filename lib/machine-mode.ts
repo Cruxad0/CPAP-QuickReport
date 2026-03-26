@@ -44,6 +44,21 @@ const BIPAP_MODE_PATTERNS: RegExp[] = [
   /^pc$/
 ];
 
+const AUTO_BIPAP_MODE_PATTERNS: RegExp[] = [
+  /\bautobilevel\b/,
+  /\bauto bilevel\b/,
+  /\bautobipap\b/,
+  /\bauto bipap\b/,
+  /\bvauto\b/,
+  /\basv\b/,
+  /\bautosv\b/,
+  /\bavaps\b/,
+  /\bauto s\b/,
+  /\bauto st\b/,
+  /\bauto s30\b/,
+  /\bauto st30\b/
+];
+
 export function isAutoPapLikeMode(mode: string | undefined): boolean {
   const normalized = normalizeMachineMode(mode);
   if (!normalized) return false;
@@ -54,6 +69,12 @@ export function isBiPapLikeMode(mode: string | undefined): boolean {
   const normalized = normalizeMachineMode(mode);
   if (!normalized) return false;
   return BIPAP_MODE_PATTERNS.some((pattern) => pattern.test(normalized));
+}
+
+export function isAutoBiPapLikeMode(mode: string | undefined): boolean {
+  const normalized = normalizeMachineMode(mode);
+  if (!normalized) return false;
+  return AUTO_BIPAP_MODE_PATTERNS.some((pattern) => pattern.test(normalized));
 }
 
 export function isFixedCpapLikeMode(mode: string | undefined): boolean {

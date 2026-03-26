@@ -1,4 +1,4 @@
-import { isAutoPapLikeMode, isBiPapLikeMode, isFixedCpapLikeMode } from "@/lib/machine-mode";
+import { isAutoBiPapLikeMode, isAutoPapLikeMode, isBiPapLikeMode, isFixedCpapLikeMode } from "@/lib/machine-mode";
 import { QuickReportMetrics } from "@/lib/types";
 
 const PAGE_WIDTH_A4 = 595.28;
@@ -386,6 +386,11 @@ function pressureMetricText(value: number | null | undefined): string {
   return typeof value === "number" && Number.isFinite(value) ? `${value.toFixed(1)} cmH2O` : NO_DATA_FALLBACK;
 }
 
+function hasPressureRangeText(raw: string | null | undefined): boolean {
+  const text = raw?.trim();
+  return typeof text === "string" && /\d+(?:\.\d+)?\s*-\s*\d+(?:\.\d+)?/.test(text);
+}
+
 function machineSettingRows(report: QuickReportMetrics): TableRow[] {
   const rows: TableRow[] = [
     ["Device", textValue(report.machine.device)],
@@ -410,6 +415,22 @@ function machineSettingRows(report: QuickReportMetrics): TableRow[] {
 
   rows.push(["Pressure relief", textValue(report.machine.pressureRelief)]);
   return rows;
+}
+
+function therapyPressureRows(report: QuickReportMetrics): TableRow[] {
+  const mode = report.machine.mode?.trim() ?? "";
+  const isBiPap = isBiPapLikeMode(mode);
+  const isFixedCpap = isFixedCpapLikeMode(mode);
+  const isAutoPap = !isBiPap && !isFixedCpap && (isAutoPapLikeMode(mode) || hasAutoPressureRange(report));
+  const isAutoBiPap =
+    isBiPap &&
+    (isAutoBiPapLikeMode(mode) || hasPressureRangeText(report.machine.epap) || hasPressureRangeText(report.machine.ipap));
+  if (!isAutoPap && !isAutoBiPap) return [];
+
+  return [
+    ["Avg Pressure", pressureMetricText(report.machine.pressureAvg)],
+    ["95th Pressure", pressureMetricText(report.machine.pressure95th)]
+  ];
 }
 
 function leakRow(label: string, value: number | null): TableRow {
@@ -652,6 +673,7 @@ export async function buildPdfReport(report: QuickReportMetrics, headerDataUrl?:
     ["Date of birth", textValue(report.dateOfBirth)]
   ];
   const machineRows = machineSettingRows(report);
+  const therapyPressureRowsForMode = therapyPressureRows(report);
   const belowMedicareCompliance = isBelowMedicareComplianceThreshold(report);
   const belowMedicareNightlyUse = isBelowMedicareNightlyUseThreshold(report);
   const therapyRows: TableRow[] = [
@@ -661,6 +683,7 @@ export async function buildPdfReport(report: QuickReportMetrics, headerDataUrl?:
     ["Compliant days (>= 4h)", `${report.compliantDays} / ${report.daysInWindow}`, belowMedicareCompliance],
     ["Compliance (% of range)", `${report.compliancePercent.toFixed(1)}%`, belowMedicareCompliance],
     ["Avg usage per day", report.avgUsageHours === null ? NO_DATA_FALLBACK : `${valueText(report.avgUsageHours)} h`, belowMedicareNightlyUse],
+    ...therapyPressureRowsForMode,
     ["Avg AHI", valueText(report.avgAhi)],
     ["95th AHI", valueText(report.ahi95th)],
     ["Avg Residual apneas", valueText(report.avgResidualApneas)],

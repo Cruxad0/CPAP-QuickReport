@@ -43,7 +43,6 @@ const MAX_GENERIC_FILES_TO_SCAN = 2500;
 const MAX_GENERIC_TOTAL_BYTES = 220_000_000;
 const MAX_FILE_SIZE_BYTES = 8_000_000;
 const MAX_RESVENT_P_TOTAL_BYTES = 96_000_000;
-const MAX_RESVENT_P_FILES = 400;
 const TEXT_EXTENSIONS = new Set(["csv", "txt", "tsv", "json", "xml", "edf", "log"]);
 const GENERIC_BINARY_EXTENSIONS = new Set(["dat", "pdat", "cfg", "ini", "edf", "000", "idx"]);
 const MAX_GENERIC_BINARY_FILE_BYTES = 1_500_000;
@@ -1436,19 +1435,42 @@ function pickResventCandidates(files: SourceMeta[], warnings: string[], lookback
     // Keep newest P-files first if caps are reached.
     .sort((a, b) => (a.normalizedPath > b.normalizedPath ? -1 : 1));
 
-  let pBytes = 0;
-  const pFiles: SourceMeta[] = [];
-  for (const m of allP) {
-    if (pFiles.length >= MAX_RESVENT_P_FILES) break;
-    if (pBytes + m.file.size > MAX_RESVENT_P_TOTAL_BYTES) break;
-    pFiles.push(m);
-    pBytes += m.file.size;
-  }
+  const totalPBytes = allP.reduce((sum, m) => sum + m.file.size, 0);
+  let pFiles: SourceMeta[] = allP;
 
-  if (allP.length > pFiles.length) {
-    warnings.push(
-      `Leak channels were parsed from ${pFiles.length} of ${allP.length} P-files (newest first) to keep parsing responsive.`
-    );
+  if (totalPBytes > MAX_RESVENT_P_TOTAL_BYTES) {
+    const pByClinicalDay = new Map<string, SourceMeta[]>();
+    for (const pFile of allP) {
+      if (!pFile.recordDate) continue;
+      const clinicalDay = toClinicalIsoDate(pFile.recordDate);
+      const existing = pByClinicalDay.get(clinicalDay);
+      if (existing) {
+        existing.push(pFile);
+      } else {
+        pByClinicalDay.set(clinicalDay, [pFile]);
+      }
+    }
+
+    let retainedBytes = 0;
+    const retained: SourceMeta[] = [];
+    const retainedDays: string[] = [];
+    for (const clinicalDay of [...pByClinicalDay.keys()].sort((a, b) => b.localeCompare(a))) {
+      const dayFiles = pByClinicalDay.get(clinicalDay) ?? [];
+      const dayBytes = dayFiles.reduce((sum, m) => sum + m.file.size, 0);
+      if (retainedBytes > 0 && retainedBytes + dayBytes > MAX_RESVENT_P_TOTAL_BYTES) {
+        continue;
+      }
+      retained.push(...dayFiles);
+      retainedBytes += dayBytes;
+      retainedDays.push(clinicalDay);
+    }
+
+    pFiles = retained.sort((a, b) => (a.normalizedPath > b.normalizedPath ? -1 : 1));
+    if (allP.length > pFiles.length) {
+      warnings.push(
+        `Leak channels were parsed from ${pFiles.length} of ${allP.length} P-files across ${retainedDays.length} recent therapy days to keep parsing responsive.`
+      );
+    }
   }
 
   return {
