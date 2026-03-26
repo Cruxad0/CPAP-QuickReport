@@ -358,7 +358,7 @@ function parseBmcWaveformRecords(
   return records;
 }
 
-function parseBmcHistoricSession(sessionBytes: Uint8Array): ParsedRecord | null {
+export function parseBmcHistoricSession(sessionBytes: Uint8Array): ParsedRecord | null {
   if (sessionBytes.length < 0x45 || sessionBytes[0] !== 0xe1) return null;
 
   const startDate = decodeBmcDate(u16(sessionBytes, 0x07));
@@ -368,11 +368,10 @@ function parseBmcHistoricSession(sessionBytes: Uint8Array): ParsedRecord | null 
   const usageHours = durationMinutes > 0 ? durationMinutes / 60 : undefined;
 
   let pos = 0x45;
-  while (pos < sessionBytes.length) {
+  while (pos + 5 <= sessionBytes.length) {
     const type = sessionBytes[pos];
-    pos += 1;
+    pos += 5;
     if (type === 0xff) break;
-    pos += 4;
   }
 
   let obstructiveApneas = 0;

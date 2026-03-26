@@ -235,11 +235,9 @@ export function filterSourceFilesToRecentWindow(files: SourceFile[], lookbackDay
     };
   }
 
-  const latestMs = dated.reduce((max, entry) => Math.max(max, entry.date.getTime()), dated[0].date.getTime());
   const now = new Date();
-  const todayNoon = createUtcDateNoon(now.getUTCFullYear(), now.getUTCMonth() + 1, now.getUTCDate());
-  const anchoredWindowEndMs = (todayNoon?.getTime() ?? latestMs) - DAY_MS;
-  const windowStartMs = anchoredWindowEndMs - (lookbackDays - 1) * DAY_MS;
+  const anchoredWindowEndMs = createUtcDateNoon(now.getUTCFullYear(), now.getUTCMonth() + 1, now.getUTCDate())!.getTime();
+  const windowStartMs = anchoredWindowEndMs - lookbackDays * DAY_MS;
 
   let filteredOutCount = 0;
   let filteredOutBytes = 0;
@@ -247,7 +245,7 @@ export function filterSourceFilesToRecentWindow(files: SourceFile[], lookbackDay
     .filter((entry) => {
       if (entry.date) {
         const t = entry.date.getTime();
-        const keep = t >= windowStartMs && t <= anchoredWindowEndMs;
+        const keep = t >= windowStartMs && t < anchoredWindowEndMs;
         if (!keep) {
           filteredOutCount += 1;
           filteredOutBytes += entry.file.size;
@@ -320,11 +318,9 @@ export function filterFolderEntriesToRecentWindow<T extends { relativePath: stri
     };
   }
 
-  const latestMs = dated.reduce((max, item) => Math.max(max, item.date.getTime()), dated[0].date.getTime());
   const now = new Date();
-  const todayNoon = createUtcDateNoon(now.getUTCFullYear(), now.getUTCMonth() + 1, now.getUTCDate());
-  const anchoredWindowEndMs = (todayNoon?.getTime() ?? latestMs) - DAY_MS;
-  const windowStartMs = anchoredWindowEndMs - (lookbackDays - 1) * DAY_MS;
+  const anchoredWindowEndMs = createUtcDateNoon(now.getUTCFullYear(), now.getUTCMonth() + 1, now.getUTCDate())!.getTime();
+  const windowStartMs = anchoredWindowEndMs - lookbackDays * DAY_MS;
 
   let filteredOutCount = 0;
   let filteredOutBytes = 0;
@@ -332,7 +328,7 @@ export function filterFolderEntriesToRecentWindow<T extends { relativePath: stri
     .filter((item) => {
       if (item.date) {
         const t = item.date.getTime();
-        const keep = t >= windowStartMs && t <= anchoredWindowEndMs;
+        const keep = t >= windowStartMs && t < anchoredWindowEndMs;
         if (!keep) {
           filteredOutCount += 1;
           filteredOutBytes += item.size;

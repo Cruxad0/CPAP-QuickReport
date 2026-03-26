@@ -137,6 +137,12 @@ function createUtcDateNoon(year: number, month: number, day: number): Date {
   return new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
 }
 
+function addUtcDays(date: Date, days: number): Date {
+  const next = new Date(date);
+  next.setUTCDate(next.getUTCDate() + days);
+  return next;
+}
+
 function parseDateFromString(value: string): Date | null {
   const isoDateTime = /(\d{4})-(\d{2})-(\d{2})[ T](\d{1,2}):(\d{2})(?::(\d{2}))?/;
   const usDateTime = /(\d{2})\/(\d{2})\/(\d{4})[ T](\d{1,2}):(\d{2})(?::(\d{2}))?/;
@@ -590,29 +596,24 @@ function normalizeLookbackDays(value?: number): number {
 function resolveRecentWindow(_latestDate: Date, lookbackDays: number): DateWindow {
   const normalizedLookbackDays = normalizeLookbackDays(lookbackDays);
 
-  // Anchor all report windows to the most recently completed clinical day:
-  // end = today - 1 (noon-to-noon logic excludes the currently running day).
+  // Always anchor report windows to the noon boundary that ends today so the
+  // included clinical day is yesterday noon -> today noon, regardless of the
+  // current clock time.
   const now = new Date();
-  const todayNoon = createUtcDateNoon(now.getUTCFullYear(), now.getUTCMonth() + 1, now.getUTCDate());
-  const windowEnd = new Date(todayNoon);
-  windowEnd.setUTCDate(windowEnd.getUTCDate() - 1);
-
-  // Include one extra day boundary for noon-to-noon windows:
-  // start = (today - 1) - N  => today - (N + 1)
-  const windowStart = new Date(windowEnd);
-  windowStart.setUTCDate(windowStart.getUTCDate() - normalizedLookbackDays);
+  const windowEnd = createUtcDateNoon(now.getUTCFullYear(), now.getUTCMonth() + 1, now.getUTCDate());
+  const windowStart = addUtcDays(windowEnd, -normalizedLookbackDays);
   return { start: windowStart, end: windowEnd };
 }
 
 function resolveWindowFromClinicalEndIso(windowEndClinicalDayIso: string, lookbackDays: number): DateWindow {
   const normalizedLookbackDays = normalizeLookbackDays(lookbackDays);
-  const windowEnd = new Date(`${windowEndClinicalDayIso}T12:00:00Z`);
-  if (Number.isNaN(windowEnd.getTime())) {
+  const includedClinicalEnd = new Date(`${windowEndClinicalDayIso}T12:00:00Z`);
+  if (Number.isNaN(includedClinicalEnd.getTime())) {
     throw new Error(`Invalid window end clinical day: ${windowEndClinicalDayIso}`);
   }
 
-  const windowStart = new Date(windowEnd);
-  windowStart.setUTCDate(windowStart.getUTCDate() - normalizedLookbackDays);
+  const windowEnd = addUtcDays(includedClinicalEnd, 1);
+  const windowStart = addUtcDays(windowEnd, -normalizedLookbackDays);
   return { start: windowStart, end: windowEnd };
 }
 
@@ -622,7 +623,7 @@ function scoreGenericCandidate(meta: SourceMeta, window: DateWindow | null, prio
   const name = meta.baseName;
 
   if (meta.recordDate && window) {
-    if (meta.recordDate >= window.start && meta.recordDate <= window.end) {
+    if (meta.recordDate >= window.start && meta.recordDate < window.end) {
       score += 120;
     } else {
       const dayDistance = Math.abs(meta.recordDate.getTime() - window.end.getTime()) / (24 * 3600 * 1000);
@@ -1407,7 +1408,7 @@ function pickResventCandidates(files: SourceMeta[], warnings: string[], lookback
   const latestDate = dated.reduce((acc, m) => (m.recordDate > acc ? m.recordDate : acc), dated[0].recordDate);
   const { start: windowStart, end: windowEnd } = resolveRecentWindow(latestDate, lookbackDays);
 
-  const inWindow = dated.filter((m) => m.recordDate >= windowStart && m.recordDate <= windowEnd);
+  const inWindow = dated.filter((m) => m.recordDate >= windowStart && m.recordDate < windowEnd);
   const windowDateSet = new Set(inWindow.map((m) => toClinicalIsoDate(m.recordDate)));
 
   const configFiles = files.filter(isResventConfigFile).filter((m) => m.file.size <= MAX_FILE_SIZE_BYTES);
@@ -2254,6 +2255,7 @@ export function buildQuickReportMetricsFromPreparedSource(
     : resolveRecentWindow(latest, normalizedLookbackDays);
   const windowStartIso = toIsoDate(windowStart);
   const windowEndIso = toIsoDate(windowEnd);
+  const includedWindowEndIso = toIsoDate(addUtcDays(windowEnd, -1));
   let effectiveWindowStartIso = windowStartIso;
 
   const allDayEntries = Object.entries(prepared.dayBuckets);
@@ -2397,7 +2399,7 @@ export function buildQuickReportMetricsFromPreparedSource(
     dateOfBirth: formatDateHuman(dateOfBirthIso),
     physicianName: physicianName.trim(),
     dateRangeStart: formatDateHuman(effectiveWindowStartIso),
-    dateRangeEnd: formatDateHuman(toIsoDate(windowEnd)),
+    dateRangeEnd: formatDateHuman(includedWindowEndIso),
     daysInWindow: effectiveWindowDays,
     daysWithData,
     daysWithUsage,

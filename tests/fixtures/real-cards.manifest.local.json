@@ -1,0 +1,20 @@
+{
+  "fixtures": [
+    {
+      "name": "Resvent sample card",
+      "path": "/Users/joelrodz/Sites/oscar-clinician-work/Card Samples/Resvent",
+      "sourceKind": "folder",
+      "lookbackDays": 90,
+      "anchorToLatestData": true,
+      "expect": {
+        "selectedLoaderIncludes": "Resvent",
+        "mode": "APAP",
+        "deviceIncludes": "Resvent / Hoffrichter",
+        "pressureMin": "8.5 cmH2O",
+        "pressureMax": "11 cmH2O",
+        "minDaysWithData": 89,
+        "minDaysWithUsage": 89
+      }
+    }
+  ]
+}
