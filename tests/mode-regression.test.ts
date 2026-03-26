@@ -2,7 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { classifyTherapyMode, resolveExplicitTherapyMode, type CanonicalTherapyMode } from "../lib/machine-mode";
-import { inferResMedModeFromSignals, mapResMedModeCode } from "../lib/parsers/resmed";
+import {
+  applyResMedCurrentSettingsJson,
+  inferResMedModeFromSignals,
+  inferResMedModeFromSettingsProfile,
+  mapResMedModeCode
+} from "../lib/parsers/resmed";
 import type { QuickReportMetrics } from "../lib/types";
 
 function machine(overrides: Partial<QuickReportMetrics["machine"]>): QuickReportMetrics["machine"] {
@@ -170,5 +175,122 @@ test("ResMed falls back to pressure-setting signals when explicit mode is missin
 
   for (const entry of cases) {
     assert.equal(inferResMedModeFromSignals(entry.values), entry.expected, entry.label);
+  }
+});
+
+test("ResMed settings-profile mode resolution covers AirSense 10 and 11 variants", () => {
+  const cases: Array<{
+    label: string;
+    profileName?: string;
+    therapyMode?: string;
+    device?: string;
+    expected: CanonicalTherapyMode | null;
+  }> = [
+    {
+      label: "AirSense 11 AutoSet profile => APAP",
+      profileName: "AutoSetProfile",
+      therapyMode: "AutoSet",
+      device: "AirSense 11 AutoSet",
+      expected: "APAP"
+    },
+    {
+      label: "AirSense 11 Cpap profile => CPAP",
+      profileName: "CpapProfile",
+      therapyMode: "CPAP",
+      device: "AirSense 11 AutoSet",
+      expected: "CPAP"
+    },
+    {
+      label: "AirSense 10 AutoSet for Her => APAP",
+      profileName: "AutoSetForHerProfile",
+      therapyMode: "HerAuto",
+      device: "AirSense 10 AutoSet for Her",
+      expected: "APAP"
+    },
+    {
+      label: "AirCurve 10 VAuto => BiPAP",
+      profileName: "VAutoProfile",
+      therapyMode: "VAuto",
+      device: "AirCurve 10 VAuto",
+      expected: "BiPAP"
+    }
+  ];
+
+  for (const entry of cases) {
+    assert.equal(
+      inferResMedModeFromSettingsProfile(entry.profileName, entry.therapyMode, entry.device),
+      entry.expected,
+      entry.label
+    );
+  }
+});
+
+test("ResMed CurrentSettings.json is treated as authoritative for active therapy profile", () => {
+  const cases: Array<{
+    label: string;
+    json: string;
+    expected: QuickReportMetrics["machine"];
+  }> = [
+    {
+      label: "AirSense 11 active CPAP profile",
+      json: JSON.stringify({
+        FlowGenerator: {
+          SettingProfiles: {
+            ActiveProfiles: { TherapyProfile: "CpapProfile" },
+            TherapyProfiles: {
+              AutoSetProfile: { TherapyMode: "AutoSet", MinPressure: 7.4, MaxPressure: 9.4 },
+              CpapProfile: { TherapyMode: "CPAP", SetPressure: 7.2 }
+            }
+          }
+        }
+      }),
+      expected: { mode: "CPAP", pressure: "Fixed 7.2 cmH2O" }
+    },
+    {
+      label: "AirSense 10 AutoSet for Her profile",
+      json: JSON.stringify({
+        FlowGenerator: {
+          SettingProfiles: {
+            ActiveProfiles: { TherapyProfile: "AutoSetForHerProfile" },
+            TherapyProfiles: {
+              AutoSetForHerProfile: { TherapyMode: "HerAuto", MinPressure: 8.5, MaxPressure: 11 }
+            }
+          }
+        }
+      }),
+      expected: { mode: "APAP", pressureMin: "8.5 cmH2O", pressureMax: "11 cmH2O", pressureIsAuto: true }
+    },
+    {
+      label: "AirCurve 10 VAuto profile",
+      json: JSON.stringify({
+        FlowGenerator: {
+          SettingProfiles: {
+            ActiveProfiles: { TherapyProfile: "VAutoProfile" },
+            TherapyProfiles: {
+              VAutoProfile: {
+                TherapyMode: "VAuto",
+                MinEPAP: 6,
+                MaxIPAP: 14,
+                PressureSupport: 4
+              }
+            }
+          }
+        }
+      }),
+      expected: {
+        mode: "BiPAP",
+        epap: "6 cmH2O",
+        ipap: "14 cmH2O",
+        pressureRelief: "PS: 4 cmH2O"
+      }
+    }
+  ];
+
+  for (const entry of cases) {
+    const target = machine({});
+    assert.equal(applyResMedCurrentSettingsJson(entry.json, target), true, entry.label);
+    for (const [key, value] of Object.entries(entry.expected)) {
+      assert.equal((target as Record<string, unknown>)[key], value, `${entry.label} -> ${key}`);
+    }
   }
 });

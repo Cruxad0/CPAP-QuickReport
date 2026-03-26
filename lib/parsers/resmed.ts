@@ -19,13 +19,35 @@ const RESMED_MODE_BY_CODE = new Map<string, string>([
 ]);
 
 const RESMED_DEVICE_HINTS: Array<[RegExp, string]> = [
+  [/\bairsense\s*11\s*autoset\s*for\s*her\b/i, "AirSense 11 AutoSet for Her"],
+  [/\bairsense\s*11\s*autoset\b/i, "AirSense 11 AutoSet"],
+  [/\bairsense\s*11\s*elite\b/i, "AirSense 11 Elite"],
+  [/\bairsense\s*11\s*cpap\b/i, "AirSense 11 CPAP"],
+  [/\baircurve\s*11\s*st-a\b/i, "AirCurve 11 ST-A"],
+  [/\baircurve\s*11\s*st\b/i, "AirCurve 11 ST"],
+  [/\baircurve\s*11\s*vauto\b/i, "AirCurve 11 VAuto"],
+  [/\baircurve\s*11\s*asv\b/i, "AirCurve 11 ASV"],
   [/\bairsense\s*11\b/i, "AirSense 11"],
   [/\baircurve\s*11\b/i, "AirCurve 11"],
+  [/\bairsense\s*10\s*autoset\s*for\s*her\b/i, "AirSense 10 AutoSet for Her"],
+  [/\bairsense\s*10\s*autoset\b/i, "AirSense 10 AutoSet"],
+  [/\bairsense\s*10\s*elite\b/i, "AirSense 10 Elite"],
+  [/\bairsense\s*10\s*cpap\b/i, "AirSense 10 CPAP"],
+  [/\baircurve\s*10\s*st-a\b/i, "AirCurve 10 ST-A"],
+  [/\blumis\s*150\s*vpap\s*st-a\b/i, "Lumis 150 VPAP ST-A"],
+  [/\baircurve\s*10\s*st\b/i, "AirCurve 10 ST"],
+  [/\blumis\s*150\s*vpap\s*st\b/i, "Lumis 150 VPAP ST"],
+  [/\baircurve\s*10\s*vauto\b/i, "AirCurve 10 VAuto"],
+  [/\baircurve\s*10\s*asv\b/i, "AirCurve 10 ASV"],
+  [/\baircurve\s*10\s*s\b/i, "AirCurve 10 S"],
+  [/\blumis\s*100\s*vpap\s*s\b/i, "Lumis 100 VPAP S"],
   [/\bairsense\s*10\b/i, "AirSense 10"],
   [/\baircurve\s*10\b/i, "AirCurve 10"],
   [/\bsleepmate\s*10\b/i, "Sleepmate 10"],
   [/\bs9\b/i, "S9"]
 ];
+
+type JsonObject = Record<string, unknown>;
 
 type EdfSignal = {
   label: string;
@@ -50,6 +72,14 @@ function normalizeWhitespace(value: string): string {
   return value.replace(/[_\s]+/g, " ").trim();
 }
 
+function canonicalizeResMedDeviceName(name: string): string {
+  const normalized = normalizeWhitespace(name);
+  for (const [pattern, label] of RESMED_DEVICE_HINTS) {
+    if (pattern.test(normalized)) return label;
+  }
+  return normalized;
+}
+
 function readCaseInsensitive(map: Map<string, string>, keys: string[]): string | undefined {
   const lower = new Map<string, string>();
   for (const [key, value] of map.entries()) lower.set(key.toLowerCase(), value);
@@ -61,10 +91,143 @@ function readCaseInsensitive(map: Map<string, string>, keys: string[]): string |
 }
 
 function inferModeFromResMedName(name: string): "CPAP" | "APAP" | "BiPAP" | null {
+  if (/\b(?:herauto|autoset(?:\s+for\s+her)?)\b/i.test(name)) return "APAP";
+  if (/\b(?:vauto|adapt|asvauto)\b/i.test(name)) return "BiPAP";
   if (/\b(?:autoset|auto for her)\b/i.test(name)) return "APAP";
-  if (/\b(?:aircurve|vpap|vauto|asv|autosv|ivaps|lumis|bilevel|bi[- ]?level|st-a|st)\b/i.test(name)) return "BiPAP";
+  if (/\b(?:aircurve|vpap|vauto|asv|autosv|ivaps|lumis|pacewave|bilevel|bi[- ]?level|st-a|st)\b/i.test(name)) return "BiPAP";
   if (/\b(?:cpap|elite)\b/i.test(name)) return "CPAP";
   return null;
+}
+
+function asObject(value: unknown): JsonObject | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonObject) : null;
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+function asNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+export function inferResMedModeFromSettingsProfile(
+  profileName: string | undefined,
+  therapyMode: string | undefined,
+  device: string | undefined
+): "CPAP" | "APAP" | "BiPAP" | null {
+  const candidates = [therapyMode, profileName, device].filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+  for (const candidate of candidates) {
+    const normalized = normalizeWhitespace(candidate);
+    if (/^cpap(?:\s*profile)?$/i.test(normalized)) return "CPAP";
+    if (/^(?:autoset|autoset profile|autosetforherprofile|autoset for her profile|herauto|auto set for her)$/i.test(normalized)) {
+      return "APAP";
+    }
+    if (/(?:vauto|bilevel|vpap|lumis|asv|asvauto|ivaps|st-a|st|pacewave)/i.test(normalized)) return "BiPAP";
+    const explicit = resolveExplicitTherapyMode(normalized);
+    if (explicit) return explicit;
+  }
+  return null;
+}
+
+function formatPressureSupport(minPs: number | undefined, maxPs: number | undefined, ps: number | undefined): string | undefined {
+  const psText = formatPressureValue(ps);
+  const minText = formatPressureValue(minPs);
+  const maxText = formatPressureValue(maxPs);
+  if (psText) return `PS: ${psText}`;
+  if (minText && maxText) return `PS: ${minText}-${maxText}`;
+  if (minText || maxText) return `PS: ${minText ?? maxText}`;
+  return undefined;
+}
+
+export function applyResMedCurrentSettingsJson(
+  text: string,
+  machine: QuickReportMetrics["machine"]
+): boolean {
+  let root: JsonObject | null = null;
+  try {
+    root = JSON.parse(text) as JsonObject;
+  } catch {
+    return false;
+  }
+
+  const flowGenerator = asObject(root?.FlowGenerator);
+  const settingProfiles = asObject(flowGenerator?.SettingProfiles);
+  const activeProfiles = asObject(settingProfiles?.ActiveProfiles);
+  const therapyProfiles = asObject(settingProfiles?.TherapyProfiles);
+  if (!settingProfiles || !therapyProfiles) return false;
+
+  const activeProfileName = asString(activeProfiles?.TherapyProfile);
+  const selectedProfile = activeProfileName ? asObject(therapyProfiles[activeProfileName]) : null;
+
+  let profileName = activeProfileName;
+  let profile = selectedProfile;
+  if (!profile) {
+    for (const [key, value] of Object.entries(therapyProfiles)) {
+      const obj = asObject(value);
+      if (!obj) continue;
+      if (asString(obj.TherapyMode)) {
+        profileName = key;
+        profile = obj;
+        break;
+      }
+    }
+  }
+
+  if (!profile) return false;
+
+  const therapyMode = asString(profile.TherapyMode);
+  const resolvedMode = inferResMedModeFromSettingsProfile(profileName, therapyMode, machine.device);
+  if (resolvedMode) {
+    machine.mode = resolvedMode;
+  }
+
+  const setPressure = asNumber(profile.SetPressure);
+  const minPressure = asNumber(profile.MinPressure);
+  const maxPressure = asNumber(profile.MaxPressure);
+  const epap = asNumber(profile.EPAP) ?? asNumber(profile.Epap);
+  const ipap = asNumber(profile.IPAP) ?? asNumber(profile.Ipap);
+  const minEpap = asNumber(profile.MinEPAP) ?? asNumber(profile.MinEpap);
+  const maxEpap = asNumber(profile.MaxEPAP) ?? asNumber(profile.MaxEpap);
+  const minIpap = asNumber(profile.MinIPAP) ?? asNumber(profile.MinIpap);
+  const maxIpap = asNumber(profile.MaxIPAP) ?? asNumber(profile.MaxIpap);
+  const pressureSupport = asNumber(profile.PressureSupport) ?? asNumber(profile.PS) ?? asNumber(profile.Ps);
+  const minPressureSupport = asNumber(profile.MinPressureSupport) ?? asNumber(profile.MinPS);
+  const maxPressureSupport = asNumber(profile.MaxPressureSupport) ?? asNumber(profile.MaxPS);
+  const backupRate = asNumber(profile.BackupRate) ?? asNumber(profile.RespiratoryRate) ?? asNumber(profile.RR);
+
+  if (resolvedMode === "CPAP" && setPressure !== undefined) {
+    const fixed = formatPressureValue(setPressure);
+    if (fixed) machine.pressure = `Fixed ${fixed}`;
+  } else if (resolvedMode === "APAP") {
+    machine.pressureIsAuto = true;
+    if (minPressure !== undefined) machine.pressureMin = formatPressureValue(minPressure);
+    if (maxPressure !== undefined) machine.pressureMax = formatPressureValue(maxPressure);
+  } else if (resolvedMode === "BiPAP") {
+    const epapText = formatPressureValue(epap);
+    const ipapText = formatPressureValue(ipap);
+    const minEpapText = formatPressureValue(minEpap);
+    const maxEpapText = formatPressureValue(maxEpap);
+    const minIpapText = formatPressureValue(minIpap);
+    const maxIpapText = formatPressureValue(maxIpap);
+
+    if (epapText) machine.epap = epapText;
+    else if (minEpapText && maxEpapText) machine.epap = `${minEpapText}-${maxEpapText}`;
+    else machine.epap = minEpapText ?? maxEpapText;
+
+    if (ipapText) machine.ipap = ipapText;
+    else if (minIpapText && maxIpapText) machine.ipap = `${minIpapText}-${maxIpapText}`;
+    else if (maxIpapText && minEpapText && pressureSupport !== undefined) machine.ipap = maxIpapText;
+    else machine.ipap = minIpapText ?? maxIpapText;
+
+    const pressureSupportText = formatPressureSupport(minPressureSupport, maxPressureSupport, pressureSupport);
+    if (pressureSupportText) machine.pressureRelief = pressureSupportText;
+    if (backupRate !== undefined && Number.isFinite(backupRate) && backupRate >= 0) {
+      machine.respiratoryRate = `${Number(backupRate.toFixed(2)).toString()} bpm`;
+    }
+  }
+
+  return resolvedMode !== null;
 }
 
 function normalizeLabel(label: string): string {
@@ -431,7 +594,7 @@ function scanProductObject(text: string, machine: QuickReportMetrics["machine"])
 
   const productName = typeof product.ProductName === "string" ? normalizeWhitespace(product.ProductName) : "";
   if (productName) {
-    if (!machine.device) machine.device = productName;
+    if (!machine.device) machine.device = canonicalizeResMedDeviceName(productName);
     if (!machine.mode) {
       const inferred = inferModeFromResMedName(productName);
       if (inferred) machine.mode = inferred;
@@ -450,7 +613,7 @@ function scanIdentLines(text: string, machine: QuickReportMetrics["machine"]) {
   }
 
   if (productName) {
-    if (!machine.device) machine.device = productName;
+    if (!machine.device) machine.device = canonicalizeResMedDeviceName(productName);
     if (!machine.mode) {
       const inferred = inferModeFromResMedName(productName);
       if (inferred) machine.mode = inferred;
@@ -464,6 +627,10 @@ function inferResMedMachineSettings(
   machine: QuickReportMetrics["machine"],
   deps: FamilyParserDeps
 ) {
+  if (applyResMedCurrentSettingsJson(text, machine)) {
+    return;
+  }
+
   scanProductObject(text, machine);
   scanIdentLines(text, machine);
 
@@ -484,7 +651,7 @@ function inferResMedMachineSettings(
   if (!machine.device) {
     const deviceLine = readCaseInsensitive(kv, ["device", "machine", "model", "product", "ProductName"]);
     if (deviceLine && /(?:airsense|aircurve|sleepmate|s9)/i.test(deviceLine)) {
-      machine.device = normalizeWhitespace(deviceLine);
+      machine.device = canonicalizeResMedDeviceName(deviceLine);
       return;
     }
 

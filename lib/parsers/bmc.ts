@@ -12,6 +12,29 @@ const BMC_MODE_LABELS = new Map<number, string>([
 ]);
 
 const BMC_USR_SESSIONS_OFFSET = 0x102340;
+const BMC_IDX_PACKET_SIZE = 0x200;
+const BMC_IDX_PACKETS_OFFSET = 0x800;
+const BMC_WAVEFORM_PACKET_SIZE = 0x100;
+const BMC_WAVEFORM_30M_SECONDS = 30 * 60;
+const BMC_WAVEFORM_60M_SECONDS = 60 * 60;
+const BMC_WAVEFORM_RESET_GAP_MS = 2000;
+
+type BmcWaveformDayState = {
+  date: Date;
+  leakSum: number;
+  leakCount: number;
+  leakMax: number | null;
+  leakMax30m: number | null;
+  leakMax60m: number | null;
+  pressureSum: number;
+  pressureCount: number;
+  pressureSeries: number[];
+  lastTimestampMs: number | null;
+  window30m: number[];
+  window30mSum: number;
+  window60m: number[];
+  window60mSum: number;
+};
 
 function readAscii(bytes: Uint8Array, start: number, length: number): string {
   const end = Math.min(bytes.length, start + length);
@@ -37,6 +60,24 @@ function u32(bytes: Uint8Array, offset: number): number {
   ) >>> 0;
 }
 
+function createUtcDateNoon(year: number, month: number, day: number): Date {
+  return new Date(Date.UTC(year, month - 1, day, 12, 0, 0, 0));
+}
+
+function toIsoDate(dt: Date): string {
+  return dt.toISOString().slice(0, 10);
+}
+
+function percentile(values: number[], p: number): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const idx = (p / 100) * (sorted.length - 1);
+  const lo = Math.floor(idx);
+  const hi = Math.ceil(idx);
+  const blend = idx - lo;
+  return sorted[lo] * (1 - blend) + sorted[hi] * blend;
+}
+
 function decodeBmcDate(encodedDate: number): Date | null {
   const year = 2000 + (encodedDate >> 9);
   const month = (encodedDate >> 5) & 0x0f;
@@ -45,10 +86,28 @@ function decodeBmcDate(encodedDate: number): Date | null {
   return Number.isNaN(dt.getTime()) ? null : dt;
 }
 
+function toBmcClinicalDayIso(year: number, month: number, day: number, hour: number): string | null {
+  const dt = createUtcDateNoon(year, month, day);
+  if (Number.isNaN(dt.getTime())) return null;
+  if (hour < 12) dt.setUTCDate(dt.getUTCDate() - 1);
+  return toIsoDate(dt);
+}
+
 function formatCm(value: number | undefined): string | undefined {
   if (value === undefined || !Number.isFinite(value) || value < 0) return undefined;
   return `${Number(value.toFixed(2)).toString()} cmH2O`;
 }
+
+type BmcIdxSettingsPacket = {
+  timestamp: Date;
+  modeCode: number;
+  epap: number;
+  maxPressure: number;
+  ipap: number;
+  reslex: number;
+  reslexPatient: boolean;
+  backupRR: boolean;
+};
 
 function inferBmcMachineInfo(bytes: Uint8Array, machine: QuickReportMetrics["machine"]) {
   const serial = readAscii(bytes, 0x2d, 32);
@@ -60,21 +119,49 @@ function inferBmcMachineInfo(bytes: Uint8Array, machine: QuickReportMetrics["mac
   }
 }
 
-function inferBmcSettingsFromIdx(bytes: Uint8Array, machine: QuickReportMetrics["machine"]) {
-  if (bytes.length < 0x166) return;
-  if (bytes[0] !== 0xaa || bytes[1] !== 0xaa) return;
+function parseBmcIdxSettingsPacket(bytes: Uint8Array): BmcIdxSettingsPacket | null {
+  if (bytes.length < 0x166) return null;
+  if (bytes[0] !== 0xaa || bytes[1] !== 0xaa) return null;
 
-  const epap = bytes[0x141] / 2;
-  const maxPressure = bytes[0x14c] / 2;
-  const pressureSupport = (bytes[0x148] >> 2) / 2;
+  const year = 2000 + (bytes[0x04] ?? 0);
+  const month = bytes[0x05] ?? 0;
+  const day = bytes[0x06] ?? 0;
+  const timestamp = new Date(Date.UTC(year, month - 1, day, 12, 0, 0, 0));
+  if (
+    Number.isNaN(timestamp.getTime()) ||
+    timestamp.getUTCFullYear() !== year ||
+    timestamp.getUTCMonth() + 1 !== month ||
+    timestamp.getUTCDate() !== day
+  ) {
+    return null;
+  }
+
+  const epap = (bytes[0x141] ?? 0) / 2;
+  const maxPressure = (bytes[0x14c] ?? 0) / 2;
+  const pressureSupport = ((bytes[0x148] ?? 0) >> 2) / 2;
   const ipap = epap + pressureSupport;
-  const modeCode = bytes[0x14d] >> 4;
-  const reslex = bytes[0x148] & 0x03;
-  const reslexPatient = (bytes[0x151] & 0x80) !== 0;
-  const backupRR = (bytes[0x145] & 0x80) !== 0;
+  const modeCode = (bytes[0x14d] ?? 0) >> 4;
+  const reslex = (bytes[0x148] ?? 0) & 0x03;
+  const reslexPatient = ((bytes[0x151] ?? 0) & 0x80) !== 0;
+  const backupRR = ((bytes[0x145] ?? 0) & 0x80) !== 0;
+
+  return {
+    timestamp,
+    modeCode,
+    epap,
+    maxPressure,
+    ipap,
+    reslex,
+    reslexPatient,
+    backupRR
+  };
+}
+
+function applyBmcSettingsPacket(packet: BmcIdxSettingsPacket, machine: QuickReportMetrics["machine"]) {
+  const { modeCode, epap, maxPressure, ipap, reslex, reslexPatient, backupRR } = packet;
   const modeLabel = BMC_MODE_LABELS.get(modeCode);
 
-  if (!machine.mode && modeLabel) {
+  if (modeLabel) {
     if (modeCode === 0) machine.mode = "CPAP";
     else if (modeCode === 1) machine.mode = "APAP";
     else if (modeCode >= 2 && modeCode <= 6) machine.mode = "BiPAP";
@@ -108,6 +195,167 @@ function inferBmcSettingsFromIdx(bytes: Uint8Array, machine: QuickReportMetrics[
     else if (reslexPatient) machine.pressureRelief = "Reslex: Patient";
     else machine.pressureRelief = `Reslex: ${reslex}`;
   }
+}
+
+function inferBmcSettingsFromIdx(bytes: Uint8Array, machine: QuickReportMetrics["machine"]) {
+  let latestPacket: BmcIdxSettingsPacket | null = null;
+
+  for (let offset = BMC_IDX_PACKETS_OFFSET; offset + BMC_IDX_PACKET_SIZE <= bytes.length; offset += BMC_IDX_PACKET_SIZE) {
+    const packet = parseBmcIdxSettingsPacket(bytes.subarray(offset, offset + BMC_IDX_PACKET_SIZE));
+    if (!packet) continue;
+    if (!latestPacket || packet.timestamp > latestPacket.timestamp) {
+      latestPacket = packet;
+    }
+  }
+
+  if (!latestPacket && bytes.length >= BMC_IDX_PACKET_SIZE) {
+    latestPacket = parseBmcIdxSettingsPacket(bytes.subarray(0, BMC_IDX_PACKET_SIZE));
+  }
+
+  if (latestPacket) {
+    applyBmcSettingsPacket(latestPacket, machine);
+  }
+}
+
+function createBmcWaveformDayState(dayIso: string): BmcWaveformDayState {
+  return {
+    date: new Date(`${dayIso}T12:00:00Z`),
+    leakSum: 0,
+    leakCount: 0,
+    leakMax: null,
+    leakMax30m: null,
+    leakMax60m: null,
+    pressureSum: 0,
+    pressureCount: 0,
+    pressureSeries: [],
+    lastTimestampMs: null,
+    window30m: [],
+    window30mSum: 0,
+    window60m: [],
+    window60mSum: 0
+  };
+}
+
+function resetBmcLeakWindows(state: BmcWaveformDayState) {
+  state.window30m.length = 0;
+  state.window30mSum = 0;
+  state.window60m.length = 0;
+  state.window60mSum = 0;
+}
+
+function pushBmcLeakWindow(state: BmcWaveformDayState, leak: number) {
+  state.window30m.push(leak);
+  state.window30mSum += leak;
+  if (state.window30m.length > BMC_WAVEFORM_30M_SECONDS) {
+    state.window30mSum -= state.window30m.shift() ?? 0;
+  }
+  if (state.window30m.length === BMC_WAVEFORM_30M_SECONDS) {
+    const average30m = state.window30mSum / BMC_WAVEFORM_30M_SECONDS;
+    state.leakMax30m = state.leakMax30m === null ? average30m : Math.max(state.leakMax30m, average30m);
+  }
+
+  state.window60m.push(leak);
+  state.window60mSum += leak;
+  if (state.window60m.length > BMC_WAVEFORM_60M_SECONDS) {
+    state.window60mSum -= state.window60m.shift() ?? 0;
+  }
+  if (state.window60m.length === BMC_WAVEFORM_60M_SECONDS) {
+    const average60m = state.window60mSum / BMC_WAVEFORM_60M_SECONDS;
+    state.leakMax60m = state.leakMax60m === null ? average60m : Math.max(state.leakMax60m, average60m);
+  }
+}
+
+function parseBmcWaveformRecords(
+  waveformFiles: Array<{ path: string; bytes: Uint8Array }>,
+  validDayIsoSet: Set<string>
+): ParsedRecord[] {
+  if (waveformFiles.length === 0 || validDayIsoSet.size === 0) return [];
+
+  const states = new Map<string, BmcWaveformDayState>();
+
+  for (const waveformFile of waveformFiles) {
+    const bytes = waveformFile.bytes;
+
+    for (let offset = 0; offset + BMC_WAVEFORM_PACKET_SIZE <= bytes.length; offset += BMC_WAVEFORM_PACKET_SIZE) {
+      if (u16(bytes, offset) !== 0xaaaa) continue;
+
+      const year = u16(bytes, offset + 0xf8);
+      const month = bytes[offset + 0xfa] ?? 0;
+      const day = bytes[offset + 0xfb] ?? 0;
+      const hour = bytes[offset + 0xfc] ?? 0;
+      const minute = bytes[offset + 0xfd] ?? 0;
+      const second = bytes[offset + 0xfe] ?? 0;
+
+      if (
+        year < 2000 ||
+        year > 2100 ||
+        month < 1 ||
+        month > 12 ||
+        day < 1 ||
+        day > 31 ||
+        hour > 23 ||
+        minute > 59 ||
+        second > 59
+      ) {
+        continue;
+      }
+
+      const clinicalDayIso = toBmcClinicalDayIso(year, month, day, hour);
+      if (!clinicalDayIso || !validDayIsoSet.has(clinicalDayIso)) continue;
+
+      const timestamp = new Date(Date.UTC(year, month - 1, day, hour, minute, second, 0));
+      const timestampMs = timestamp.getTime();
+      if (!Number.isFinite(timestampMs)) continue;
+
+      const state = states.get(clinicalDayIso) ?? createBmcWaveformDayState(clinicalDayIso);
+      if (!states.has(clinicalDayIso)) states.set(clinicalDayIso, state);
+
+      if (state.lastTimestampMs !== null) {
+        const deltaMs = timestampMs - state.lastTimestampMs;
+        if (deltaMs === 0) {
+          continue;
+        }
+        if (deltaMs < 0 || deltaMs > BMC_WAVEFORM_RESET_GAP_MS) {
+          resetBmcLeakWindows(state);
+        }
+      }
+      state.lastTimestampMs = timestampMs;
+
+      const leak = u16(bytes, offset + 0xc4) / 10;
+      if (Number.isFinite(leak) && leak >= 0 && leak < 500) {
+        state.leakSum += leak;
+        state.leakCount += 1;
+        state.leakMax = state.leakMax === null ? leak : Math.max(state.leakMax, leak);
+        pushBmcLeakWindow(state, leak);
+      } else {
+        resetBmcLeakWindows(state);
+      }
+
+      const rawIpap = u16(bytes, offset + 0x04);
+      const rawEpap = u16(bytes, offset + 0x06);
+      const pressure = Math.max(rawIpap, rawEpap) / 2;
+      if (Number.isFinite(pressure) && pressure >= 0 && pressure <= 80) {
+        state.pressureSum += pressure;
+        state.pressureCount += 1;
+        state.pressureSeries.push(pressure);
+      }
+    }
+  }
+
+  const records: ParsedRecord[] = [];
+  for (const state of states.values()) {
+    records.push({
+      date: state.date,
+      leak: state.leakCount > 0 ? state.leakSum / state.leakCount : undefined,
+      leakMax: state.leakMax ?? undefined,
+      leakMax30m: state.leakMax30m ?? undefined,
+      leakMax60m: state.leakMax60m ?? undefined,
+      pressureAvg: state.pressureCount > 0 ? state.pressureSum / state.pressureCount : undefined,
+      pressure95th: state.pressureSeries.length > 0 ? percentile(state.pressureSeries, 95) : undefined
+    });
+  }
+
+  return records;
 }
 
 function parseBmcHistoricSession(sessionBytes: Uint8Array): ParsedRecord | null {
@@ -190,6 +438,8 @@ function parseBmcUsrRecords(bytes: Uint8Array): ParsedRecord[] {
 }
 
 export async function parseBmcFamily(context: FamilyParserContext, deps: FamilyParserDeps): Promise<void> {
+  const validDayIsoSet = new Set<string>();
+  const waveformFiles: Array<{ path: string; bytes: Uint8Array }> = [];
   let processed = 0;
 
   for (const candidate of context.candidates) {
@@ -210,9 +460,15 @@ export async function parseBmcFamily(context: FamilyParserContext, deps: FamilyP
 
       if (lowerPath.endsWith(".usr")) {
         inferBmcMachineInfo(bytes, context.machine);
-        context.records.push(...parseBmcUsrRecords(bytes));
+        const parsedRecords = parseBmcUsrRecords(bytes);
+        for (const record of parsedRecords) {
+          validDayIsoSet.add(toIsoDate(record.date));
+        }
+        context.records.push(...parsedRecords);
       } else if (lowerPath.endsWith(".idx")) {
         inferBmcSettingsFromIdx(bytes, context.machine);
+      } else if (/\.\d{3}$/i.test(lowerPath)) {
+        waveformFiles.push({ path: lowerPath, bytes });
       }
     } catch {
       continue;
@@ -221,5 +477,15 @@ export async function parseBmcFamily(context: FamilyParserContext, deps: FamilyP
     if (processed % 4 === 0) {
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
+  }
+
+  if (waveformFiles.length > 0 && validDayIsoSet.size > 0) {
+    waveformFiles.sort((a, b) => a.path.localeCompare(b.path, undefined, { numeric: true }));
+    deps.emit(context.onProgress, {
+      phase: "parse",
+      detail: "Reading Luna II waveform and leak data...",
+      percent: Math.min(context.progressEnd, context.progressStart + Math.round((context.progressEnd - context.progressStart) * 0.95))
+    });
+    context.records.push(...parseBmcWaveformRecords(waveformFiles, validDayIsoSet));
   }
 }
