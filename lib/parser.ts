@@ -881,7 +881,12 @@ function parseResventStatText(text: string, fallbackDate: Date): ParsedRecord | 
   for (const [key, value] of kvLower.entries()) {
     const normalized = normalizePressureNumber(safeNumber(value));
     if (normalized === undefined) continue;
-    if (pressureAvg === undefined && /(?:avg|average|mean).*(?:press|ipap|epap)|(?:press|ipap|epap).*(?:avg|average|mean)/i.test(key)) {
+    if (
+      pressureAvg === undefined &&
+      /(?:med|median|avg|average|mean).*(?:press|ipap|epap)|(?:press|ipap|epap).*(?:med|median|avg|average|mean)/i.test(
+        key
+      )
+    ) {
       pressureAvg = normalized;
     }
     if (pressure95th === undefined && /(?:95|p95).*(?:press|ipap|epap)|(?:press|ipap|epap).*(?:95|p95)/i.test(key)) {
@@ -1385,6 +1390,7 @@ function parseResventLeakFromBytes(bytes: Uint8Array): LeakStats | null {
 function pickResventCandidates(files: SourceMeta[], warnings: string[], lookbackDays: number): {
   configFiles: SourceMeta[];
   statFiles: SourceMeta[];
+  summaryStatFiles: SourceMeta[];
   evByDayUsage: Map<string, SourceMeta>;
   pFiles: SourceMeta[];
   windowDateSet: Set<string>;
@@ -1476,6 +1482,7 @@ function pickResventCandidates(files: SourceMeta[], warnings: string[], lookback
   return {
     configFiles,
     statFiles,
+    summaryStatFiles,
     evByDayUsage,
     pFiles,
     windowDateSet,
@@ -1901,7 +1908,8 @@ async function prepareQuickReportSourceInternal(request: PrepareQuickReportSourc
       fallbackWindowDateSet = selected.windowDateSet;
       latestPathDate = selected.latestDate;
 
-      const totalResventWork = selected.configFiles.length + selected.statFiles.length + selected.pFiles.length;
+      const totalResventWork =
+        selected.configFiles.length + selected.statFiles.length + selected.summaryStatFiles.length + selected.pFiles.length;
       let processed = 0;
 
       const resventConfigByBase = new Map<string, SourceMeta>();
@@ -2001,6 +2009,37 @@ async function prepareQuickReportSourceInternal(request: PrepareQuickReportSourc
 
         if (processed % 20 === 0) {
           await new Promise((resolve) => setTimeout(resolve, 0));
+        }
+      }
+
+      if (selected.summaryStatFiles.length > 0 && selected.summaryStatFiles !== selected.statFiles) {
+        for (const statFile of selected.summaryStatFiles) {
+          processed += 1;
+          const pct = 8 + Math.round((processed / Math.max(1, totalResventWork)) * 62);
+          emit(onProgress, {
+            phase: "parse",
+            detail: `Reading pressure summary from ${statFile.normalizedPath}`,
+            percent: Math.min(70, pct)
+          });
+
+          try {
+            const bytes = await statFile.file.readBytes();
+            if (statFile.recordDate === null) continue;
+            const parsed = parseResventStatFromBytes(bytes, statFile.recordDate);
+            if (!parsed) continue;
+            if (typeof parsed.pressureAvg !== "number" && typeof parsed.pressure95th !== "number") continue;
+            records.push({
+              date: parsed.date,
+              pressureAvg: parsed.pressureAvg,
+              pressure95th: parsed.pressure95th
+            });
+          } catch {
+            warnings.push(`Could not read ${statFile.normalizedPath}`);
+          }
+
+          if (processed % 20 === 0) {
+            await new Promise((resolve) => setTimeout(resolve, 0));
+          }
         }
       }
 

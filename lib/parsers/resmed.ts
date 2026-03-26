@@ -466,6 +466,7 @@ function parseResMedStrEdf(
   const centralAliases = ["CAI"];
   const reraAliases = ["RERA"];
   const leakMaxAliases = ["Leak Max", "Leak.Max"];
+  const pressure50Aliases = ["MaskPress.50", "Mask Pres 50", "MaskPress.5", "Mask Pres Med"];
   const pressure95Aliases = ["MaskPress.95", "Mask Pres 95"];
   const setPressureAliases = ["Set Pressure", "S.C.Press"];
   const minPressureAliases = ["Min Pressure", "S.AS.MinPress", "S.A.MinPress", "S.AFH.MinPress"];
@@ -491,6 +492,7 @@ function parseResMedStrEdf(
     const centralApneas = readResMedValue(bytes, edf, centralAliases, recordIndex);
     const reraIndex = readResMedValue(bytes, edf, reraAliases, recordIndex);
     const leakMax = readResMedValue(bytes, edf, leakMaxAliases, recordIndex);
+    const pressureAvg = readResMedValue(bytes, edf, pressure50Aliases, recordIndex);
     const pressure95th = readResMedValue(bytes, edf, pressure95Aliases, recordIndex);
 
     const hasSignal =
@@ -500,6 +502,7 @@ function parseResMedStrEdf(
       (centralApneas !== undefined && centralApneas >= 0 && centralApneas < 200) ||
       (reraIndex !== undefined && reraIndex >= 0 && reraIndex < 200) ||
       (leakMax !== undefined && leakMax >= 0 && leakMax < 500) ||
+      (pressureAvg !== undefined && pressureAvg >= 0 && pressureAvg <= 80) ||
       (pressure95th !== undefined && pressure95th >= 0 && pressure95th <= 80);
     if (!hasSignal) continue;
 
@@ -511,6 +514,7 @@ function parseResMedStrEdf(
       centralApneas: centralApneas !== undefined && centralApneas >= 0 && centralApneas < 200 ? centralApneas : undefined,
       reraIndex: reraIndex !== undefined && reraIndex >= 0 && reraIndex < 200 ? reraIndex : undefined,
       leakMax: leakMax !== undefined && leakMax >= 0 && leakMax < 500 ? leakMax : undefined,
+      pressureAvg: pressureAvg !== undefined && pressureAvg >= 0 && pressureAvg <= 80 ? pressureAvg : undefined,
       pressure95th: pressure95th !== undefined && pressure95th >= 0 && pressure95th <= 80 ? pressure95th : undefined
     });
 
@@ -577,6 +581,13 @@ function parseResMedStrEdf(
           const psText = formatPressureValue(ps);
           if (psText) machine.pressureRelief = `PS: ${psText}`;
         }
+      }
+
+      if (machine.pressureAvg === undefined && pressureAvg !== undefined && pressureAvg >= 0 && pressureAvg <= 80) {
+        machine.pressureAvg = pressureAvg;
+      }
+      if (machine.pressure95th === undefined && pressure95th !== undefined && pressure95th >= 0 && pressure95th <= 80) {
+        machine.pressure95th = pressure95th;
       }
     }
   }

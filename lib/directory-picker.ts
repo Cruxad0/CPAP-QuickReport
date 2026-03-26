@@ -5,16 +5,8 @@ import type { ParseProgress } from "@/lib/types";
 
 type ProgressCallback = (progress: ParseProgress) => void;
 
-type DirectoryPickerFileHandle = {
-  kind: "file";
-  name: string;
-  getFile: () => Promise<File>;
-};
-
-type DirectoryPickerDirectoryHandle = {
-  kind: "directory";
-  name: string;
-  values: () => AsyncIterable<DirectoryPickerFileHandle | DirectoryPickerDirectoryHandle>;
+type DirectoryPickerDirectoryHandle = FileSystemDirectoryHandle & {
+  values: () => AsyncIterable<FileSystemHandle>;
 };
 
 type DirectoryPickerWindow = Window & {
@@ -73,15 +65,16 @@ export async function pickDeferredFolderEntries(
 
       if (childHandle.kind === "directory") {
         stack.push({
-          handle: childHandle,
+          handle: childHandle as DirectoryPickerDirectoryHandle,
           prefix: childPath
         });
       } else {
         deferredEntries.push({
+          kind: "handle",
           name: childHandle.name,
           size: 0,
           relativePath: childPath,
-          getFile: async () => await childHandle.getFile()
+          handle: childHandle as FileSystemFileHandle
         });
       }
 

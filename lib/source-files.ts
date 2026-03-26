@@ -17,17 +17,28 @@ export type RecentWindowFilterResult = {
   hadDatedFiles: boolean;
 };
 
-export type FolderSourceEntry = {
+export type MaterializedFolderSourceEntry = {
   file: File;
   relativePath: string;
 };
 
-export type DeferredFolderSourceEntry = {
-  name: string;
-  size: number;
-  relativePath: string;
-  getFile: () => Promise<File>;
-};
+export type DeferredFolderSourceEntry =
+  | {
+      kind: "file";
+      name: string;
+      size: number;
+      relativePath: string;
+      file: File;
+    }
+  | {
+      kind: "handle";
+      name: string;
+      size: number;
+      relativePath: string;
+      handle: FileSystemFileHandle;
+    };
+
+export type FolderSourceEntry = MaterializedFolderSourceEntry | DeferredFolderSourceEntry;
 
 export type FolderSourceMetaEntry = {
   index: number;
@@ -401,7 +412,12 @@ export async function createCachedSourceFilesFromFolder(
     const end = Math.min(start + chunkSize, entries.length);
     for (let i = start; i < end; i += 1) {
       const entry = entries[i];
-      const file = entry.file;
+      const file =
+        "kind" in entry
+          ? entry.kind === "handle"
+            ? await entry.handle.getFile()
+            : entry.file
+          : entry.file;
       mapped.push(
         createCachedSourceFile({
           name: file.name,

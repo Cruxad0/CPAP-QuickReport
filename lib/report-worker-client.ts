@@ -73,10 +73,11 @@ export class ReportWorkerClient {
       const file = files[i];
       if (!file) continue;
       deferredEntries.push({
+        kind: "file",
         name: file.name,
         size: file.size,
         relativePath: file.webkitRelativePath || file.name,
-        getFile: async () => file
+        file
       });
     }
 
@@ -113,6 +114,9 @@ export class ReportWorkerClient {
     options: { importLookbackDays: number; parseLookbackDays: number; onProgress?: (progress: ParseProgress) => void }
   ) {
     const recentEntries = await this.buildRecentFolderEntries(entries, options);
+    const transferableEntries = this.canTransferFolderEntries(recentEntries)
+      ? recentEntries
+      : await this.materializeFolderEntries(recentEntries, options.onProgress);
 
     const startRequest: ReportWorkerRequest = {
       requestId,
@@ -122,11 +126,11 @@ export class ReportWorkerClient {
     };
     this.worker.postMessage(startRequest);
 
-    const total = recentEntries.length;
+    const total = transferableEntries.length;
     let chunkCount = 0;
     for (let start = 0; start < total; start += ReportWorkerClient.FOLDER_TRANSFER_CHUNK_SIZE) {
       const end = Math.min(start + ReportWorkerClient.FOLDER_TRANSFER_CHUNK_SIZE, total);
-      const chunk = recentEntries.slice(start, end);
+      const chunk = transferableEntries.slice(start, end);
 
       const chunkRequest: ReportWorkerRequest = {
         requestId,
@@ -159,7 +163,7 @@ export class ReportWorkerClient {
   private async buildRecentFolderEntries(
     entries: readonly DeferredFolderSourceEntry[],
     options: { importLookbackDays: number; onProgress?: (progress: ParseProgress) => void }
-  ): Promise<FolderSourceEntry[]> {
+  ): Promise<DeferredFolderSourceEntry[]> {
     const metadataEntries: FolderSourceMetaEntry[] = [];
 
     for (let start = 0; start < entries.length; start += ReportWorkerClient.FOLDER_ENTRY_SCAN_CHUNK_SIZE) {
@@ -202,28 +206,52 @@ export class ReportWorkerClient {
       });
     }
 
+    return filtered.entries
+      .map((entry) => entries[entry.index])
+      .filter((entry): entry is DeferredFolderSourceEntry => Boolean(entry));
+  }
+
+  private canTransferFolderEntries(entries: readonly DeferredFolderSourceEntry[]) {
+    const firstHandleEntry = entries.find((entry) => entry.kind === "handle");
+    if (!firstHandleEntry) return true;
+    if (typeof structuredClone !== "function") return false;
+
+    try {
+      structuredClone(firstHandleEntry);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private async materializeFolderEntries(
+    entries: readonly DeferredFolderSourceEntry[],
+    onProgress?: (progress: ParseProgress) => void
+  ): Promise<FolderSourceEntry[]> {
     const folderEntries: FolderSourceEntry[] = [];
-    for (let start = 0; start < filtered.entries.length; start += ReportWorkerClient.FOLDER_TRANSFER_CHUNK_SIZE) {
-      const end = Math.min(start + ReportWorkerClient.FOLDER_TRANSFER_CHUNK_SIZE, filtered.entries.length);
+    for (let start = 0; start < entries.length; start += ReportWorkerClient.FOLDER_TRANSFER_CHUNK_SIZE) {
+      const end = Math.min(start + ReportWorkerClient.FOLDER_TRANSFER_CHUNK_SIZE, entries.length);
       for (let i = start; i < end; i += 1) {
-        const entry = filtered.entries[i];
-        const file = entries[entry.index];
-        if (!file) continue;
+        const entry = entries[i];
+        if (!entry) continue;
+        if (entry.kind === "file") {
+          folderEntries.push(entry);
+          continue;
+        }
         folderEntries.push({
-          file: await file.getFile(),
+          file: await entry.handle.getFile(),
           relativePath: entry.relativePath
         });
       }
-      if (options.onProgress) {
-        options.onProgress({
+      if (onProgress) {
+        onProgress({
           phase: "scan",
-          detail: `Preparing recent SD-CARD files... ${end}/${filtered.entries.length}`,
-          percent: Math.min(3, filtered.entries.length === 0 ? 3 : 2 + Math.round((end / filtered.entries.length)))
+          detail: `Preparing recent SD-CARD files... ${end}/${entries.length}`,
+          percent: Math.min(3, entries.length === 0 ? 3 : 2 + Math.round(end / entries.length))
         });
       }
       await this.yieldToBrowser();
     }
-
     return folderEntries;
   }
 
