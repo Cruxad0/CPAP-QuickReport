@@ -70,6 +70,15 @@ function assertExact(actual: string | undefined, expected: string | undefined, l
   assert.equal(actual, expected, label);
 }
 
+function addIsoDays(isoDate: string, days: number): string {
+  const dt = new Date(`${isoDate}T12:00:00Z`);
+  if (Number.isNaN(dt.getTime())) {
+    throw new Error(`Invalid ISO clinical day: ${isoDate}`);
+  }
+  dt.setUTCDate(dt.getUTCDate() + days);
+  return dt.toISOString().slice(0, 10);
+}
+
 test("real card smoke fixtures import end-to-end", async (t) => {
   const manifest = await loadManifest();
   if (!manifest || manifest.fixtures.length === 0) {
@@ -100,7 +109,7 @@ test("real card smoke fixtures import end-to-end", async (t) => {
         physicianName: "",
         lookbackDays: fixture.lookbackDays ?? 90,
         windowEndClinicalDayIso: fixture.anchorToLatestData
-          ? prepared.latestClinicalDayIso
+          ? addIsoDays(prepared.latestClinicalDayIso, 1)
           : fixture.windowEndClinicalDayIso
       });
 

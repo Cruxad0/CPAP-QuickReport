@@ -612,7 +612,11 @@ function resolveWindowFromClinicalEndIso(windowEndClinicalDayIso: string, lookba
     throw new Error(`Invalid window end clinical day: ${windowEndClinicalDayIso}`);
   }
 
-  const windowEnd = addUtcDays(includedClinicalEnd, 1);
+  // Internal day buckets are keyed by the start date of each noon-to-noon
+  // clinical day. A user-facing end day like "March 26" means the clinical day
+  // ending at noon on March 26, so the exclusive upper bound for start-date
+  // buckets is exactly the March 26 noon boundary.
+  const windowEnd = includedClinicalEnd;
   const windowStart = addUtcDays(windowEnd, -normalizedLookbackDays);
   return { start: windowStart, end: windowEnd };
 }
@@ -2255,7 +2259,6 @@ export function buildQuickReportMetricsFromPreparedSource(
     : resolveRecentWindow(latest, normalizedLookbackDays);
   const windowStartIso = toIsoDate(windowStart);
   const windowEndIso = toIsoDate(windowEnd);
-  const includedWindowEndIso = toIsoDate(addUtcDays(windowEnd, -1));
   let effectiveWindowStartIso = windowStartIso;
 
   const allDayEntries = Object.entries(prepared.dayBuckets);
@@ -2330,6 +2333,8 @@ export function buildQuickReportMetricsFromPreparedSource(
   const effectiveWindowEnd = new Date(`${windowEndIso}T12:00:00Z`);
   const effectiveDaySpan = Math.max(0, Math.round((effectiveWindowEnd.getTime() - effectiveWindowStart.getTime()) / (24 * 3600 * 1000)));
   const effectiveWindowDays = Math.max(1, Math.min(normalizedLookbackDays, effectiveDaySpan));
+  const displayedWindowStartIso = toIsoDate(addUtcDays(effectiveWindowStart, 1));
+  const displayedWindowEndIso = windowEndIso;
   if (effectiveWindowDays < normalizedLookbackDays) {
     warnings.push(
       `Only ${effectiveWindowDays} days of therapy history are available; calculations were adjusted from ${normalizedLookbackDays} days to avoid false deficits.`
@@ -2398,8 +2403,8 @@ export function buildQuickReportMetricsFromPreparedSource(
     patientName: patientName.trim(),
     dateOfBirth: formatDateHuman(dateOfBirthIso),
     physicianName: physicianName.trim(),
-    dateRangeStart: formatDateHuman(effectiveWindowStartIso),
-    dateRangeEnd: formatDateHuman(includedWindowEndIso),
+    dateRangeStart: formatDateHuman(displayedWindowStartIso),
+    dateRangeEnd: formatDateHuman(displayedWindowEndIso),
     daysInWindow: effectiveWindowDays,
     daysWithData,
     daysWithUsage,
