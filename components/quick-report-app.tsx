@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { pickDeferredFolderEntries, supportsDirectoryPicker } from "@/lib/directory-picker";
+import { enumerateDeferredFolderEntries, pickDirectoryHandle, supportsDirectoryPicker } from "@/lib/directory-picker";
 import { ReportWorkerClient } from "@/lib/report-worker-client";
 import { REPORT_RANGE_OPTIONS, type ReportRangeDays } from "@/lib/report-orchestrator";
 import { bytesToLabel, IMPORT_LOOKBACK_DAYS } from "@/lib/source-files";
@@ -495,34 +495,45 @@ export function QuickReportApp() {
     setPendingSourceSelection("folder");
 
     try {
-      const deferredEntries = await pickDeferredFolderEntries(
-        (progress) => queueParseProgress(progress),
-        () => {
-          setIsSourceLoading(true);
-          setStatus("working");
-          setStatusMessage("Loading SD-CARD...");
-          setParseProgressImmediate({ phase: "scan", detail: "Loading SD-CARD...", percent: 1 });
-        }
-      );
-      if (deferredEntries.length === 0) {
-        setPendingSourceSelection(null);
-        setIsSourceLoading(false);
-        setStatus("idle");
-        setStatusMessage("Directory picker returned no files. Falling back to browser folder selection...");
-        setParseProgressImmediate({ phase: "idle", detail: "Idle", percent: 0 });
-        beginSourceSelection("folder");
-        folderInputRef.current?.click();
-        return;
-      }
-
+      const rootHandle = await pickDirectoryHandle(() => {
+        setIsSourceLoading(true);
+        setStatus("working");
+        setStatusMessage("Loading SD-CARD...");
+        setParseProgressImmediate({ phase: "scan", detail: "Loading SD-CARD...", percent: 1 });
+      });
       const client = workerClientRef.current;
       if (!client) throw new Error("Background worker is not available.");
 
-      const loaded = await client.loadFolderEntries(deferredEntries, {
-        importLookbackDays: IMPORT_LOOKBACK_DAYS,
-        parseLookbackDays: REPORT_RANGE_OPTIONS[0],
-        onProgress: (progress) => queueParseProgress(progress)
-      });
+      let loaded;
+      try {
+        loaded = await client.loadFolderHandle(rootHandle, {
+          importLookbackDays: IMPORT_LOOKBACK_DAYS,
+          parseLookbackDays: REPORT_RANGE_OPTIONS[0],
+          onProgress: (progress) => queueParseProgress(progress)
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Directory handle transfer to worker failed.";
+        if (!/directory handle transfer/i.test(message)) {
+          throw error;
+        }
+        const deferredEntries = await enumerateDeferredFolderEntries(rootHandle, (progress) => queueParseProgress(progress));
+        if (deferredEntries.length === 0) {
+          setPendingSourceSelection(null);
+          setIsSourceLoading(false);
+          setStatus("idle");
+          setStatusMessage("Directory picker returned no files. Falling back to browser folder selection...");
+          setParseProgressImmediate({ phase: "idle", detail: "Idle", percent: 0 });
+          beginSourceSelection("folder");
+          folderInputRef.current?.click();
+          return;
+        }
+
+        loaded = await client.loadFolderEntries(deferredEntries, {
+          importLookbackDays: IMPORT_LOOKBACK_DAYS,
+          parseLookbackDays: REPORT_RANGE_OPTIONS[0],
+          onProgress: (progress) => queueParseProgress(progress)
+        });
+      }
 
       setSourceFiles(loaded.files);
       setSourceFileCount(loaded.totalFileCount);

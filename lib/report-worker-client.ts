@@ -108,6 +108,40 @@ export class ReportWorkerClient {
     return await promise;
   }
 
+  async loadFolderHandle(
+    rootHandle: FileSystemDirectoryHandle,
+    options: { importLookbackDays: number; parseLookbackDays: number; onProgress?: (progress: ParseProgress) => void }
+  ): Promise<LoadSourceResult> {
+    if (!this.canTransferDirectoryHandle(rootHandle)) {
+      throw new Error("Directory handle transfer is not supported in this browser.");
+    }
+
+    const requestId = this.nextRequestId++;
+    return await new Promise<LoadSourceResult>((resolve, reject) => {
+      this.pending.set(requestId, {
+        type: "load-folder",
+        onProgress: options.onProgress,
+        resolve,
+        reject
+      });
+
+      const request: ReportWorkerRequest = {
+        requestId,
+        type: "load-folder-handle",
+        rootHandle,
+        importLookbackDays: options.importLookbackDays,
+        parseLookbackDays: options.parseLookbackDays
+      };
+
+      try {
+        this.worker.postMessage(request);
+      } catch (error) {
+        this.pending.delete(requestId);
+        reject(error instanceof Error ? error : new Error("Directory handle transfer to worker failed."));
+      }
+    });
+  }
+
   private async postFolderLoadInChunks(
     requestId: number,
     entries: readonly DeferredFolderSourceEntry[],
@@ -218,6 +252,16 @@ export class ReportWorkerClient {
 
     try {
       structuredClone(firstHandleEntry);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private canTransferDirectoryHandle(rootHandle: FileSystemDirectoryHandle) {
+    if (typeof structuredClone !== "function") return false;
+    try {
+      structuredClone(rootHandle);
       return true;
     } catch {
       return false;

@@ -36,10 +36,7 @@ export function supportsDirectoryPicker() {
   return typeof pickerWindow.showDirectoryPicker === "function";
 }
 
-export async function pickDeferredFolderEntries(
-  onProgress?: ProgressCallback,
-  onPicked?: () => void
-): Promise<DeferredFolderSourceEntry[]> {
+export async function pickDirectoryHandle(onPicked?: () => void): Promise<DirectoryPickerDirectoryHandle> {
   const pickerWindow = window as DirectoryPickerWindow;
   const showDirectoryPicker = pickerWindow.showDirectoryPicker;
   if (typeof showDirectoryPicker !== "function") {
@@ -51,7 +48,13 @@ export async function pickDeferredFolderEntries(
     id: "nimv-sd-card"
   });
   onPicked?.();
+  return rootHandle;
+}
 
+export async function enumerateDeferredFolderEntries(
+  rootHandle: DirectoryPickerDirectoryHandle,
+  onProgress?: ProgressCallback
+): Promise<DeferredFolderSourceEntry[]> {
   const deferredEntries: DeferredFolderSourceEntry[] = [];
   const stack: Array<{ handle: DirectoryPickerDirectoryHandle; prefix: string }> = [{ handle: rootHandle, prefix: "" }];
   let discovered = 0;
@@ -99,4 +102,12 @@ export async function pickDeferredFolderEntries(
   });
 
   return deferredEntries;
+}
+
+export async function pickDeferredFolderEntries(
+  onProgress?: ProgressCallback,
+  onPicked?: () => void
+): Promise<DeferredFolderSourceEntry[]> {
+  const rootHandle = await pickDirectoryHandle(onPicked);
+  return await enumerateDeferredFolderEntries(rootHandle, onProgress);
 }

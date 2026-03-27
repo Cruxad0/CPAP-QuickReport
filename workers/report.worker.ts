@@ -7,18 +7,24 @@ import {
   createCachedSourceFilesFromFolder,
   createCachedSourceFilesFromZip,
   createSourceFileSummary,
+  filterFolderEntriesToRecentWindow,
   filterSourceFilesToRecentWindow
 } from "@/lib/source-files";
 import type { ReportWorkerRequest, ReportWorkerResponse } from "@/lib/report-worker-types";
 import type { DataSourceKind, PreparedQuickReportSource } from "@/lib/types";
-import type { FolderSourceEntry } from "@/lib/source-files";
+import type { DeferredFolderSourceEntry, FolderSourceEntry } from "@/lib/source-files";
 
 declare const self: DedicatedWorkerGlobalScope;
+
+type WorkerDirectoryHandle = FileSystemDirectoryHandle & {
+  values: () => AsyncIterable<FileSystemHandle>;
+};
 
 let preparedSource: PreparedQuickReportSource | null = null;
 let loadedSourceKind: DataSourceKind | null = null;
 let loadedSourceSummaries: Array<ReturnType<typeof createSourceFileSummary>> = [];
 const folderLoadState = new Map<number, { files: FolderSourceEntry[]; importLookbackDays: number; parseLookbackDays: number }>();
+const WORKER_DIRECTORY_ENUMERATION_BATCH_SIZE = 64;
 
 function postMessageSafe(message: ReportWorkerResponse) {
   self.postMessage(message);
@@ -44,6 +50,80 @@ function formatIsoAsUsDate(iso: string): string {
     day: "2-digit",
     timeZone: "UTC"
   });
+}
+
+async function yieldInWorker(): Promise<void> {
+  await new Promise<void>((resolve) => self.setTimeout(resolve, 0));
+}
+
+async function enumerateFolderHandle(
+  requestId: number,
+  rootHandle: WorkerDirectoryHandle
+): Promise<DeferredFolderSourceEntry[]> {
+  const deferredEntries: DeferredFolderSourceEntry[] = [];
+  const stack: Array<{ handle: WorkerDirectoryHandle; prefix: string }> = [{ handle: rootHandle, prefix: "" }];
+  let discovered = 0;
+
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (!current) continue;
+
+    for await (const childHandle of current.handle.values()) {
+      const childPath = current.prefix ? `${current.prefix}/${childHandle.name}` : childHandle.name;
+
+      if (childHandle.kind === "directory") {
+        stack.push({
+          handle: childHandle as WorkerDirectoryHandle,
+          prefix: childPath
+        });
+      } else {
+        deferredEntries.push({
+          kind: "handle",
+          name: childHandle.name,
+          size: 0,
+          relativePath: childPath,
+          handle: childHandle as FileSystemFileHandle
+        });
+      }
+
+      discovered += 1;
+      if (discovered % WORKER_DIRECTORY_ENUMERATION_BATCH_SIZE === 0) {
+        emitProgress(requestId, "scan", `Scanning SD-CARD structure... ${deferredEntries.length} files found`, 1);
+        await yieldInWorker();
+      }
+    }
+
+    await yieldInWorker();
+  }
+
+  emitProgress(requestId, "scan", `Scanning SD-CARD structure... ${deferredEntries.length} files found`, 1);
+  return deferredEntries;
+}
+
+async function loadFolderFromDirectoryHandle(
+  requestId: number,
+  rootHandle: WorkerDirectoryHandle,
+  importLookbackDays: number,
+  parseLookbackDays: number
+) {
+  emitProgress(requestId, "scan", "Loading SD-CARD...", 1);
+  const deferredEntries = await enumerateFolderHandle(requestId, rootHandle);
+
+  if (deferredEntries.length === 0) {
+    throw new Error("Directory picker returned no files. Try selecting the SD-card root folder.");
+  }
+
+  emitProgress(requestId, "scan", `Keeping recent ${importLookbackDays}-day files...`, 2);
+  const filteredEntries = filterFolderEntriesToRecentWindow(deferredEntries, importLookbackDays);
+
+  await loadSource(
+    requestId,
+    "folder",
+    async () =>
+      await createCachedSourceFilesFromFolder(filteredEntries.entries, (progress) => emitProgress(requestId, progress.phase, progress.detail, progress.percent)),
+    importLookbackDays,
+    parseLookbackDays
+  );
 }
 
 async function loadSource(
@@ -115,6 +195,19 @@ self.onmessage = async (event: MessageEvent<ReportWorkerRequest>) => {
         parseLookbackDays: request.parseLookbackDays
       });
       emitProgress(request.requestId, "scan", "Receiving SD-CARD selection...", 1);
+      return;
+    }
+
+    if (request.type === "load-folder-handle") {
+      preparedSource = null;
+      loadedSourceKind = "folder";
+      loadedSourceSummaries = [];
+      await loadFolderFromDirectoryHandle(
+        request.requestId,
+        request.rootHandle as WorkerDirectoryHandle,
+        request.importLookbackDays,
+        request.parseLookbackDays
+      );
       return;
     }
 

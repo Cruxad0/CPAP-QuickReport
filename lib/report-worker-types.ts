@@ -12,6 +12,13 @@ export type ReportWorkerRequest =
     }
   | {
       requestId: number;
+      type: "load-folder-handle";
+      rootHandle: FileSystemDirectoryHandle;
+      importLookbackDays: number;
+      parseLookbackDays: number;
+    }
+  | {
+      requestId: number;
       type: "load-folder-chunk";
       files: FolderSourceEntry[];
     }
