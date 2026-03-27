@@ -123,7 +123,81 @@ function quantizeChannel(value: number): number {
 }
 
 async function extractDominantThemeColor(headerDataUrl: string | undefined): Promise<ThemeColor | null> {
-  if (!headerDataUrl || typeof Image === "undefined" || typeof document === "undefined") return null;
+  const parsed = parseImageDataUrl(headerDataUrl);
+  if (!parsed) return null;
+
+  const pickFromPixelData = (data: Uint8ClampedArray | Uint8Array): ThemeColor | null => {
+    const colorCounts = new Map<string, { count: number; color: ThemeColor }>();
+    let fallbackSum = themeColor(0, 0, 0);
+    let fallbackCount = 0;
+
+    for (let i = 0; i < data.length; i += 4) {
+      const alpha = data[i + 3] / 255;
+      if (alpha < 0.6) continue;
+
+      const color = themeColor(data[i] / 255, data[i + 1] / 255, data[i + 2] / 255);
+      const { s, l } = rgbToHsl(color);
+      if ((l > 0.96 && s < 0.08) || (l < 0.04 && s < 0.08)) continue;
+
+      const qr = quantizeChannel(data[i]);
+      const qg = quantizeChannel(data[i + 1]);
+      const qb = quantizeChannel(data[i + 2]);
+      const key = `${qr},${qg},${qb}`;
+      const existing = colorCounts.get(key);
+      if (existing) {
+        existing.count += 1;
+      } else {
+        colorCounts.set(key, {
+          count: 1,
+          color: themeColor(qr / 255, qg / 255, qb / 255)
+        });
+      }
+
+      fallbackSum = themeColor(fallbackSum.r + color.r, fallbackSum.g + color.g, fallbackSum.b + color.b);
+      fallbackCount += 1;
+    }
+
+    if (colorCounts.size > 0) {
+      let best: { count: number; color: ThemeColor } | null = null;
+      for (const value of colorCounts.values()) {
+        if (!best || value.count > best.count) best = value;
+      }
+      return best?.color ?? null;
+    }
+
+    if (fallbackCount > 0) {
+      return themeColor(fallbackSum.r / fallbackCount, fallbackSum.g / fallbackCount, fallbackSum.b / fallbackCount);
+    }
+
+    return null;
+  };
+
+  if (typeof createImageBitmap === "function" && typeof OffscreenCanvas !== "undefined") {
+    try {
+      const bitmapBuffer = parsed.bytes.buffer.slice(
+        parsed.bytes.byteOffset,
+        parsed.bytes.byteOffset + parsed.bytes.byteLength
+      ) as ArrayBuffer;
+      const bitmap = await createImageBitmap(new Blob([bitmapBuffer], { type: parsed.mime }));
+      const maxDimension = 64;
+      const scale = Math.min(1, maxDimension / Math.max(bitmap.width || 1, bitmap.height || 1));
+      const width = Math.max(1, Math.round((bitmap.width || 1) * scale));
+      const height = Math.max(1, Math.round((bitmap.height || 1) * scale));
+      const canvas = new OffscreenCanvas(width, height);
+      const ctx = canvas.getContext("2d", { willReadFrequently: true } as any);
+      if (ctx) {
+        ctx.drawImage(bitmap, 0, 0, width, height);
+        const color = pickFromPixelData(ctx.getImageData(0, 0, width, height).data);
+        bitmap.close?.();
+        return color;
+      }
+      bitmap.close?.();
+    } catch {
+      // Fall through to DOM path.
+    }
+  }
+
+  if (typeof Image === "undefined" || typeof document === "undefined") return null;
 
   return await new Promise<ThemeColor | null>((resolve) => {
     const image = new Image();
@@ -143,59 +217,13 @@ async function extractDominantThemeColor(headerDataUrl: string | undefined): Pro
         }
 
         ctx.drawImage(image, 0, 0, width, height);
-        const { data } = ctx.getImageData(0, 0, width, height);
-        const colorCounts = new Map<string, { count: number; color: ThemeColor }>();
-        let fallbackSum = themeColor(0, 0, 0);
-        let fallbackCount = 0;
-
-        for (let i = 0; i < data.length; i += 4) {
-          const alpha = data[i + 3] / 255;
-          if (alpha < 0.6) continue;
-
-          const color = themeColor(data[i] / 255, data[i + 1] / 255, data[i + 2] / 255);
-          const { s, l } = rgbToHsl(color);
-
-          if ((l > 0.96 && s < 0.08) || (l < 0.04 && s < 0.08)) continue;
-
-          const qr = quantizeChannel(data[i]);
-          const qg = quantizeChannel(data[i + 1]);
-          const qb = quantizeChannel(data[i + 2]);
-          const key = `${qr},${qg},${qb}`;
-          const existing = colorCounts.get(key);
-          if (existing) {
-            existing.count += 1;
-          } else {
-            colorCounts.set(key, {
-              count: 1,
-              color: themeColor(qr / 255, qg / 255, qb / 255)
-            });
-          }
-
-          fallbackSum = themeColor(fallbackSum.r + color.r, fallbackSum.g + color.g, fallbackSum.b + color.b);
-          fallbackCount += 1;
-        }
-
-        if (colorCounts.size > 0) {
-          let best: { count: number; color: ThemeColor } | null = null;
-          for (const value of colorCounts.values()) {
-            if (!best || value.count > best.count) best = value;
-          }
-          resolve(best?.color ?? null);
-          return;
-        }
-
-        if (fallbackCount > 0) {
-          resolve(themeColor(fallbackSum.r / fallbackCount, fallbackSum.g / fallbackCount, fallbackSum.b / fallbackCount));
-          return;
-        }
-
-        resolve(null);
+        resolve(pickFromPixelData(ctx.getImageData(0, 0, width, height).data));
       } catch {
         resolve(null);
       }
     };
     image.onerror = () => resolve(null);
-    image.src = headerDataUrl;
+    image.src = headerDataUrl!;
   });
 }
 
@@ -299,6 +327,16 @@ function decodeBase64(base64: string): Uint8Array {
   return out;
 }
 
+function parseImageDataUrl(headerDataUrl: string | undefined): { mime: string; bytes: Uint8Array } | null {
+  if (!headerDataUrl) return null;
+  const match = headerDataUrl.match(/^data:(image\/[a-zA-Z0-9+.-]+);base64,(.+)$/);
+  if (!match) return null;
+  return {
+    mime: match[1].toLowerCase(),
+    bytes: decodeBase64(match[2])
+  };
+}
+
 function buildTherapyFontSizes(): number[] {
   const sizes: number[] = [];
   for (let size = THERAPY_MAX_FONT_SIZE; size >= THERAPY_MIN_FONT_SIZE; size -= 0.5) {
@@ -309,11 +347,9 @@ function buildTherapyFontSizes(): number[] {
 const THERAPY_FONT_SIZES = buildTherapyFontSizes();
 
 async function tryEmbedHeaderImage(pdfDoc: any, headerDataUrl: string | undefined): Promise<any | undefined> {
-  if (!headerDataUrl) return undefined;
-  const match = headerDataUrl.match(/^data:(image\/[a-zA-Z0-9+.-]+);base64,(.+)$/);
-  if (!match) return undefined;
-  const mime = match[1].toLowerCase();
-  const bytes = decodeBase64(match[2]);
+  const parsed = parseImageDataUrl(headerDataUrl);
+  if (!parsed) return undefined;
+  const { mime, bytes } = parsed;
 
   if (mime === "image/png") return await pdfDoc.embedPng(bytes);
   if (mime === "image/jpeg" || mime === "image/jpg") return await pdfDoc.embedJpg(bytes);
