@@ -83,6 +83,10 @@ function createUtcDateNoon(year: number, month: number, day: number): Date | nul
   return dt;
 }
 
+function createLocalCalendarDateNoon(date: Date): Date {
+  return createUtcDateNoon(date.getFullYear(), date.getMonth() + 1, date.getDate())!;
+}
+
 function extractDateFromPath(path: string): Date | null {
   const normalized = normalizePath(path);
 
@@ -236,7 +240,7 @@ export function filterSourceFilesToRecentWindow(files: SourceFile[], lookbackDay
   }
 
   const now = new Date();
-  const anchoredWindowEndMs = createUtcDateNoon(now.getUTCFullYear(), now.getUTCMonth() + 1, now.getUTCDate())!.getTime();
+  const anchoredWindowEndMs = createLocalCalendarDateNoon(now).getTime();
   const windowStartMs = anchoredWindowEndMs - lookbackDays * DAY_MS;
 
   let filteredOutCount = 0;
@@ -319,7 +323,7 @@ export function filterFolderEntriesToRecentWindow<T extends { relativePath: stri
   }
 
   const now = new Date();
-  const anchoredWindowEndMs = createUtcDateNoon(now.getUTCFullYear(), now.getUTCMonth() + 1, now.getUTCDate())!.getTime();
+  const anchoredWindowEndMs = createLocalCalendarDateNoon(now).getTime();
   const windowStartMs = anchoredWindowEndMs - lookbackDays * DAY_MS;
 
   let filteredOutCount = 0;

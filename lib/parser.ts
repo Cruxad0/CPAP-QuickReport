@@ -137,6 +137,10 @@ function createUtcDateNoon(year: number, month: number, day: number): Date {
   return new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
 }
 
+function createLocalCalendarDateNoon(date: Date): Date {
+  return createUtcDateNoon(date.getFullYear(), date.getMonth() + 1, date.getDate());
+}
+
 function addUtcDays(date: Date, days: number): Date {
   const next = new Date(date);
   next.setUTCDate(next.getUTCDate() + days);
@@ -600,7 +604,7 @@ function resolveRecentWindow(_latestDate: Date, lookbackDays: number): DateWindo
   // included clinical day is yesterday noon -> today noon, regardless of the
   // current clock time.
   const now = new Date();
-  const windowEnd = createUtcDateNoon(now.getUTCFullYear(), now.getUTCMonth() + 1, now.getUTCDate());
+  const windowEnd = createLocalCalendarDateNoon(now);
   const windowStart = addUtcDays(windowEnd, -normalizedLookbackDays);
   return { start: windowStart, end: windowEnd };
 }
