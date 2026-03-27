@@ -78,11 +78,11 @@ async function loadSource(
 
   let statusMessage = "";
   if (filtered.hadDatedFiles) {
-    const endDateText = filtered.latestDateIso ? formatIsoAsUsDate(filtered.latestDateIso) : "latest dated file";
+    const latestDateText = filtered.latestDateIso ? formatIsoAsUsDate(filtered.latestDateIso) : "unknown";
     if (filtered.filteredOutCount > 0) {
-      statusMessage = `${sourceKind === "folder" ? "Folder" : "ZIP"} loaded: ${filtered.files.length} files ready (last ${importLookbackDays} days through ${endDateText}). Filtered out ${filtered.filteredOutCount} older files (${bytesToLabel(filtered.filteredOutBytes)}).`;
+      statusMessage = `${sourceKind === "folder" ? "Folder" : "ZIP"} loaded: ${filtered.files.length} files ready (recent ${importLookbackDays}-day import window; latest dated file ${latestDateText}). Filtered out ${filtered.filteredOutCount} older files (${bytesToLabel(filtered.filteredOutBytes)}).`;
     } else {
-      statusMessage = `${sourceKind === "folder" ? "Folder" : "ZIP"} loaded: ${filtered.files.length} files ready (last ${importLookbackDays} days through ${endDateText}).`;
+      statusMessage = `${sourceKind === "folder" ? "Folder" : "ZIP"} loaded: ${filtered.files.length} files ready (latest dated file ${latestDateText}).`;
     }
   } else {
     statusMessage = `${sourceKind === "folder" ? "Folder" : "ZIP"} loaded: ${mapped.length} files ready for parsing.`;

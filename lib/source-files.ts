@@ -87,6 +87,10 @@ function createLocalCalendarDateNoon(date: Date): Date {
   return createUtcDateNoon(date.getFullYear(), date.getMonth() + 1, date.getDate())!;
 }
 
+function toIsoDate(dt: Date): string {
+  return dt.toISOString().slice(0, 10);
+}
+
 function extractDateFromPath(path: string): Date | null {
   const normalized = normalizePath(path);
 
@@ -228,14 +232,15 @@ export function filterSourceFilesToRecentWindow(files: SourceFile[], lookbackDay
 
   const likelyFamilyId = detectLikelyFamilyId(files);
   const datedCoverage = dated.length / Math.max(1, files.length);
+  const latestDatedFile = dated.reduce((latest, entry) => (entry.date > latest.date ? entry : latest), dated[0]);
   if (!likelyFamilyId && datedCoverage < 0.1) {
     return {
       files,
       originalCount: files.length,
       filteredOutCount: 0,
       filteredOutBytes: 0,
-      latestDateIso: null,
-      hadDatedFiles: false
+      latestDateIso: toIsoDate(latestDatedFile.date),
+      hadDatedFiles: true
     };
   }
 
@@ -267,7 +272,7 @@ export function filterSourceFilesToRecentWindow(files: SourceFile[], lookbackDay
     .map((entry) => entry.file);
 
   const outputFiles = kept.length > 0 ? kept : files;
-  const latestDateIso = new Date(anchoredWindowEndMs).toISOString().slice(0, 10);
+  const latestDateIso = toIsoDate(latestDatedFile.date);
 
   return {
     files: outputFiles,
@@ -311,14 +316,15 @@ export function filterFolderEntriesToRecentWindow<T extends { relativePath: stri
 
   const likelyFamilyId = detectLikelyFamilyId(datedEntries.map((item) => ({ path: item.path })));
   const datedCoverage = dated.length / Math.max(1, entries.length);
+  const latestDatedEntry = dated.reduce((latest, item) => (item.date > latest.date ? item : latest), dated[0]);
   if (!likelyFamilyId && datedCoverage < 0.1) {
     return {
       entries,
       originalCount: entries.length,
       filteredOutCount: 0,
       filteredOutBytes: 0,
-      latestDateIso: null,
-      hadDatedFiles: false
+      latestDateIso: toIsoDate(latestDatedEntry.date),
+      hadDatedFiles: true
     };
   }
 
@@ -350,7 +356,7 @@ export function filterFolderEntriesToRecentWindow<T extends { relativePath: stri
     .map((item) => item.entry);
 
   const outputEntries = kept.length > 0 ? kept : entries;
-  const latestDateIso = new Date(anchoredWindowEndMs).toISOString().slice(0, 10);
+  const latestDateIso = toIsoDate(latestDatedEntry.date);
 
   return {
     entries: outputEntries,
