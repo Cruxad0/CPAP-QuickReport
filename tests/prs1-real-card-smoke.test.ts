@@ -21,6 +21,7 @@ maybeTest("DreamStation real-card sample parses from LAST.TXT-selected active ro
   assert.equal(prepared.machine.mode, "APAP");
   assert.equal(prepared.machine.pressureMin, "10 cmH2O");
   assert.equal(prepared.machine.pressureMax, "16 cmH2O");
+  assert.equal(prepared.machine.pressureRelief, "Flex: Off");
   assert.equal(prepared.latestClinicalDayIso, "2026-03-25");
 
   const nextClinicalDayIso = new Date(new Date(`${prepared.latestClinicalDayIso}T00:00:00Z`).getTime() + 24 * 3600 * 1000)
@@ -41,4 +42,6 @@ maybeTest("DreamStation real-card sample parses from LAST.TXT-selected active ro
   assert.equal(metrics.compliantDays, 7);
   assert.ok((metrics.avgUsageHours ?? 0) > 8);
   assert.ok((metrics.avgAhi ?? 0) > 0);
+  assert.ok((metrics.avgLeak ?? 0) > 0);
+  assert.ok((metrics.avgLeak ?? 999) < 40);
 });
