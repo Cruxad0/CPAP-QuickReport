@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { rankParserFamilies } from "../lib/parsers/families";
+import { selectPrs1MachineRootId } from "../lib/parsers/prs1";
 import { shouldIgnorePathEarly } from "../lib/source-files";
 
 test("DreamStation-style P-SERIES structure ranks Philips PRS1 ahead of BMC/Luna", () => {
@@ -25,4 +26,50 @@ test("known OS metadata paths are ignored before SD-card parsing", () => {
   assert.equal(shouldIgnorePathEarly("THERAPY/CONFIG/N_APAP"), false);
   assert.equal(shouldIgnorePathEarly("THERAPY/CONFIG/N_CPAP"), false);
   assert.equal(shouldIgnorePathEarly("P-SERIES/74FAE00C/PROP.BIN"), false);
+});
+
+function createCandidate(path: string, text = "") {
+  return {
+    normalizedPath: path,
+    baseName: path.split("/").pop() ?? path,
+    recordDate: null,
+    file: {
+      name: path.split("/").pop() ?? path,
+      path,
+      size: text.length,
+      readText: async () => text,
+      readBytes: async () => new Uint8Array()
+    }
+  };
+}
+
+test("PRS1 root selection falls back when LAST.TXT points to an incomplete root", async () => {
+  const candidates = [
+    createCandidate("P-SERIES/LAST.TXT", "OLDROOT"),
+    createCandidate("P-SERIES/OLDROOT/PROP.BIN"),
+    createCandidate("P-SERIES/NEWROOT/PROP.BIN"),
+    createCandidate("P-SERIES/NEWROOT/LOG.SEQ"),
+    createCandidate("P-SERIES/NEWROOT/P0/000.001"),
+    createCandidate("P-SERIES/NEWROOT/P1/000.002")
+  ];
+
+  const selected = await selectPrs1MachineRootId(candidates);
+  assert.equal(selected, "NEWROOT");
+});
+
+test("PRS1 root selection still respects LAST.TXT when it points to a valid smaller root", async () => {
+  const candidates = [
+    createCandidate("P-SERIES/LAST.TXT", "ACTIVEROOT"),
+    createCandidate("P-SERIES/ACTIVEROOT/PROP.BIN"),
+    createCandidate("P-SERIES/ACTIVEROOT/LOG.SEQ"),
+    createCandidate("P-SERIES/ACTIVEROOT/P0/000.001"),
+    createCandidate("P-SERIES/ARCHIVE/PROP.BIN"),
+    createCandidate("P-SERIES/ARCHIVE/LOG.SEQ"),
+    createCandidate("P-SERIES/ARCHIVE/P0/000.001"),
+    createCandidate("P-SERIES/ARCHIVE/P1/000.001"),
+    createCandidate("P-SERIES/ARCHIVE/P2/000.001")
+  ];
+
+  const selected = await selectPrs1MachineRootId(candidates);
+  assert.equal(selected, "ACTIVEROOT");
 });

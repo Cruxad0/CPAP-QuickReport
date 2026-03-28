@@ -262,6 +262,14 @@ function isPrs1LastCandidate(candidate: FamilyParserCandidate): boolean {
   return PRS1_LAST_FILE_PATTERN.test(candidate.normalizedPath);
 }
 
+function isPrs1RootMetadataCandidate(normalizedPath: string): boolean {
+  return /(?:^|\/)p-series\/[^/]+\/(?:prop(?:erties)?\.txt|prop\.bin|log\.seq)$/i.test(normalizedPath);
+}
+
+function isPrs1RootDataCandidate(normalizedPath: string): boolean {
+  return /(?:^|\/)p-series\/[^/]+\/(?:d|e|u|p\d+)\//i.test(normalizedPath);
+}
+
 function getPrs1MachineRootId(normalizedPath: string): string | null {
   const match = normalizedPath.match(/(?:^|\/)p-series\/([^/]+)\//i);
   return match?.[1]?.trim().toUpperCase() ?? null;
@@ -273,37 +281,51 @@ function isWithinPrs1MachineRoot(normalizedPath: string, machineRootId: string):
   return scopedPattern.test(normalizedPath);
 }
 
-async function selectPrs1MachineRootId(candidates: FamilyParserCandidate[]): Promise<string | null> {
-  const counts = new Map<string, { files: number; binary: number }>();
+type Prs1MachineRootStats = {
+  files: number;
+  binary: number;
+  dataFiles: number;
+  rootMetadata: number;
+};
+
+function scorePrs1MachineRoot(stats: Prs1MachineRootStats): number {
+  return stats.binary * 10000 + stats.dataFiles * 100 + stats.rootMetadata * 10 + stats.files;
+}
+
+function isPlausiblePrs1MachineRoot(stats: Prs1MachineRootStats): boolean {
+  return stats.binary > 0 || stats.dataFiles > 0;
+}
+
+export async function selectPrs1MachineRootId(candidates: FamilyParserCandidate[]): Promise<string | null> {
+  const counts = new Map<string, Prs1MachineRootStats>();
   for (const candidate of candidates) {
     const machineRootId = getPrs1MachineRootId(candidate.normalizedPath);
     if (!machineRootId) continue;
-    const bucket = counts.get(machineRootId) ?? { files: 0, binary: 0 };
+    const bucket = counts.get(machineRootId) ?? { files: 0, binary: 0, dataFiles: 0, rootMetadata: 0 };
     bucket.files += 1;
     if (isPrs1BinaryCandidate(candidate)) bucket.binary += 1;
+    if (isPrs1RootDataCandidate(candidate.normalizedPath)) bucket.dataFiles += 1;
+    if (isPrs1RootMetadataCandidate(candidate.normalizedPath)) bucket.rootMetadata += 1;
     counts.set(machineRootId, bucket);
   }
 
   if (counts.size === 0) return null;
   if (counts.size === 1) return counts.keys().next().value ?? null;
 
+  const rankedRoots = [...counts.entries()].sort((a, b) => scorePrs1MachineRoot(b[1]) - scorePrs1MachineRoot(a[1]));
+
   for (const candidate of candidates) {
     if (!isPrs1LastCandidate(candidate)) continue;
     try {
       const activeId = (await candidate.file.readText()).trim().split(/\s+/)[0]?.toUpperCase();
-      if (activeId && counts.has(activeId)) return activeId;
+      const activeStats = activeId ? counts.get(activeId) : undefined;
+      if (activeId && activeStats && isPlausiblePrs1MachineRoot(activeStats)) return activeId;
     } catch {
       continue;
     }
   }
 
-  return [...counts.entries()]
-    .sort((a, b) => {
-      const scoreA = a[1].binary * 10000 + a[1].files;
-      const scoreB = b[1].binary * 10000 + b[1].files;
-      return scoreB - scoreA;
-    })
-    .at(0)?.[0] ?? null;
+  return rankedRoots.at(0)?.[0] ?? null;
 }
 
 function readLittle16(bytes: Uint8Array, offset: number): number | null {

@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { filterFolderEntriesToRecentWindow, filterSourceFilesToRecentWindow } from "../lib/source-files";
+import {
+  filterFolderEntriesToRecentWindow,
+  filterSourceFilesToRecentWindow,
+  shouldSkipPathOutsideRecentWindow
+} from "../lib/source-files";
 import type { SourceFile } from "../lib/types";
 
 function createSourceFile(path: string, size = 1): SourceFile {
@@ -36,4 +40,12 @@ test("folder-entry recent-window filter reports the actual latest dated file, no
 
   assert.equal(filtered.hadDatedFiles, true);
   assert.equal(filtered.latestDateIso, "2024-02-07");
+});
+
+test("early path pruning skips old dated folders before SD-card enumeration continues", () => {
+  const now = new Date("2026-03-27T10:00:00-04:00");
+
+  assert.equal(shouldSkipPathOutsideRecentWindow("THERAPY/RECORD/202603/25/STAT", 91, now), false);
+  assert.equal(shouldSkipPathOutsideRecentWindow("THERAPY/RECORD/202511/01/STAT", 91, now), true);
+  assert.equal(shouldSkipPathOutsideRecentWindow("THERAPY/CONFIG/N_APAP", 91, now), false);
 });
