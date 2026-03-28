@@ -22,5 +22,7 @@ test("known OS metadata paths are ignored before SD-card parsing", () => {
   assert.equal(shouldIgnorePathEarly(".Spotlight-V100/Store-V2/file"), true);
   assert.equal(shouldIgnorePathEarly(".fseventsd/0000000004261b45"), true);
   assert.equal(shouldIgnorePathEarly("System Volume Information/WPSettings.dat"), true);
+  assert.equal(shouldIgnorePathEarly("THERAPY/CONFIG/N_APAP"), false);
+  assert.equal(shouldIgnorePathEarly("THERAPY/CONFIG/N_CPAP"), false);
   assert.equal(shouldIgnorePathEarly("P-SERIES/74FAE00C/PROP.BIN"), false);
 });

@@ -77,7 +77,7 @@ export function shouldIgnorePathEarly(path: string): boolean {
   const parts = normalized.split("/").filter(Boolean);
   return parts.some((part) =>
     /^(?:\.spotlight-v100|\.fseventsd|system volume information|\.trashes|__macosx)$/i.test(part)
-  ) || parts.some((part) => /^(?:\.ds_store|thumbs\.db|desktop\.ini)$/i.test(part)) || parts.some((part) => /^._/.test(part));
+  ) || parts.some((part) => /^(?:\.ds_store|thumbs\.db|desktop\.ini)$/i.test(part)) || parts.some((part) => /^\._/.test(part));
 }
 
 function createUtcDateNoon(year: number, month: number, day: number): Date | null {

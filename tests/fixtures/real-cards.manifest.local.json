@@ -9,7 +9,7 @@
       "expect": {
         "selectedLoaderIncludes": "Resvent",
         "mode": "APAP",
-        "deviceIncludes": "Resvent / Hoffrichter",
+        "deviceIncludes": "iBreeze 20A",
         "pressureMin": "8.5 cmH2O",
         "pressureMax": "11 cmH2O",
         "minDaysWithData": 89,
