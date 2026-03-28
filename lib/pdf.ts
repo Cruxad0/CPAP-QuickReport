@@ -653,6 +653,20 @@ function hasPressureRangeText(raw: string | null | undefined): boolean {
   return typeof text === "string" && /\d+(?:\.\d+)?\s*-\s*\d+(?:\.\d+)?/.test(text);
 }
 
+function extractPressureRangeValues(raw: string | null | undefined): { min: string; max: string } | null {
+  const text = raw?.trim();
+  if (!text) return null;
+  const match = text.match(/(-?\d+(?:\.\d+)?)\s*-\s*(-?\d+(?:\.\d+)?)/);
+  if (!match) return null;
+  const min = Number.parseFloat(match[1]);
+  const max = Number.parseFloat(match[2]);
+  if (!Number.isFinite(min) || !Number.isFinite(max)) return null;
+  return {
+    min: `${min.toFixed(1)} cmH2O`,
+    max: `${max.toFixed(1)} cmH2O`
+  };
+}
+
 function machineSettingRows(report: QuickReportMetrics): TableRow[] {
   const rows: TableRow[] = [
     ["Device", textValue(report.machine.device)],
@@ -663,14 +677,15 @@ function machineSettingRows(report: QuickReportMetrics): TableRow[] {
   const isBiPap = isBiPapLikeMode(mode);
   const isFixedCpap = isFixedCpapLikeMode(mode);
   const isAutoPap = !isBiPap && !isFixedCpap && (isAutoPapLikeMode(mode) || hasAutoPressureRange(report));
+  const derivedRange = extractPressureRangeValues(report.machine.pressure);
 
   if (isBiPap) {
     rows.push(["IPAP", normalizePressureDisplay(report.machine.ipap)]);
     rows.push(["EPAP", normalizePressureDisplay(report.machine.epap)]);
     rows.push(["Respiratory rate (RR)", textValue(report.machine.respiratoryRate)]);
   } else if (isAutoPap) {
-    rows.push(["Min pressure", normalizePressureDisplay(report.machine.pressureMin)]);
-    rows.push(["Max pressure", normalizePressureDisplay(report.machine.pressureMax)]);
+    rows.push(["Min pressure", normalizePressureDisplay(report.machine.pressureMin ?? derivedRange?.min)]);
+    rows.push(["Max pressure", normalizePressureDisplay(report.machine.pressureMax ?? derivedRange?.max)]);
   } else {
     rows.push(["Pressure", normalizePressureDisplay(report.machine.pressure)]);
   }
