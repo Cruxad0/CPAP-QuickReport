@@ -1,6 +1,6 @@
 "use client";
 
-import type { DeferredFolderSourceEntry } from "@/lib/source-files";
+import { shouldIgnorePathEarly, type DeferredFolderSourceEntry } from "@/lib/source-files";
 import type { ParseProgress } from "@/lib/types";
 
 type ProgressCallback = (progress: ParseProgress) => void;
@@ -65,6 +65,7 @@ export async function enumerateDeferredFolderEntries(
 
     for await (const childHandle of current.handle.values()) {
       const childPath = current.prefix ? `${current.prefix}/${childHandle.name}` : childHandle.name;
+      if (shouldIgnorePathEarly(childPath)) continue;
 
       if (childHandle.kind === "directory") {
         stack.push({

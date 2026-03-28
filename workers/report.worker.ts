@@ -8,7 +8,8 @@ import {
   createCachedSourceFilesFromZip,
   createSourceFileSummary,
   filterFolderEntriesToRecentWindow,
-  filterSourceFilesToRecentWindow
+  filterSourceFilesToRecentWindow,
+  shouldIgnorePathEarly
 } from "@/lib/source-files";
 import type { ReportWorkerRequest, ReportWorkerResponse } from "@/lib/report-worker-types";
 import type { DataSourceKind, PreparedQuickReportSource } from "@/lib/types";
@@ -70,6 +71,7 @@ async function enumerateFolderHandle(
 
     for await (const childHandle of current.handle.values()) {
       const childPath = current.prefix ? `${current.prefix}/${childHandle.name}` : childHandle.name;
+      if (shouldIgnorePathEarly(childPath)) continue;
 
       if (childHandle.kind === "directory") {
         stack.push({

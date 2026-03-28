@@ -130,8 +130,22 @@ const PRS1_EXACT_MODELS = new Map<string, { label: string; mode: CanonicalMode }
   ["1130X200", { label: "DreamStation BiPAP AVAPS 30", mode: "BiPAP" }]
 ]);
 
-const PRS1_BINARY_EXTENSIONS = new Set(["000", "001", "002"]);
+const PRS1_BINARY_EXTENSIONS = new Set(["000", "001", "002", "b01", "b02"]);
 const PRS1_TEXT_FILE_PATTERN = /(?:^|\/)(?:prop(?:erties)?(?:\.[^/]+)?\.txt)$/i;
+const PRS1_LAST_FILE_PATTERN = /(?:^|\/)p-series\/last\.txt$/i;
+const PRS1_DREAMSTATION_COMMON_KEY = Uint8Array.from([
+  0x71, 0x84, 0x96, 0x44, 0xa7, 0x28, 0x11, 0x2b, 0x01, 0x5b, 0x62, 0x03, 0xcf, 0xb5, 0xc5, 0x69,
+  0x51, 0xdb, 0x5f, 0x18, 0xe3, 0xf4, 0x94, 0x36, 0xfa, 0x4a, 0x0b, 0xeb, 0x75, 0x65, 0x87, 0x42
+]);
+
+type Prs1WrappedHeader = {
+  iv: Uint8Array;
+  salt: Uint8Array;
+  exportKey: Uint8Array;
+  exportKeyTag: Uint8Array;
+  payloadTag: Uint8Array;
+  ciphertextOffset: number;
+};
 
 function normalizeWhitespace(value: string): string {
   return value.replace(/[_\s]+/g, " ").trim();
@@ -194,13 +208,234 @@ function asDateFromUnix(timestamp: number): Date | null {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
+function normalizePrs1BinaryExtension(normalizedPath: string): string {
+  return normalizedPath.split(".").pop()?.toLowerCase() ?? "";
+}
+
 function isPrs1BinaryCandidate(candidate: FamilyParserCandidate): boolean {
-  const ext = candidate.normalizedPath.split(".").pop()?.toLowerCase() ?? "";
-  return PRS1_BINARY_EXTENSIONS.has(ext);
+  const ext = normalizePrs1BinaryExtension(candidate.normalizedPath);
+  if (!PRS1_BINARY_EXTENSIONS.has(ext)) return false;
+  if (ext.startsWith("b")) {
+    return /(?:^|\/)p-series\/[^/]+\/p\d+\//i.test(candidate.normalizedPath) || /(?:^|\/)p\d+\//i.test(candidate.normalizedPath);
+  }
+  return true;
 }
 
 function isPrs1TextCandidate(candidate: FamilyParserCandidate): boolean {
   return PRS1_TEXT_FILE_PATTERN.test(candidate.normalizedPath);
+}
+
+function isPrs1LastCandidate(candidate: FamilyParserCandidate): boolean {
+  return PRS1_LAST_FILE_PATTERN.test(candidate.normalizedPath);
+}
+
+function getPrs1MachineRootId(normalizedPath: string): string | null {
+  const match = normalizedPath.match(/(?:^|\/)p-series\/([^/]+)\//i);
+  return match?.[1]?.trim().toUpperCase() ?? null;
+}
+
+function isWithinPrs1MachineRoot(normalizedPath: string, machineRootId: string): boolean {
+  const escaped = machineRootId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const scopedPattern = new RegExp(`(?:^|/)p-series/${escaped}/`, "i");
+  return scopedPattern.test(normalizedPath);
+}
+
+async function selectPrs1MachineRootId(candidates: FamilyParserCandidate[]): Promise<string | null> {
+  const counts = new Map<string, { files: number; binary: number }>();
+  for (const candidate of candidates) {
+    const machineRootId = getPrs1MachineRootId(candidate.normalizedPath);
+    if (!machineRootId) continue;
+    const bucket = counts.get(machineRootId) ?? { files: 0, binary: 0 };
+    bucket.files += 1;
+    if (isPrs1BinaryCandidate(candidate)) bucket.binary += 1;
+    counts.set(machineRootId, bucket);
+  }
+
+  if (counts.size === 0) return null;
+  if (counts.size === 1) return counts.keys().next().value ?? null;
+
+  for (const candidate of candidates) {
+    if (!isPrs1LastCandidate(candidate)) continue;
+    try {
+      const activeId = (await candidate.file.readText()).trim().split(/\s+/)[0]?.toUpperCase();
+      if (activeId && counts.has(activeId)) return activeId;
+    } catch {
+      continue;
+    }
+  }
+
+  return [...counts.entries()]
+    .sort((a, b) => {
+      const scoreA = a[1].binary * 10000 + a[1].files;
+      const scoreB = b[1].binary * 10000 + b[1].files;
+      return scoreB - scoreA;
+    })
+    .at(0)?.[0] ?? null;
+}
+
+function readLittle16(bytes: Uint8Array, offset: number): number | null {
+  if (offset + 2 > bytes.length) return null;
+  return bytes[offset] | (bytes[offset + 1] << 8);
+}
+
+function readLengthPrefixedBytes(bytes: Uint8Array, offset: number): { value: Uint8Array; nextOffset: number } | null {
+  const length = readLittle16(bytes, offset);
+  if (length === null) return null;
+  const start = offset + 2;
+  const end = start + length;
+  if (end > bytes.length) return null;
+  return { value: bytes.subarray(start, end), nextOffset: end };
+}
+
+function parsePrs1WrappedHeader(bytes: Uint8Array): Prs1WrappedHeader | null {
+  let offset = 0;
+  const a = readLittle16(bytes, offset);
+  offset += 2;
+  const b = readLittle16(bytes, offset);
+  offset += 2;
+  const c = readLittle16(bytes, offset);
+  offset += 2;
+  if (a !== 0x0d || b !== 1 || c !== 1) return null;
+
+  const guid = readLengthPrefixedBytes(bytes, offset);
+  if (!guid || guid.value.length !== 36) return null;
+  offset = guid.nextOffset;
+
+  const iv = readLengthPrefixedBytes(bytes, offset);
+  if (!iv || iv.value.length !== 12) return null;
+  offset = iv.nextOffset;
+
+  const salt = readLengthPrefixedBytes(bytes, offset);
+  if (!salt || salt.value.length !== 16) return null;
+  offset = salt.nextOffset;
+
+  const f = readLittle16(bytes, offset);
+  offset += 2;
+  const g = readLittle16(bytes, offset);
+  offset += 2;
+  if (f !== 0 || g !== 1) return null;
+
+  const importKey = readLengthPrefixedBytes(bytes, offset);
+  if (!importKey || importKey.value.length !== 32) return null;
+  offset = importKey.nextOffset;
+
+  const importKeyTag = readLengthPrefixedBytes(bytes, offset);
+  if (!importKeyTag || importKeyTag.value.length !== 16) return null;
+  offset = importKeyTag.nextOffset;
+
+  const exportKey = readLengthPrefixedBytes(bytes, offset);
+  if (!exportKey || exportKey.value.length !== 32) return null;
+  offset = exportKey.nextOffset;
+
+  const exportKeyTag = readLengthPrefixedBytes(bytes, offset);
+  if (!exportKeyTag || exportKeyTag.value.length !== 16) return null;
+  offset = exportKeyTag.nextOffset;
+
+  const payloadTag = readLengthPrefixedBytes(bytes, offset);
+  if (!payloadTag || payloadTag.value.length !== 16) return null;
+  offset = payloadTag.nextOffset;
+
+  return {
+    iv: iv.value,
+    salt: salt.value,
+    exportKey: exportKey.value,
+    exportKeyTag: exportKeyTag.value,
+    payloadTag: payloadTag.value,
+    ciphertextOffset: offset
+  };
+}
+
+function getSubtleCrypto(): SubtleCrypto | null {
+  return globalThis.crypto?.subtle ?? null;
+}
+
+function concatBytes(...parts: Uint8Array[]): Uint8Array {
+  const totalLength = parts.reduce((sum, part) => sum + part.length, 0);
+  const merged = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const part of parts) {
+    merged.set(part, offset);
+    offset += part.length;
+  }
+  return merged;
+}
+
+function toCryptoBuffer(bytes: Uint8Array): ArrayBuffer {
+  const sliced = bytes.slice();
+  return sliced.buffer.slice(sliced.byteOffset, sliced.byteOffset + sliced.byteLength);
+}
+
+async function decryptPrs1WrappedBytes(
+  bytes: Uint8Array,
+  keyCache: Map<string, Uint8Array | null>
+): Promise<Uint8Array | null> {
+  const header = parsePrs1WrappedHeader(bytes);
+  if (!header) return null;
+
+  const subtle = getSubtleCrypto();
+  if (!subtle) return null;
+
+  const cacheKey = [
+    ...header.iv,
+    0xff,
+    ...header.salt,
+    0xff,
+    ...header.exportKey,
+    0xff,
+    ...header.exportKeyTag
+  ]
+    .map((value) => value.toString(16).padStart(2, "0"))
+    .join("");
+
+  let payloadKey = keyCache.get(cacheKey) ?? null;
+  if (!payloadKey) {
+    try {
+      const baseKey = await subtle.importKey("raw", toCryptoBuffer(PRS1_DREAMSTATION_COMMON_KEY), "PBKDF2", false, ["deriveBits"]);
+      const saltedKeyBits = await subtle.deriveBits(
+        {
+          name: "PBKDF2",
+          hash: "SHA-256",
+          salt: toCryptoBuffer(header.salt),
+          iterations: 10000
+        },
+        baseKey,
+        256
+      );
+      const saltedKey = await subtle.importKey("raw", saltedKeyBits, { name: "AES-GCM" }, false, ["decrypt"]);
+      const decryptedPayloadKey = await subtle.decrypt(
+        {
+          name: "AES-GCM",
+          iv: toCryptoBuffer(header.iv),
+          tagLength: 128
+        },
+        saltedKey,
+        toCryptoBuffer(concatBytes(header.exportKey, header.exportKeyTag))
+      );
+      payloadKey = new Uint8Array(decryptedPayloadKey);
+      keyCache.set(cacheKey, payloadKey);
+    } catch {
+      keyCache.set(cacheKey, null);
+      return null;
+    }
+  }
+
+  if (!payloadKey) return null;
+
+  try {
+    const payloadCryptoKey = await subtle.importKey("raw", toCryptoBuffer(payloadKey), { name: "AES-GCM" }, false, ["decrypt"]);
+    const decryptedPayload = await subtle.decrypt(
+      {
+        name: "AES-GCM",
+        iv: toCryptoBuffer(header.iv),
+        tagLength: 128
+      },
+      payloadCryptoKey,
+      toCryptoBuffer(concatBytes(bytes.subarray(header.ciphertextOffset), header.payloadTag))
+    );
+    return new Uint8Array(decryptedPayload);
+  } catch {
+    return null;
+  }
 }
 
 function getOrCreateSession(
@@ -1033,6 +1268,7 @@ function toParsedRecord(session: Prs1SessionAccumulator): ParsedRecord | null {
 async function parsePrs1BinaryCandidates(context: FamilyParserContext, deps: FamilyParserDeps) {
   const binaryCandidates = context.candidates.filter(isPrs1BinaryCandidate);
   const sessions = new Map<number, Prs1SessionAccumulator>();
+  const wrappedKeyCache = new Map<string, Uint8Array | null>();
 
   let processed = 0;
   for (const candidate of binaryCandidates) {
@@ -1048,7 +1284,13 @@ async function parsePrs1BinaryCandidates(context: FamilyParserContext, deps: Fam
     });
 
     try {
-      const bytes = await candidate.file.readBytes();
+      let bytes = await candidate.file.readBytes();
+      const ext = normalizePrs1BinaryExtension(candidate.normalizedPath);
+      if (ext.startsWith("b")) {
+        const decrypted = await decryptPrs1WrappedBytes(bytes, wrappedKeyCache);
+        if (!decrypted) continue;
+        bytes = decrypted;
+      }
       const chunks = parsePrs1Chunks(bytes, candidate.normalizedPath);
       for (const chunk of chunks) {
         const session = getOrCreateSession(sessions, chunk.sessionId, chunk.timestamp);
@@ -1080,21 +1322,38 @@ async function parsePrs1BinaryCandidates(context: FamilyParserContext, deps: Fam
 }
 
 export async function parsePrs1Family(context: FamilyParserContext, deps: FamilyParserDeps): Promise<void> {
-  await parsePrs1BinaryCandidates(context, deps);
+  const selectedMachineRootId = await selectPrs1MachineRootId(context.candidates);
+  const scopedCandidates =
+    selectedMachineRootId === null
+      ? context.candidates
+      : context.candidates.filter(
+          (candidate) => isWithinPrs1MachineRoot(candidate.normalizedPath, selectedMachineRootId) || isPrs1LastCandidate(candidate)
+        );
 
-  const textCandidates = context.candidates.filter(isPrs1TextCandidate);
-  if (textCandidates.length === 0) return;
+  const scopedContext: FamilyParserContext = {
+    ...context,
+    candidates: scopedCandidates
+  };
 
-  await runTextFamilyParser(
-    {
-      ...context,
-      candidates: textCandidates
-    },
-    deps,
-    {
-      inferFamilyMachineSettings: (text, _candidate, machine, familyDeps) => {
-        inferPrs1MachineSettings(text, machine, familyDeps);
+  await parsePrs1BinaryCandidates(scopedContext, deps);
+
+  const textCandidates = scopedCandidates.filter(isPrs1TextCandidate);
+  if (textCandidates.length > 0) {
+    await runTextFamilyParser(
+      {
+        ...scopedContext,
+        candidates: textCandidates
+      },
+      deps,
+      {
+        inferFamilyMachineSettings: (text, _candidate, machine, familyDeps) => {
+          inferPrs1MachineSettings(text, machine, familyDeps);
+        }
       }
-    }
-  );
+    );
+  }
+
+  if (!context.machine.device && selectedMachineRootId) {
+    context.machine.device = `Philips Respironics (${selectedMachineRootId})`;
+  }
 }

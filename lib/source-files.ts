@@ -72,6 +72,14 @@ function normalizePath(path: string): string {
   return path.replace(/\\/g, "/");
 }
 
+export function shouldIgnorePathEarly(path: string): boolean {
+  const normalized = normalizePath(path);
+  const parts = normalized.split("/").filter(Boolean);
+  return parts.some((part) =>
+    /^(?:\.spotlight-v100|\.fseventsd|system volume information|\.trashes|__macosx)$/i.test(part)
+  ) || parts.some((part) => /^(?:\.ds_store|thumbs\.db|desktop\.ini)$/i.test(part)) || parts.some((part) => /^._/.test(part));
+}
+
 function createUtcDateNoon(year: number, month: number, day: number): Date | null {
   if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) return null;
   if (year < 1900 || year > 2100) return null;
@@ -213,7 +221,8 @@ function shouldKeepUndatedFile(path: string, size: number, likelyFamilyId: strin
 }
 
 export function filterSourceFilesToRecentWindow(files: SourceFile[], lookbackDays: number): RecentWindowFilterResult {
-  const datedEntries = files.map((file) => ({
+  const relevantFiles = files.filter((file) => !shouldIgnorePathEarly(file.path));
+  const datedEntries = relevantFiles.map((file) => ({
     file,
     date: extractDateFromPath(file.path)
   }));
@@ -221,17 +230,17 @@ export function filterSourceFilesToRecentWindow(files: SourceFile[], lookbackDay
   const dated = datedEntries.filter((entry): entry is { file: SourceFile; date: Date } => entry.date !== null);
   if (dated.length === 0) {
     return {
-      files,
+      files: relevantFiles,
       originalCount: files.length,
-      filteredOutCount: 0,
-      filteredOutBytes: 0,
+      filteredOutCount: files.length - relevantFiles.length,
+      filteredOutBytes: files.filter((file) => shouldIgnorePathEarly(file.path)).reduce((sum, file) => sum + file.size, 0),
       latestDateIso: null,
       hadDatedFiles: false
     };
   }
 
-  const likelyFamilyId = detectLikelyFamilyId(files);
-  const datedCoverage = dated.length / Math.max(1, files.length);
+  const likelyFamilyId = detectLikelyFamilyId(relevantFiles);
+  const datedCoverage = dated.length / Math.max(1, relevantFiles.length);
   const latestDatedFile = dated.reduce((latest, entry) => (entry.date > latest.date ? entry : latest), dated[0]);
   if (!likelyFamilyId && datedCoverage < 0.1) {
     return {
@@ -271,14 +280,16 @@ export function filterSourceFilesToRecentWindow(files: SourceFile[], lookbackDay
     })
     .map((entry) => entry.file);
 
-  const outputFiles = kept.length > 0 ? kept : files;
+  const outputFiles = kept.length > 0 ? kept : relevantFiles;
   const latestDateIso = toIsoDate(latestDatedFile.date);
 
   return {
     files: outputFiles,
     originalCount: files.length,
-    filteredOutCount: outputFiles === files ? 0 : filteredOutCount,
-    filteredOutBytes: outputFiles === files ? 0 : filteredOutBytes,
+    filteredOutCount:
+      files.length - outputFiles.length,
+    filteredOutBytes:
+      files.reduce((sum, file) => (outputFiles.includes(file) ? sum : sum + file.size), 0),
     latestDateIso,
     hadDatedFiles: true
   };
@@ -295,7 +306,8 @@ export function filterFolderEntriesToRecentWindow<T extends { relativePath: stri
   latestDateIso: string | null;
   hadDatedFiles: boolean;
 } {
-  const datedEntries = entries.map((entry) => ({
+  const relevantEntries = entries.filter((entry) => !shouldIgnorePathEarly(entry.relativePath));
+  const datedEntries = relevantEntries.map((entry) => ({
     entry,
     path: entry.relativePath,
     size: entry.size,
@@ -307,22 +319,22 @@ export function filterFolderEntriesToRecentWindow<T extends { relativePath: stri
     return {
       entries,
       originalCount: entries.length,
-      filteredOutCount: 0,
-      filteredOutBytes: 0,
+      filteredOutCount: entries.length - relevantEntries.length,
+      filteredOutBytes: entries.filter((entry) => shouldIgnorePathEarly(entry.relativePath)).reduce((sum, entry) => sum + entry.size, 0),
       latestDateIso: null,
       hadDatedFiles: false
     };
   }
 
   const likelyFamilyId = detectLikelyFamilyId(datedEntries.map((item) => ({ path: item.path })));
-  const datedCoverage = dated.length / Math.max(1, entries.length);
+  const datedCoverage = dated.length / Math.max(1, relevantEntries.length);
   const latestDatedEntry = dated.reduce((latest, item) => (item.date > latest.date ? item : latest), dated[0]);
   if (!likelyFamilyId && datedCoverage < 0.1) {
     return {
       entries,
       originalCount: entries.length,
-      filteredOutCount: 0,
-      filteredOutBytes: 0,
+      filteredOutCount: entries.length - relevantEntries.length,
+      filteredOutBytes: entries.filter((entry) => shouldIgnorePathEarly(entry.relativePath)).reduce((sum, entry) => sum + entry.size, 0),
       latestDateIso: toIsoDate(latestDatedEntry.date),
       hadDatedFiles: true
     };
@@ -355,14 +367,14 @@ export function filterFolderEntriesToRecentWindow<T extends { relativePath: stri
     })
     .map((item) => item.entry);
 
-  const outputEntries = kept.length > 0 ? kept : entries;
+  const outputEntries = kept.length > 0 ? kept : relevantEntries;
   const latestDateIso = toIsoDate(latestDatedEntry.date);
 
   return {
     entries: outputEntries,
     originalCount: entries.length,
-    filteredOutCount: outputEntries === entries ? 0 : filteredOutCount,
-    filteredOutBytes: outputEntries === entries ? 0 : filteredOutBytes,
+    filteredOutCount: entries.length - outputEntries.length,
+    filteredOutBytes: entries.reduce((sum, entry) => (outputEntries.includes(entry) ? sum : sum + entry.size), 0),
     latestDateIso,
     hadDatedFiles: true
   };
