@@ -331,8 +331,37 @@ function inferMachineSettingsFromText(text: string, machine: QuickReportMetrics[
     }
   }
   if (!machine.pressureRelief) {
-    const m = text.match(/^\s*(?:epr|pressure\s*relief|flex|ipr)\s*[:=]\s*([^\n\r]+)/im);
-    if (m) machine.pressureRelief = m[1].trim();
+    const m = text.match(/^\s*(epr|pressure\s*relief|flex|ipr)\s*[:=]\s*([^\n\r]+)/im);
+    if (m) {
+      const rawKey = m[1].trim();
+      const rawValue = m[2].trim();
+      const normalizedKey = rawKey.replace(/\s+/g, " ").toLowerCase();
+      const numericValue = safeNumber(rawValue);
+      if (numericValue !== undefined) {
+        const label =
+          normalizedKey === "pressure relief"
+            ? "Pressure relief"
+            : normalizedKey.toUpperCase();
+        machine.pressureRelief =
+          numericValue > 0
+            ? `${label}: On ${Number(numericValue.toFixed(2)).toString()}`
+            : `${label}: Off`;
+      } else if (/^(?:off|disabled|false|no)$/i.test(rawValue)) {
+        const label =
+          normalizedKey === "pressure relief"
+            ? "Pressure relief"
+            : normalizedKey.toUpperCase();
+        machine.pressureRelief = `${label}: Off`;
+      } else if (/^(?:on|enabled|true|yes)$/i.test(rawValue)) {
+        const label =
+          normalizedKey === "pressure relief"
+            ? "Pressure relief"
+            : normalizedKey.toUpperCase();
+        machine.pressureRelief = `${label}: On`;
+      } else {
+        machine.pressureRelief = rawValue;
+      }
+    }
   }
 
   const minMatch = text.match(/^\s*(?:min(?:imum)?\s*pressure|pmin|minpressure|pressuremin|min_pressure)\s*[:=]?\s*(-?\d+(?:\.\d+)?)/im);

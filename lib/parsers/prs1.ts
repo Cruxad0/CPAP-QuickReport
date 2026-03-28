@@ -1220,6 +1220,8 @@ function applySessionSettingsToMachine(session: Prs1SessionAccumulator, machine:
       typeof session.pressureReliefLevel === "number"
         ? `${session.pressureReliefMode}: ${session.pressureReliefLevel}`
         : session.pressureReliefMode;
+  } else if (!machine.pressureRelief) {
+    machine.pressureRelief = "Flex: Off";
   }
 }
 
