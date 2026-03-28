@@ -2196,6 +2196,7 @@ async function prepareQuickReportSourceInternal(request: PrepareQuickReportSourc
   const familyParserContext = {
     familyLabel: selectedFamily.label,
     candidates: familyParserCandidates,
+    lookbackDays: normalizedLookbackDays,
     machine,
     records,
     warnings,

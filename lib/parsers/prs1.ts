@@ -134,6 +134,8 @@ const PRS1_EXACT_MODELS = new Map<string, { label: string; mode: CanonicalMode }
 ]);
 
 const PRS1_BINARY_EXTENSIONS = new Set(["000", "001", "002", "b01", "b02"]);
+const PRS1_SUMMARY_BINARY_EXTENSIONS = new Set(["000", "001", "b01"]);
+const PRS1_EVENT_BINARY_EXTENSIONS = new Set(["002", "b02"]);
 const PRS1_TEXT_FILE_PATTERN = /(?:^|\/)(?:prop(?:erties)?(?:\.[^/]+)?\.txt)$/i;
 const PRS1_LAST_FILE_PATTERN = /(?:^|\/)p-series\/last\.txt$/i;
 const PRS1_DREAMSTATION_COMMON_KEY = Uint8Array.from([
@@ -241,6 +243,10 @@ function asDateFromUnix(timestamp: number): Date | null {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
+function toPrs1ClinicalIsoDate(date: Date): string {
+  return new Date(date.getTime() - 12 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
 function normalizePrs1BinaryExtension(normalizedPath: string): string {
   return normalizedPath.split(".").pop()?.toLowerCase() ?? "";
 }
@@ -252,6 +258,14 @@ function isPrs1BinaryCandidate(candidate: FamilyParserCandidate): boolean {
     return /(?:^|\/)p-series\/[^/]+\/p\d+\//i.test(candidate.normalizedPath) || /(?:^|\/)p\d+\//i.test(candidate.normalizedPath);
   }
   return true;
+}
+
+function isPrs1SummaryBinaryCandidate(candidate: FamilyParserCandidate): boolean {
+  return PRS1_SUMMARY_BINARY_EXTENSIONS.has(normalizePrs1BinaryExtension(candidate.normalizedPath));
+}
+
+function isPrs1EventBinaryCandidate(candidate: FamilyParserCandidate): boolean {
+  return PRS1_EVENT_BINARY_EXTENSIONS.has(normalizePrs1BinaryExtension(candidate.normalizedPath));
 }
 
 function isPrs1TextCandidate(candidate: FamilyParserCandidate): boolean {
@@ -1342,23 +1356,90 @@ function toParsedRecord(session: Prs1SessionAccumulator): ParsedRecord | null {
   };
 }
 
-async function parsePrs1BinaryCandidates(context: FamilyParserContext, deps: FamilyParserDeps) {
-  const binaryCandidates = context.candidates.filter(isPrs1BinaryCandidate);
-  const sessions = new Map<number, Prs1SessionAccumulator>();
-  const wrappedKeyCache = new Map<string, Uint8Array | null>();
+type Prs1ParseProgressState = {
+  processed: number;
+  total: number;
+  emitEvery: number;
+  yieldEvery: number;
+};
 
-  let processed = 0;
-  for (const candidate of binaryCandidates) {
-    processed += 1;
-    const pct =
-      context.progressStart +
-      Math.round((processed / Math.max(1, binaryCandidates.length)) * (context.progressEnd - context.progressStart));
+function createPrs1ParseProgressState(total: number): Prs1ParseProgressState {
+  return {
+    processed: 0,
+    total,
+    emitEvery: Math.max(25, Math.ceil(total / 80)),
+    yieldEvery: 128
+  };
+}
 
-    deps.emit(context.onProgress, {
-      phase: "parse",
-      detail: `Reading ${candidate.normalizedPath}`,
-      percent: Math.min(context.progressEnd, pct)
-    });
+function collectRecentPrs1SessionIds(sessions: Map<number, Prs1SessionAccumulator>, lookbackDays: number): Set<number> | null {
+  let latestClinicalDayIso: string | null = null;
+  for (const session of sessions.values()) {
+    const date = asDateFromUnix(session.timestamp);
+    if (!date) continue;
+    const clinicalDayIso = toPrs1ClinicalIsoDate(date);
+    if (!latestClinicalDayIso || clinicalDayIso > latestClinicalDayIso) {
+      latestClinicalDayIso = clinicalDayIso;
+    }
+  }
+
+  if (!latestClinicalDayIso) return null;
+
+  const latestClinicalDay = new Date(`${latestClinicalDayIso}T12:00:00Z`);
+  const earliestClinicalDay = new Date(latestClinicalDay.getTime() - (Math.max(1, contextLookbackDays(lookbackDays)) - 1) * 24 * 60 * 60 * 1000);
+  const earliestClinicalDayIso = earliestClinicalDay.toISOString().slice(0, 10);
+
+  const recentSessionIds = new Set<number>();
+  for (const session of sessions.values()) {
+    const date = asDateFromUnix(session.timestamp);
+    if (!date) continue;
+    if (toPrs1ClinicalIsoDate(date) >= earliestClinicalDayIso) {
+      recentSessionIds.add(session.sessionId);
+    }
+  }
+  return recentSessionIds.size > 0 ? recentSessionIds : null;
+}
+
+function contextLookbackDays(lookbackDays: number): number {
+  return Number.isFinite(lookbackDays) && lookbackDays > 0 ? Math.trunc(lookbackDays) : 90;
+}
+
+function trimPrs1SessionsToRecentWindow(sessions: Map<number, Prs1SessionAccumulator>, recentSessionIds: Set<number>) {
+  for (const sessionId of [...sessions.keys()]) {
+    if (!recentSessionIds.has(sessionId)) sessions.delete(sessionId);
+  }
+}
+
+async function parsePrs1BinaryCandidateBatch(
+  context: FamilyParserContext,
+  deps: FamilyParserDeps,
+  candidates: FamilyParserCandidate[],
+  sessions: Map<number, Prs1SessionAccumulator>,
+  wrappedKeyCache: Map<string, Uint8Array | null>,
+  progressState: Prs1ParseProgressState,
+  recentEventSessionIds: Set<number> | null
+) {
+  const shouldReportProgress = typeof context.onProgress === "function";
+
+  for (const candidate of candidates) {
+    progressState.processed += 1;
+
+    if (
+      shouldReportProgress &&
+      (progressState.processed === 1 ||
+        progressState.processed === progressState.total ||
+        progressState.processed % progressState.emitEvery === 0)
+    ) {
+      const pct =
+        context.progressStart +
+        Math.round((progressState.processed / Math.max(1, progressState.total)) * (context.progressEnd - context.progressStart));
+
+      deps.emit(context.onProgress, {
+        phase: "parse",
+        detail: `Reading ${candidate.normalizedPath}`,
+        percent: Math.min(context.progressEnd, pct)
+      });
+    }
 
     try {
       let bytes = await candidate.file.readBytes();
@@ -1370,6 +1451,9 @@ async function parsePrs1BinaryCandidates(context: FamilyParserContext, deps: Fam
       }
       const chunks = parsePrs1Chunks(bytes, candidate.normalizedPath);
       for (const chunk of chunks) {
+        if (chunk.ext === 2 && recentEventSessionIds && !recentEventSessionIds.has(chunk.sessionId)) {
+          continue;
+        }
         const session = getOrCreateSession(sessions, chunk.sessionId, chunk.timestamp);
         if (chunk.ext === 0 || chunk.ext === 1) {
           parseSummaryOrComplianceChunk(chunk, session);
@@ -1381,9 +1465,41 @@ async function parsePrs1BinaryCandidates(context: FamilyParserContext, deps: Fam
       continue;
     }
 
-    if (processed % 10 === 0) {
+    if (shouldReportProgress && progressState.processed % progressState.yieldEvery === 0) {
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
+  }
+}
+
+async function parsePrs1BinaryCandidates(context: FamilyParserContext, deps: FamilyParserDeps) {
+  const binaryCandidates = context.candidates.filter(isPrs1BinaryCandidate);
+  const summaryCandidates = binaryCandidates.filter(isPrs1SummaryBinaryCandidate);
+  const eventCandidates = binaryCandidates.filter(isPrs1EventBinaryCandidate);
+
+  let sessions = new Map<number, Prs1SessionAccumulator>();
+  const wrappedKeyCache = new Map<string, Uint8Array | null>();
+  const progressState = createPrs1ParseProgressState(binaryCandidates.length);
+
+  if (summaryCandidates.length > 0 && eventCandidates.length > 0) {
+    await parsePrs1BinaryCandidateBatch(context, deps, summaryCandidates, sessions, wrappedKeyCache, progressState, null);
+    const recentSessionIds = collectRecentPrs1SessionIds(sessions, context.lookbackDays);
+    if (recentSessionIds) {
+      trimPrs1SessionsToRecentWindow(sessions, recentSessionIds);
+      await parsePrs1BinaryCandidateBatch(context, deps, eventCandidates, sessions, wrappedKeyCache, progressState, recentSessionIds);
+    } else {
+      sessions = new Map<number, Prs1SessionAccumulator>();
+      await parsePrs1BinaryCandidateBatch(
+        context,
+        deps,
+        binaryCandidates,
+        sessions,
+        wrappedKeyCache,
+        createPrs1ParseProgressState(binaryCandidates.length),
+        null
+      );
+    }
+  } else {
+    await parsePrs1BinaryCandidateBatch(context, deps, binaryCandidates, sessions, wrappedKeyCache, progressState, null);
   }
 
   const orderedSessions = [...sessions.values()].sort((a, b) => a.timestamp - b.timestamp);

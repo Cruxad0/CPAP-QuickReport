@@ -10,6 +10,7 @@ export interface FamilyParserCandidate {
 export interface FamilyParserContext {
   familyLabel: string;
   candidates: FamilyParserCandidate[];
+  lookbackDays: number;
   machine: QuickReportMetrics["machine"];
   records: ParsedRecord[];
   warnings: string[];
