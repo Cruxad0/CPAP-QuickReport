@@ -16,9 +16,9 @@ const securityHeaders = [
       "img-src 'self' data: blob:",
       "font-src 'self' data:",
       "connect-src 'self'",
-      "frame-src 'self' blob: data:",
+      "frame-src 'self' blob:",
       "worker-src 'self' blob:",
-      "media-src 'self' blob:"
+      "media-src 'none'"
     ].join("; ")
   },
   { key: "Referrer-Policy", value: "no-referrer" },

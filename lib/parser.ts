@@ -2408,7 +2408,10 @@ export function buildQuickReportMetricsFromPreparedSource(
   if (ahiValues.length === 0) {
     warnings.push("AHI metrics were not detected from the selected files.");
   }
-  if (leakValues.length === 0) {
+  const hasAnyLeakMetric =
+    leakValues.length > 0 || leakMaxValues.length > 0 || leakMax30mValues.length > 0 || leakMax60mValues.length > 0;
+
+  if (!hasAnyLeakMetric) {
     warnings.push("Leak metrics were not detected from the selected files.");
   }
 
