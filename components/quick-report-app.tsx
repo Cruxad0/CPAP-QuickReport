@@ -516,7 +516,9 @@ export function QuickReportApp() {
         if (!/directory handle transfer/i.test(message)) {
           throw error;
         }
-        const deferredEntries = await enumerateDeferredFolderEntries(rootHandle, (progress) => queueParseProgress(progress));
+        const deferredEntries = await enumerateDeferredFolderEntries(rootHandle, IMPORT_LOOKBACK_DAYS, (progress) =>
+          queueParseProgress(progress)
+        );
         if (deferredEntries.length === 0) {
           setPendingSourceSelection(null);
           setIsSourceLoading(false);

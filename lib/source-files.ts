@@ -122,6 +122,16 @@ function extractDateFromPath(path: string): Date | null {
   return null;
 }
 
+export function shouldSkipPathOutsideRecentWindow(path: string, lookbackDays: number, now = new Date()): boolean {
+  const dated = extractDateFromPath(path);
+  if (!dated) return false;
+
+  const anchoredWindowEndMs = createLocalCalendarDateNoon(now).getTime();
+  const windowStartMs = anchoredWindowEndMs - lookbackDays * DAY_MS;
+  const datedMs = dated.getTime();
+  return datedMs < windowStartMs || datedMs >= anchoredWindowEndMs;
+}
+
 function detectLikelyFamilyId(files: Array<{ path: string }>): string | null {
   const normalizedFiles = files.map((file) => ({ normalizedPath: normalizePath(file.path) }));
   if (hasBmcBundleStructure(normalizedFiles)) return "bmc";

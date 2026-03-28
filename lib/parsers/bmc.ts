@@ -30,10 +30,16 @@ type BmcWaveformDayState = {
   pressureCount: number;
   pressureSeries: number[];
   lastTimestampMs: number | null;
-  window30m: number[];
-  window30mSum: number;
-  window60m: number[];
-  window60mSum: number;
+  window30m: RollingAverageState;
+  window60m: RollingAverageState;
+};
+
+type RollingAverageState = {
+  values: Float64Array;
+  capacity: number;
+  nextIndex: number;
+  length: number;
+  sum: number;
 };
 
 function readAscii(bytes: Uint8Array, start: number, length: number): string {
@@ -76,6 +82,39 @@ function percentile(values: number[], p: number): number {
   const hi = Math.ceil(idx);
   const blend = idx - lo;
   return sorted[lo] * (1 - blend) + sorted[hi] * blend;
+}
+
+function createRollingAverageState(capacity: number): RollingAverageState {
+  return {
+    values: new Float64Array(capacity),
+    capacity,
+    nextIndex: 0,
+    length: 0,
+    sum: 0
+  };
+}
+
+function resetRollingAverageState(state: RollingAverageState) {
+  state.nextIndex = 0;
+  state.length = 0;
+  state.sum = 0;
+}
+
+function pushRollingAverage(state: RollingAverageState, value: number): number | null {
+  if (state.length < state.capacity) {
+    state.values[state.nextIndex] = value;
+    state.sum += value;
+    state.length += 1;
+    state.nextIndex = (state.nextIndex + 1) % state.capacity;
+  } else {
+    state.sum -= state.values[state.nextIndex];
+    state.values[state.nextIndex] = value;
+    state.sum += value;
+    state.nextIndex = (state.nextIndex + 1) % state.capacity;
+  }
+
+  if (state.length < state.capacity) return null;
+  return state.sum / state.capacity;
 }
 
 function decodeBmcDate(encodedDate: number): Date | null {
@@ -229,38 +268,24 @@ function createBmcWaveformDayState(dayIso: string): BmcWaveformDayState {
     pressureCount: 0,
     pressureSeries: [],
     lastTimestampMs: null,
-    window30m: [],
-    window30mSum: 0,
-    window60m: [],
-    window60mSum: 0
+    window30m: createRollingAverageState(BMC_WAVEFORM_30M_SECONDS),
+    window60m: createRollingAverageState(BMC_WAVEFORM_60M_SECONDS)
   };
 }
 
 function resetBmcLeakWindows(state: BmcWaveformDayState) {
-  state.window30m.length = 0;
-  state.window30mSum = 0;
-  state.window60m.length = 0;
-  state.window60mSum = 0;
+  resetRollingAverageState(state.window30m);
+  resetRollingAverageState(state.window60m);
 }
 
 function pushBmcLeakWindow(state: BmcWaveformDayState, leak: number) {
-  state.window30m.push(leak);
-  state.window30mSum += leak;
-  if (state.window30m.length > BMC_WAVEFORM_30M_SECONDS) {
-    state.window30mSum -= state.window30m.shift() ?? 0;
-  }
-  if (state.window30m.length === BMC_WAVEFORM_30M_SECONDS) {
-    const average30m = state.window30mSum / BMC_WAVEFORM_30M_SECONDS;
+  const average30m = pushRollingAverage(state.window30m, leak);
+  if (average30m !== null) {
     state.leakMax30m = state.leakMax30m === null ? average30m : Math.max(state.leakMax30m, average30m);
   }
 
-  state.window60m.push(leak);
-  state.window60mSum += leak;
-  if (state.window60m.length > BMC_WAVEFORM_60M_SECONDS) {
-    state.window60mSum -= state.window60m.shift() ?? 0;
-  }
-  if (state.window60m.length === BMC_WAVEFORM_60M_SECONDS) {
-    const average60m = state.window60mSum / BMC_WAVEFORM_60M_SECONDS;
+  const average60m = pushRollingAverage(state.window60m, leak);
+  if (average60m !== null) {
     state.leakMax60m = state.leakMax60m === null ? average60m : Math.max(state.leakMax60m, average60m);
   }
 }

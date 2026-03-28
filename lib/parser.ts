@@ -77,6 +77,14 @@ type LeakStats = {
   sustainedMax60m: number | null;
 };
 
+type RollingAverageState = {
+  values: Float64Array;
+  capacity: number;
+  nextIndex: number;
+  length: number;
+  sum: number;
+};
+
 const RESVENT_MODE_FROM_FILE = new Map<string, string>([
   ["N_CPAP", "CPAP"],
   ["N_APAP", "APAP"],
@@ -1329,10 +1337,8 @@ function parseResventLeakFromBytes(bytes: Uint8Array): LeakStats | null {
     let sustainedMax60m = -Infinity;
     let required30mSamples = 0;
     let required60mSamples = 0;
-    let window30mSum = 0;
-    let window60mSum = 0;
-    const window30m: number[] = [];
-    const window60m: number[] = [];
+    let rolling30m: RollingAverageState | null = null;
+    let rolling60m: RollingAverageState | null = null;
 
     while (pos < bytes.length) {
       let leakStart = -1;
@@ -1365,6 +1371,8 @@ function parseResventLeakFromBytes(bytes: Uint8Array): LeakStats | null {
         if (sampleIntervalSec > 0 && Number.isFinite(sampleIntervalSec)) {
           required30mSamples = Math.max(1, Math.ceil(1800 / sampleIntervalSec));
           required60mSamples = Math.max(1, Math.ceil(3600 / sampleIntervalSec));
+          rolling30m = createRollingAverageState(required30mSamples);
+          rolling60m = createRollingAverageState(required60mSamples);
         }
       }
       for (let i = 0; i < leakSamples; i += 1) {
@@ -1374,38 +1382,19 @@ function parseResventLeakFromBytes(bytes: Uint8Array): LeakStats | null {
         const raw = view.getInt16(sampleOffset, true);
         const value = raw * 0.1;
         if (!Number.isFinite(value) || value < 0 || value > 500) {
-          window30m.length = 0;
-          window60m.length = 0;
-          window30mSum = 0;
-          window60mSum = 0;
+          resetRollingAverageState(rolling30m);
+          resetRollingAverageState(rolling60m);
           continue;
         }
 
         sum += value;
         count += 1;
         if (value > max) max = value;
-        if (required30mSamples > 0) {
-          window30m.push(value);
-          window30mSum += value;
-          if (window30m.length > required30mSamples) {
-            window30mSum -= window30m.shift() ?? 0;
-          }
-          if (window30m.length === required30mSamples) {
-            const sustainedAverage30m = window30mSum / required30mSamples;
-            if (sustainedAverage30m > sustainedMax30m) sustainedMax30m = sustainedAverage30m;
-          }
-        }
-        if (required60mSamples > 0) {
-          window60m.push(value);
-          window60mSum += value;
-          if (window60m.length > required60mSamples) {
-            window60mSum -= window60m.shift() ?? 0;
-          }
-          if (window60m.length === required60mSamples) {
-            const sustainedAverage60m = window60mSum / required60mSamples;
-            if (sustainedAverage60m > sustainedMax60m) sustainedMax60m = sustainedAverage60m;
-          }
-        }
+        const sustainedAverage30m = pushRollingAverage(rolling30m, value);
+        if (sustainedAverage30m !== null && sustainedAverage30m > sustainedMax30m) sustainedMax30m = sustainedAverage30m;
+
+        const sustainedAverage60m = pushRollingAverage(rolling60m, value);
+        if (sustainedAverage60m !== null && sustainedAverage60m > sustainedMax60m) sustainedMax60m = sustainedAverage60m;
       }
 
       if (nextPos <= pos) break;
@@ -1553,6 +1542,43 @@ function createEmptyDayBucket(): DayBucket {
     pressure95Sum: 0,
     pressure95Count: 0
   };
+}
+
+function createRollingAverageState(capacity: number): RollingAverageState | null {
+  if (!Number.isFinite(capacity) || capacity <= 0) return null;
+  return {
+    values: new Float64Array(capacity),
+    capacity,
+    nextIndex: 0,
+    length: 0,
+    sum: 0
+  };
+}
+
+function resetRollingAverageState(state: RollingAverageState | null) {
+  if (!state) return;
+  state.nextIndex = 0;
+  state.length = 0;
+  state.sum = 0;
+}
+
+function pushRollingAverage(state: RollingAverageState | null, value: number): number | null {
+  if (!state) return null;
+
+  if (state.length < state.capacity) {
+    state.values[state.nextIndex] = value;
+    state.sum += value;
+    state.length += 1;
+    state.nextIndex = (state.nextIndex + 1) % state.capacity;
+  } else {
+    state.sum -= state.values[state.nextIndex];
+    state.values[state.nextIndex] = value;
+    state.sum += value;
+    state.nextIndex = (state.nextIndex + 1) % state.capacity;
+  }
+
+  if (state.length < state.capacity) return null;
+  return state.sum / state.capacity;
 }
 
 function finite(value: number): number {

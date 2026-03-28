@@ -9,7 +9,8 @@ import {
   createSourceFileSummary,
   filterFolderEntriesToRecentWindow,
   filterSourceFilesToRecentWindow,
-  shouldIgnorePathEarly
+  shouldIgnorePathEarly,
+  shouldSkipPathOutsideRecentWindow
 } from "@/lib/source-files";
 import type { ReportWorkerRequest, ReportWorkerResponse } from "@/lib/report-worker-types";
 import type { DataSourceKind, PreparedQuickReportSource } from "@/lib/types";
@@ -59,7 +60,8 @@ async function yieldInWorker(): Promise<void> {
 
 async function enumerateFolderHandle(
   requestId: number,
-  rootHandle: WorkerDirectoryHandle
+  rootHandle: WorkerDirectoryHandle,
+  lookbackDays: number
 ): Promise<DeferredFolderSourceEntry[]> {
   const deferredEntries: DeferredFolderSourceEntry[] = [];
   const stack: Array<{ handle: WorkerDirectoryHandle; prefix: string }> = [{ handle: rootHandle, prefix: "" }];
@@ -72,6 +74,7 @@ async function enumerateFolderHandle(
     for await (const childHandle of current.handle.values()) {
       const childPath = current.prefix ? `${current.prefix}/${childHandle.name}` : childHandle.name;
       if (shouldIgnorePathEarly(childPath)) continue;
+      if (shouldSkipPathOutsideRecentWindow(childPath, lookbackDays)) continue;
 
       if (childHandle.kind === "directory") {
         stack.push({
@@ -109,7 +112,7 @@ async function loadFolderFromDirectoryHandle(
   parseLookbackDays: number
 ) {
   emitProgress(requestId, "scan", "Loading SD-CARD...", 1);
-  const deferredEntries = await enumerateFolderHandle(requestId, rootHandle);
+  const deferredEntries = await enumerateFolderHandle(requestId, rootHandle, importLookbackDays);
 
   if (deferredEntries.length === 0) {
     throw new Error("Directory picker returned no files. Try selecting the SD-card root folder.");
