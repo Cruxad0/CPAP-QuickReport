@@ -797,9 +797,10 @@ function inferMachineSettingsFromConfigMap(configMap: Map<string, string>, machi
 
   const model = configMap.get("models") ?? configMap.get("model");
   const sn = configMap.get("sn") ?? configMap.get("serial");
-  if (!machine.device && model && sn) machine.device = `${model} (${sn})`;
-  else if (!machine.device && model) machine.device = model;
-  else if (!machine.device && sn) machine.device = `Serial ${sn}`;
+  const hasGenericResventLabel = typeof machine.device === "string" && /^Resvent\s*\/\s*Hoffrichter$/i.test(machine.device.trim());
+  if ((!machine.device || hasGenericResventLabel) && model && sn) machine.device = `${model} (${sn})`;
+  else if ((!machine.device || hasGenericResventLabel) && model) machine.device = model;
+  else if ((!machine.device || hasGenericResventLabel) && sn) machine.device = `Serial ${sn}`;
 
   if (!resolveExplicitTherapyMode(machine.mode)) {
     const modeRaw = configMap.get("VentMode") ?? configMap.get("mode");
