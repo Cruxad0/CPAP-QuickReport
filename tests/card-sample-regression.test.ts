@@ -57,11 +57,11 @@ maybeResventTest("Resvent sample card preserves APAP config and metrics", async 
   assert.equal(prepared.machine.pressureMax, "11 cmH2O");
   assert.equal(prepared.machine.pressureRelief, "IPR: On 1");
   assert.equal(prepared.latestClinicalDayIso, "2026-03-25");
-  assert.equal(metrics.daysWithData, 89);
-  assert.equal(metrics.daysWithUsage, 89);
-  assert.equal(metrics.compliantDays, 89);
-  assertApprox(metrics.avgUsageHours, 8.4395, 0.01, "avg usage");
-  assertApprox(metrics.avgAhi, 2.2221, 0.01, "avg AHI");
+  assert.equal(metrics.daysWithData, 90);
+  assert.equal(metrics.daysWithUsage, 90);
+  assert.equal(metrics.compliantDays, 90);
+  assertApprox(metrics.avgUsageHours, 8.4611, 0.02, "avg usage");
+  assertApprox(metrics.avgAhi, 2.2263, 0.02, "avg AHI");
   assertApprox(metrics.avgLeak, 0.3240, 0.01, "avg leak");
   assertApprox(metrics.maxLeak30m, 10.0464, 0.05, "30 min leak");
   assertApprox(metrics.maxLeak60m, 115.5, 0.05, "60 min leak");

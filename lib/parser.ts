@@ -646,6 +646,14 @@ function resolveRecentWindow(_latestDate: Date, lookbackDays: number): DateWindo
   return { start: windowStart, end: windowEnd };
 }
 
+function resolveLatestDataWindow(latestDate: Date, lookbackDays: number): DateWindow {
+  const normalizedLookbackDays = normalizeLookbackDays(lookbackDays);
+  const latestClinicalDay = createUtcDateNoon(latestDate.getUTCFullYear(), latestDate.getUTCMonth() + 1, latestDate.getUTCDate())!;
+  const windowEnd = addUtcDays(latestClinicalDay, 1);
+  const windowStart = addUtcDays(windowEnd, -normalizedLookbackDays);
+  return { start: windowStart, end: windowEnd };
+}
+
 function resolveWindowFromClinicalEndIso(windowEndClinicalDayIso: string, lookbackDays: number): DateWindow {
   const normalizedLookbackDays = normalizeLookbackDays(lookbackDays);
   const includedClinicalEnd = new Date(`${windowEndClinicalDayIso}T12:00:00Z`);
@@ -706,7 +714,7 @@ function selectGenericCandidates(
     .filter((m): m is SourceMeta & { recordDate: Date } => m.recordDate !== null)
     .reduce<Date | null>((acc, m) => (acc === null || m.recordDate > acc ? m.recordDate : acc), null);
 
-  const window = latestDated ? resolveRecentWindow(latestDated, lookbackDays) : null;
+  const window = latestDated ? resolveLatestDataWindow(latestDated, lookbackDays) : null;
   const priorityPatterns = selectedFamily ? buildFamilyPriorityPatterns(selectedFamily) : [];
 
   const ranked = allCandidates
@@ -1433,7 +1441,7 @@ function pickResventCandidates(files: SourceMeta[], warnings: string[], lookback
   if (dated.length === 0) return null;
 
   const latestDate = dated.reduce((acc, m) => (m.recordDate > acc ? m.recordDate : acc), dated[0].recordDate);
-  const { start: windowStart, end: windowEnd } = resolveRecentWindow(latestDate, lookbackDays);
+  const { start: windowStart, end: windowEnd } = resolveLatestDataWindow(latestDate, lookbackDays);
 
   const inWindow = dated.filter((m) => m.recordDate >= windowStart && m.recordDate < windowEnd);
   const windowDateSet = new Set(inWindow.map((m) => toClinicalIsoDate(m.recordDate)));

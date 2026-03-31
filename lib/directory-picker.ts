@@ -1,6 +1,6 @@
 "use client";
 
-import { shouldIgnorePathEarly, shouldSkipPathOutsideRecentWindow, type DeferredFolderSourceEntry } from "@/lib/source-files";
+import { shouldIgnorePathEarly, type DeferredFolderSourceEntry } from "@/lib/source-files";
 import type { ParseProgress } from "@/lib/types";
 
 type ProgressCallback = (progress: ParseProgress) => void;
@@ -53,7 +53,7 @@ export async function pickDirectoryHandle(onPicked?: () => void): Promise<Direct
 
 export async function enumerateDeferredFolderEntries(
   rootHandle: DirectoryPickerDirectoryHandle,
-  lookbackDays: number,
+  _lookbackDays: number,
   onProgress?: ProgressCallback
 ): Promise<DeferredFolderSourceEntry[]> {
   const deferredEntries: DeferredFolderSourceEntry[] = [];
@@ -67,7 +67,6 @@ export async function enumerateDeferredFolderEntries(
     for await (const childHandle of current.handle.values()) {
       const childPath = current.prefix ? `${current.prefix}/${childHandle.name}` : childHandle.name;
       if (shouldIgnorePathEarly(childPath)) continue;
-      if (shouldSkipPathOutsideRecentWindow(childPath, lookbackDays)) continue;
 
       if (childHandle.kind === "directory") {
         stack.push({

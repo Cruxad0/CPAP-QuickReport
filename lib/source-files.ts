@@ -132,6 +132,13 @@ export function shouldSkipPathOutsideRecentWindow(path: string, lookbackDays: nu
   return datedMs < windowStartMs || datedMs >= anchoredWindowEndMs;
 }
 
+function resolveLatestDataWindowMs(latestDate: Date, lookbackDays: number): { startMs: number; endMs: number } {
+  const latestDateMs = latestDate.getTime();
+  const anchoredWindowEndMs = latestDateMs + DAY_MS;
+  const windowStartMs = anchoredWindowEndMs - lookbackDays * DAY_MS;
+  return { startMs: windowStartMs, endMs: anchoredWindowEndMs };
+}
+
 function detectLikelyFamilyId(files: Array<{ path: string }>): string | null {
   const normalizedFiles = files.map((file) => ({ normalizedPath: normalizePath(file.path) }));
   if (hasBmcBundleStructure(normalizedFiles)) return "bmc";
@@ -263,9 +270,7 @@ export function filterSourceFilesToRecentWindow(files: SourceFile[], lookbackDay
     };
   }
 
-  const now = new Date();
-  const anchoredWindowEndMs = createLocalCalendarDateNoon(now).getTime();
-  const windowStartMs = anchoredWindowEndMs - lookbackDays * DAY_MS;
+  const { startMs: windowStartMs, endMs: anchoredWindowEndMs } = resolveLatestDataWindowMs(latestDatedFile.date, lookbackDays);
 
   let filteredOutCount = 0;
   let filteredOutBytes = 0;
@@ -350,9 +355,7 @@ export function filterFolderEntriesToRecentWindow<T extends { relativePath: stri
     };
   }
 
-  const now = new Date();
-  const anchoredWindowEndMs = createLocalCalendarDateNoon(now).getTime();
-  const windowStartMs = anchoredWindowEndMs - lookbackDays * DAY_MS;
+  const { startMs: windowStartMs, endMs: anchoredWindowEndMs } = resolveLatestDataWindowMs(latestDatedEntry.date, lookbackDays);
 
   let filteredOutCount = 0;
   let filteredOutBytes = 0;

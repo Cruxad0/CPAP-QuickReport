@@ -42,6 +42,22 @@ test("folder-entry recent-window filter reports the actual latest dated file, no
   assert.equal(filtered.latestDateIso, "2024-02-07");
 });
 
+test("recent-window filters keep the most recent dated data relative to the latest file, not today's date", () => {
+  const files = [
+    createSourceFile("THERAPY/RECORD/202512/25/STAT", 100),
+    createSourceFile("THERAPY/RECORD/202512/26/STAT", 100),
+    createSourceFile("THERAPY/RECORD/202512/27/STAT", 100),
+    createSourceFile("THERAPY/RECORD/202603/25/STAT", 100)
+  ];
+
+  const filtered = filterSourceFilesToRecentWindow(files, 90);
+
+  assert.equal(filtered.files.some((file) => file.path.includes("202512/25")), false);
+  assert.equal(filtered.files.some((file) => file.path.includes("202512/26")), true);
+  assert.equal(filtered.files.some((file) => file.path.includes("202512/27")), true);
+  assert.equal(filtered.files.some((file) => file.path.includes("202603/25")), true);
+});
+
 test("early path pruning skips old dated folders before SD-card enumeration continues", () => {
   const now = new Date("2026-03-27T10:00:00-04:00");
 
