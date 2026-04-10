@@ -13,6 +13,7 @@ const BRANDING_LOGO_MAX_HEIGHT = 72;
 const FOOTER_BLOCK_HEIGHT = 64;
 const THERAPY_MIN_FONT_SIZE = 10;
 const THERAPY_MAX_FONT_SIZE = 11;
+const REPORT_METRIC_DECIMALS = 1;
 
 type PdfLibModule = {
   PDFDocument: {
@@ -280,7 +281,7 @@ function filenameDateStamp(date = new Date()): string {
   return `${mm}${dd}${yyyy}`;
 }
 
-function valueText(value: number | null | undefined, digits = 2): string {
+export function formatReportMetricValue(value: number | null | undefined, digits = REPORT_METRIC_DECIMALS): string {
   return typeof value === "number" && Number.isFinite(value) ? value.toFixed(digits) : NO_DATA_FALLBACK;
 }
 
@@ -714,12 +715,12 @@ function reraValueText(report: QuickReportMetrics): string {
   if (/apex\s*\/\s*bmc\s*\/\s*luna/i.test(report.selectedLoader)) {
     return "Not supported by this device";
   }
-  return valueText(report.avgReraIndex);
+  return formatReportMetricValue(report.avgReraIndex);
 }
 
 function leakRow(label: string, value: number | null): TableRow {
   if (value === null || !Number.isFinite(value)) return [label, NO_DATA_FALLBACK];
-  return [label, `${valueText(value)} L/min`, value > 30];
+  return [label, `${formatReportMetricValue(value)} L/min`, value > 30];
 }
 
 function measureCompactTableHeight(
@@ -969,19 +970,19 @@ export async function buildPdfReport(report: QuickReportMetrics, headerDataUrl?:
     ["Usage days (% of range)", `${report.usageDaysPercent.toFixed(1)}%`],
     ["Compliant days (>= 4h)", `${report.compliantDays} / ${report.daysInWindow}`, belowMedicareCompliance],
     ["Compliance (% of range)", `${report.compliancePercent.toFixed(1)}%`, belowMedicareCompliance],
-    ["Avg usage per day", report.avgUsageHours === null ? NO_DATA_FALLBACK : `${valueText(report.avgUsageHours)} h`, belowMedicareNightlyUse],
+    ["Avg usage per day", report.avgUsageHours === null ? NO_DATA_FALLBACK : `${formatReportMetricValue(report.avgUsageHours)} h`, belowMedicareNightlyUse],
     ...therapyPressureRowsForMode,
-    ["Avg AHI", valueText(report.avgAhi)],
-    ["95th AHI", valueText(report.ahi95th)],
-    ["Avg Residual apneas", valueText(report.avgResidualApneas)],
-    ["95th Residual apneas", valueText(report.residualApneas95th)],
-    ["Avg Central apneas", valueText(report.avgCentralApneas)],
-    ["95th Central apneas", valueText(report.centralApneas95th)],
+    ["Avg AHI", formatReportMetricValue(report.avgAhi)],
+    ["95th AHI", formatReportMetricValue(report.ahi95th)],
+    ["Avg Residual apneas", formatReportMetricValue(report.avgResidualApneas)],
+    ["95th Residual apneas", formatReportMetricValue(report.residualApneas95th)],
+    ["Avg Central apneas", formatReportMetricValue(report.avgCentralApneas)],
+    ["95th Central apneas", formatReportMetricValue(report.centralApneas95th)],
     ["Avg RERA index", reraValueText(report)],
     leakRow("Avg Leak", report.avgLeak),
     leakRow("95th Leak", report.leak95th),
-    leakRow("30 min Leak", report.maxLeak30m),
-    leakRow("60 min Leak", report.maxLeak60m)
+    leakRow("30 min Sustained Leak", report.maxLeak30m),
+    leakRow("60 min Sustained Leak", report.maxLeak60m)
   ];
 
   const fullWidth = state.pageWidth - PAGE_MARGIN * 2;

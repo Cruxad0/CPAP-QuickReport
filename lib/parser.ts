@@ -85,6 +85,11 @@ type RollingAverageState = {
   sum: number;
 };
 
+type ReportSummaryAggregationPolicy = {
+  averageRateMetricsByUsage: boolean;
+  pressure95Aggregation: "daily-value-percentile" | "daily-summary-mean";
+};
+
 const RESVENT_MODE_FROM_FILE = new Map<string, string>([
   ["N_CPAP", "CPAP"],
   ["N_APAP", "APAP"],
@@ -108,6 +113,20 @@ const RESVENT_ACTIVE_CONFIG_BY_VENT_MODE = new Map<string, string>([
   ["14", "N_T30"],
   ["15", "N_PC"]
 ]);
+
+function getReportSummaryAggregationPolicy(selectedLoader: string): ReportSummaryAggregationPolicy {
+  if (/^resvent\s*\/\s*hoffrichter$/i.test(selectedLoader.trim())) {
+    return {
+      averageRateMetricsByUsage: true,
+      pressure95Aggregation: "daily-summary-mean"
+    };
+  }
+
+  return {
+    averageRateMetricsByUsage: false,
+    pressure95Aggregation: "daily-value-percentile"
+  };
+}
 
 function formatCmH2O(raw: unknown): string | null {
   const n = safeNumber(raw);
@@ -951,12 +970,25 @@ function parseResventStatText(text: string, fallbackDate: Date): ParsedRecord | 
 
   let leak: number | undefined;
   let leakMax: number | undefined;
+  for (const preferredKey of ["p95leak", "avgleak", "averageleak", "meanleak", "medleak", "medianleak"]) {
+    const candidate = safeNumber(kvLower.get(preferredKey));
+    if (candidate !== undefined && candidate >= 0 && candidate <= 500) {
+      leak = candidate;
+      break;
+    }
+  }
+
+  const preferredMaxLeak = safeNumber(kvLower.get("maxleak"));
+  if (preferredMaxLeak !== undefined && preferredMaxLeak >= 0 && preferredMaxLeak <= 500) {
+    leakMax = preferredMaxLeak;
+  }
+
   for (const [key, value] of kv.entries()) {
     if (!/leak/i.test(key)) continue;
     const n = safeNumber(value);
     if (n === undefined) continue;
     if (/max/i.test(key)) {
-      if (n >= 0 && n <= 500) leakMax = n;
+      if (leakMax === undefined && n >= 0 && n <= 500) leakMax = n;
       continue;
     }
     if (n >= 0 && n <= 500 && leak === undefined) {
@@ -1449,9 +1481,9 @@ function pickResventCandidates(files: SourceMeta[], warnings: string[], lookback
   const configFiles = files.filter(isResventConfigFile).filter((m) => m.file.size <= MAX_FILE_SIZE_BYTES);
   const usageStatFiles = inWindow.filter(isResventStatUsageFile).filter((m) => m.file.size <= MAX_FILE_SIZE_BYTES);
   const summaryStatFiles = inWindow.filter(isResventStatSummaryFile).filter((m) => m.file.size <= MAX_FILE_SIZE_BYTES);
-  const statFiles = usageStatFiles.length > 0 ? usageStatFiles : summaryStatFiles;
-  if (usageStatFiles.length === 0 && summaryStatFiles.length > 0) {
-    warnings.push("STATxx session files were not found; using STAT summary files for daily usage parsing.");
+  const statFiles = summaryStatFiles.length > 0 ? summaryStatFiles : usageStatFiles;
+  if (summaryStatFiles.length === 0 && usageStatFiles.length > 0) {
+    warnings.push("STAT daily summary files were not found; using STATxx session files for daily usage parsing.");
   }
   const evByDayUsage = new Map<string, SourceMeta>();
   for (const ev of inWindow.filter(isResventEvFile).filter((m) => m.file.size <= MAX_FILE_SIZE_BYTES)) {
@@ -1650,13 +1682,7 @@ function buildDayBucketsFromRecordsAndLeaks(
       bucket.pressure95Count += 1;
     }
 
-    const hasWaveLeakForDay = leakStatsByDay.has(key);
-    if (
-      typeof record.leak === "number" &&
-      record.leak >= 0 &&
-      record.leak < 500 &&
-      !(hasResventStructure && hasWaveLeakForDay)
-    ) {
+    if (typeof record.leak === "number" && record.leak >= 0 && record.leak < 500) {
       bucket.leakSum += record.leak;
       bucket.leakCount += 1;
       bucket.leakMax = bucket.leakMax === null ? record.leak : Math.max(bucket.leakMax, record.leak);
@@ -1681,8 +1707,10 @@ function buildDayBucketsFromRecordsAndLeaks(
 
   for (const [day, stats] of leakStatsByDay.entries()) {
     const bucket = dayMap.get(day) ?? createEmptyDayBucket();
-    bucket.leakSum += stats.sum / stats.count;
-    bucket.leakCount += 1;
+    if (!(hasResventStructure && bucket.leakCount > 0)) {
+      bucket.leakSum += stats.sum / stats.count;
+      bucket.leakCount += 1;
+    }
     bucket.leakMax = bucket.leakMax === null ? stats.max : Math.max(bucket.leakMax, stats.max);
     if (typeof stats.sustainedMax30m === "number" && Number.isFinite(stats.sustainedMax30m)) {
       bucket.leakMax30m = bucket.leakMax30m === null ? stats.sustainedMax30m : Math.max(bucket.leakMax30m, stats.sustainedMax30m);
@@ -2100,11 +2128,20 @@ async function prepareQuickReportSourceInternal(request: PrepareQuickReportSourc
             if (statFile.recordDate === null) continue;
             const parsed = parseResventStatFromBytes(bytes, statFile.recordDate);
             if (!parsed) continue;
-            if (typeof parsed.pressureAvg !== "number" && typeof parsed.pressure95th !== "number") continue;
+            if (
+              typeof parsed.pressureAvg !== "number" &&
+              typeof parsed.pressure95th !== "number" &&
+              typeof parsed.leak !== "number" &&
+              typeof parsed.leakMax !== "number"
+            ) {
+              continue;
+            }
             records.push({
               date: parsed.date,
               pressureAvg: parsed.pressureAvg,
-              pressure95th: parsed.pressure95th
+              pressure95th: parsed.pressure95th,
+              leak: parsed.leak,
+              leakMax: parsed.leakMax
             });
           } catch {
             warnings.push(`Could not read ${statFile.normalizedPath}`);
@@ -2344,17 +2381,19 @@ export function buildQuickReportMetricsFromPreparedSource(
       .filter(([day]) => day >= effectiveWindowStartIso && day < windowEndIso)
       .map(([day, bucket]) => [day, { ...bucket }])
   );
+  const summaryAggregationPolicy = getReportSummaryAggregationPolicy(prepared.selectedLoader);
 
   if (dayMap.size === 0) {
     throw new Error(`Data import succeeded but no records were found in the most recent ${normalizedLookbackDays}-day date range.`);
   }
 
-  const usageValues = [...dayMap.values()]
+  const dayBuckets = [...dayMap.values()];
+  const usageValues = dayBuckets
     .filter((d) => d.usageCount > 0)
     .map((d) => Math.min(24, d.usageSum))
     .filter((v) => Number.isFinite(v) && v >= 0 && v <= 24);
 
-  const ahiValues = [...dayMap.values()]
+  const ahiValues = dayBuckets
     .map((d) => {
       if (d.ahiWeightHours > 0) return d.ahiWeightedSum / d.ahiWeightHours;
       if (d.ahiCount > 0) return d.ahiSum / d.ahiCount;
@@ -2362,41 +2401,61 @@ export function buildQuickReportMetricsFromPreparedSource(
     })
     .filter((v): v is number => typeof v === "number" && Number.isFinite(v));
 
-  const residualApneaValues = [...dayMap.values()]
+  const residualApneaValues = dayBuckets
     .filter((d) => d.residualApneaCount > 0)
     .map((d) => d.residualApneaSum / d.residualApneaCount);
 
-  const centralApneaValues = [...dayMap.values()]
+  const centralApneaValues = dayBuckets
     .filter((d) => d.centralApneaCount > 0)
     .map((d) => d.centralApneaSum / d.centralApneaCount);
 
-  const reraValues = [...dayMap.values()]
+  const reraValues = dayBuckets
     .filter((d) => d.reraCount > 0)
     .map((d) => d.reraSum / d.reraCount);
 
-  const leakValues = [...dayMap.values()]
+  const leakValues = dayBuckets
     .filter((d) => d.leakCount > 0)
     .map((d) => d.leakSum / d.leakCount);
 
-  const leakMaxValues = [...dayMap.values()]
+  const leakMaxValues = dayBuckets
     .map((d) => d.leakMax)
     .filter((v): v is number => typeof v === "number" && Number.isFinite(v));
 
-  const leakMax30mValues = [...dayMap.values()]
+  const leakMax30mValues = dayBuckets
     .map((d) => d.leakMax30m)
     .filter((v): v is number => typeof v === "number" && Number.isFinite(v));
 
-  const leakMax60mValues = [...dayMap.values()]
+  const leakMax60mValues = dayBuckets
     .map((d) => d.leakMax60m)
     .filter((v): v is number => typeof v === "number" && Number.isFinite(v));
 
-  const pressureAvgValues = [...dayMap.values()]
+  const pressureAvgValues = dayBuckets
     .filter((d) => d.pressureAvgCount > 0)
     .map((d) => d.pressureAvgSum / d.pressureAvgCount);
 
-  const pressure95Values = [...dayMap.values()]
+  const pressure95Values = dayBuckets
     .filter((d) => d.pressure95Count > 0)
     .map((d) => d.pressure95Sum / d.pressure95Count);
+
+  const weightedUsageRate = (
+    values: number[],
+    dayValue: (bucket: DayBucket) => number | null
+  ): number | null => {
+    let weightedSum = 0;
+    let totalHours = 0;
+
+    for (const bucket of dayBuckets) {
+      const usageHours = bucket.usageCount > 0 ? Math.min(24, bucket.usageSum) : 0;
+      const value = dayValue(bucket);
+      if (usageHours > 0 && value !== null) {
+        weightedSum += value * usageHours;
+        totalHours += usageHours;
+      }
+    }
+
+    if (totalHours > 0) return weightedSum / totalHours;
+    return values.length > 0 ? values.reduce((a, b) => a + b, 0) / values.length : null;
+  };
 
   const effectiveWindowStart = new Date(`${effectiveWindowStartIso}T12:00:00Z`);
   const effectiveWindowEnd = new Date(`${windowEndIso}T12:00:00Z`);
@@ -2416,12 +2475,45 @@ export function buildQuickReportMetricsFromPreparedSource(
   const compliantDays = usageValues.filter((u) => u >= 4).length;
   const complianceBaseDays = Math.max(1, effectiveWindowDays);
   const avgUsageHours = usageValues.length > 0 ? usageValues.reduce((a, b) => a + b, 0) / usageValues.length : null;
-  const avgAhi = ahiValues.length > 0 ? ahiValues.reduce((a, b) => a + b, 0) / ahiValues.length : null;
-  const avgResidualApneas =
-    residualApneaValues.length > 0 ? residualApneaValues.reduce((a, b) => a + b, 0) / residualApneaValues.length : null;
-  const avgCentralApneas =
-    centralApneaValues.length > 0 ? centralApneaValues.reduce((a, b) => a + b, 0) / centralApneaValues.length : null;
-  const avgReraIndex = reraValues.length > 0 ? reraValues.reduce((a, b) => a + b, 0) / reraValues.length : null;
+  let ahiWeightedAcrossWindow = 0;
+  let ahiWeightHoursAcrossWindow = 0;
+  const ahiFallbackValues: number[] = [];
+  for (const bucket of dayBuckets) {
+    if (bucket.ahiWeightHours > 0) {
+      ahiWeightedAcrossWindow += bucket.ahiWeightedSum;
+      ahiWeightHoursAcrossWindow += bucket.ahiWeightHours;
+    } else if (bucket.ahiCount > 0) {
+      ahiFallbackValues.push(bucket.ahiSum / bucket.ahiCount);
+    }
+  }
+  const avgAhi = summaryAggregationPolicy.averageRateMetricsByUsage
+    ? ahiWeightHoursAcrossWindow > 0
+      ? ahiWeightedAcrossWindow / ahiWeightHoursAcrossWindow
+      : ahiFallbackValues.length > 0
+        ? ahiFallbackValues.reduce((a, b) => a + b, 0) / ahiFallbackValues.length
+        : null
+    : ahiValues.length > 0
+      ? ahiValues.reduce((a, b) => a + b, 0) / ahiValues.length
+      : null;
+  const avgResidualApneas = summaryAggregationPolicy.averageRateMetricsByUsage
+    ? weightedUsageRate(residualApneaValues, (bucket) =>
+        bucket.residualApneaCount > 0 ? bucket.residualApneaSum / bucket.residualApneaCount : null
+      )
+    : residualApneaValues.length > 0
+      ? residualApneaValues.reduce((a, b) => a + b, 0) / residualApneaValues.length
+      : null;
+  const avgCentralApneas = summaryAggregationPolicy.averageRateMetricsByUsage
+    ? weightedUsageRate(centralApneaValues, (bucket) =>
+        bucket.centralApneaCount > 0 ? bucket.centralApneaSum / bucket.centralApneaCount : null
+      )
+    : centralApneaValues.length > 0
+      ? centralApneaValues.reduce((a, b) => a + b, 0) / centralApneaValues.length
+      : null;
+  const avgReraIndex = summaryAggregationPolicy.averageRateMetricsByUsage
+    ? weightedUsageRate(reraValues, (bucket) => (bucket.reraCount > 0 ? bucket.reraSum / bucket.reraCount : null))
+    : reraValues.length > 0
+      ? reraValues.reduce((a, b) => a + b, 0) / reraValues.length
+      : null;
   const ahi95th = ahiValues.length > 0 ? percentile(ahiValues, 95) : null;
   const residualApneas95th = residualApneaValues.length > 0 ? percentile(residualApneaValues, 95) : null;
   const centralApneas95th = centralApneaValues.length > 0 ? percentile(centralApneaValues, 95) : null;
@@ -2435,7 +2527,13 @@ export function buildQuickReportMetricsFromPreparedSource(
   const avgPressure =
     pressureAvgValues.length > 0 ? pressureAvgValues.reduce((a, b) => a + b, 0) / pressureAvgValues.length : null;
   const pressure95th =
-    pressure95Values.length > 0 ? percentile(pressure95Values, 95) : pressureAvgValues.length > 0 ? percentile(pressureAvgValues, 95) : null;
+    pressure95Values.length > 0
+      ? summaryAggregationPolicy.pressure95Aggregation === "daily-summary-mean"
+        ? pressure95Values.reduce((a, b) => a + b, 0) / pressure95Values.length
+        : percentile(pressure95Values, 95)
+      : pressureAvgValues.length > 0
+        ? percentile(pressureAvgValues, 95)
+        : null;
 
   if (usageValues.length === 0) {
     warnings.push("Usage-hour fields were not found in the selected data. Compliance metrics are shown as 0.");
