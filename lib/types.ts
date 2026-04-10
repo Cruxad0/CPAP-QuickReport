@@ -54,6 +54,7 @@ export interface QuickReportMetrics {
   generatedAtIso: string;
   generatedAtDisplay: string;
   selectedLoader: string;
+  sourceTimeZoneOffsetMinutes?: number | null;
   patientName: string;
   dateOfBirth: string;
   physicianName: string;
@@ -136,6 +137,7 @@ export interface PreparedDayBucket {
 export interface PreparedQuickReportSource {
   selectedLoader: string;
   machine: MachineSettings;
+  sourceTimeZoneOffsetMinutes?: number | null;
   warnings: string[];
   latestClinicalDayIso: string;
   maxLookbackDays: number;

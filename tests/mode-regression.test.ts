@@ -288,9 +288,33 @@ test("ResMed CurrentSettings.json is treated as authoritative for active therapy
 
   for (const entry of cases) {
     const target = machine({});
-    assert.equal(applyResMedCurrentSettingsJson(entry.json, target), true, entry.label);
+    const metadata = { sourceTimeZoneOffsetMinutes: null };
+    assert.equal(applyResMedCurrentSettingsJson(entry.json, target, metadata), true, entry.label);
     for (const [key, value] of Object.entries(entry.expected)) {
       assert.equal((target as Record<string, unknown>)[key], value, `${entry.label} -> ${key}`);
     }
   }
+});
+
+test("ResMed CurrentSettings.json exposes an explicit UTC offset when present", () => {
+  const target = machine({});
+  const metadata = { sourceTimeZoneOffsetMinutes: null };
+  const json = JSON.stringify({
+    FlowGenerator: {
+      SettingProfiles: {
+        ActiveProfiles: { TherapyProfile: "CpapProfile" },
+        TherapyProfiles: {
+          CpapProfile: { TherapyMode: "CPAP", SetPressure: 7.2 }
+        },
+        FeatureProfiles: {
+          TimeZoneFeature: {
+            TimeZoneOffset: "-08:00"
+          }
+        }
+      }
+    }
+  });
+
+  assert.equal(applyResMedCurrentSettingsJson(json, target, metadata), true);
+  assert.equal(metadata.sourceTimeZoneOffsetMinutes, -480);
 });

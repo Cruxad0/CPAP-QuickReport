@@ -1,4 +1,5 @@
 import type { FamilyParserContext, FamilyParserDeps, FamilyTextHooks } from "@/lib/parsers/text-family-types";
+import { extractExplicitUtcOffsetMinutes } from "@/lib/timezone";
 import type { ParsedRecord } from "@/lib/types";
 
 export async function runTextFamilyParser(
@@ -32,6 +33,12 @@ export async function runTextFamilyParser(
 
         const kv = deps.parseKeyValueLines(text);
         if (kv.size > 0) {
+          if (context.sourceTimeZoneOffsetMinutes === null) {
+            const explicitUtcOffsetMinutes = extractExplicitUtcOffsetMinutes(kv);
+            if (explicitUtcOffsetMinutes !== null) {
+              context.sourceTimeZoneOffsetMinutes = explicitUtcOffsetMinutes;
+            }
+          }
           deps.inferPressureSettingsFromMap(kv, context.machine);
           deps.inferBilevelSettingsFromMap(kv, context.machine);
           deps.inferPressureReliefFromMap(kv, context.machine);

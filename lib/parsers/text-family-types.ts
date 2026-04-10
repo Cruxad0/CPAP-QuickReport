@@ -13,6 +13,7 @@ export interface FamilyParserContext {
   lookbackDays: number;
   machine: QuickReportMetrics["machine"];
   records: ParsedRecord[];
+  sourceTimeZoneOffsetMinutes: number | null;
   warnings: string[];
   onProgress?: (progress: ParseProgress) => void;
   progressStart: number;

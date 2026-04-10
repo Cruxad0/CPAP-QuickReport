@@ -137,9 +137,11 @@ maybeDreamstationTest("DreamStation sample card preserves active-root APAP setti
 maybeAirSense11Test("ResMed AirSense 11 public fixture loads with active CPAP profile", async () => {
   const { prepared, metrics } = await loadFixture(RESMED_AIRSENSE11_ROOT);
   assert.equal(prepared.selectedLoader, "ResMed");
+  assert.equal(prepared.sourceTimeZoneOffsetMinutes, -480);
   assert.equal(prepared.machine.device, "AirSense 11 AutoSet");
   assert.equal(prepared.machine.mode, "CPAP");
   assert.equal(prepared.machine.pressure, "Fixed 7.2 cmH2O");
+  assert.equal(metrics.sourceTimeZoneOffsetMinutes, -480);
   assert.equal(metrics.daysWithData, 76);
   assert.equal(metrics.daysWithUsage, 76);
   assert.equal(metrics.compliantDays, 76);

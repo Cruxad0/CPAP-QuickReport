@@ -80,6 +80,7 @@ function runLocalAnchorFixture(
     const prepared = {
       selectedLoader: "Fixture Loader",
       machine: { mode: "APAP", pressureIsAuto: true, pressureMin: "8 cmH2O", pressureMax: "12 cmH2O" },
+      sourceTimeZoneOffsetMinutes: null,
       warnings: [],
       latestClinicalDayIso: ${JSON.stringify(latestClinicalDayIso)},
       maxLookbackDays: 90,
@@ -239,4 +240,63 @@ test("default report window stays on the user's local calendar day across fall D
   assert.equal(metrics.dateRangeEnd, "October 31, 2026");
   assert.equal(metrics.daysWithData, 7);
   assert.equal(metrics.daysInWindow, 7);
+});
+
+test("default report window prefers the card UTC offset over the host timezone when available", () => {
+  const prepared: PreparedQuickReportSource = {
+    selectedLoader: "ResMed",
+    machine: {
+      mode: "CPAP",
+      pressure: "Fixed 7.2 cmH2O"
+    },
+    sourceTimeZoneOffsetMinutes: -480,
+    warnings: [],
+    latestClinicalDayIso: "2026-03-06",
+    maxLookbackDays: 90,
+    dayBuckets: {
+      "2026-02-28": bucket(6),
+      "2026-03-01": bucket(7),
+      "2026-03-02": bucket(8),
+      "2026-03-03": bucket(6),
+      "2026-03-04": bucket(7),
+      "2026-03-05": bucket(8),
+      "2026-03-06": bucket(9)
+    }
+  };
+
+  const RealDate = Date;
+  class MockDate extends RealDate {
+    constructor(...args: any[]) {
+      if (args.length === 0) super("2026-03-08T07:30:00Z");
+      else if (args.length === 1) super(args[0]);
+      else if (args.length === 2) super(args[0], args[1]);
+      else if (args.length === 3) super(args[0], args[1], args[2]);
+      else if (args.length === 4) super(args[0], args[1], args[2], args[3]);
+      else if (args.length === 5) super(args[0], args[1], args[2], args[3], args[4]);
+      else if (args.length === 6) super(args[0], args[1], args[2], args[3], args[4], args[5]);
+      else super(args[0], args[1], args[2], args[3], args[4], args[5], args[6]);
+    }
+
+    static now() {
+      return new RealDate("2026-03-08T07:30:00Z").getTime();
+    }
+  }
+
+  const originalDate = globalThis.Date;
+  globalThis.Date = MockDate as unknown as DateConstructor;
+  try {
+    const metrics = buildQuickReportMetricsFromPreparedSource(prepared, {
+      patientName: "Fixture Patient",
+      dateOfBirthIso: "1970-01-01",
+      physicianName: "",
+      lookbackDays: 7
+    });
+
+    assert.equal(metrics.sourceTimeZoneOffsetMinutes, -480);
+    assert.equal(metrics.dateRangeEnd, "March 7, 2026");
+    assert.equal(metrics.daysWithData, 7);
+    assert.equal(metrics.daysInWindow, 7);
+  } finally {
+    globalThis.Date = originalDate;
+  }
 });

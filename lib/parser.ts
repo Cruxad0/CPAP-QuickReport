@@ -21,10 +21,11 @@ import { parseIntelliPapFamily } from "@/lib/parsers/intellipap";
 import { parseMSeriesFamily } from "@/lib/parsers/mseries";
 import { parsePrismaFamily } from "@/lib/parsers/prisma";
 import { parsePrs1Family } from "@/lib/parsers/prs1";
-import { parseResMedFamily } from "@/lib/parsers/resmed";
+import { applyResMedCurrentSettingsJson, parseResMedFamily } from "@/lib/parsers/resmed";
 import { parseSleepStyleFamily } from "@/lib/parsers/sleepstyle";
 import { runTextFamilyParser } from "@/lib/parsers/text-family-runner";
 import type { FamilyParserDeps } from "@/lib/parsers/text-family-types";
+import { createCalendarDateNoonAtUtcOffset, extractExplicitUtcOffsetMinutes } from "@/lib/timezone";
 import { parseVremFamily } from "@/lib/parsers/vrem";
 import { parseWeinmannFamily } from "@/lib/parsers/weinmann";
 import {
@@ -653,14 +654,15 @@ function normalizeLookbackDays(value?: number): number {
   return rounded;
 }
 
-function resolveRecentWindow(_latestDate: Date, lookbackDays: number): DateWindow {
+function resolveRecentWindow(_latestDate: Date, lookbackDays: number, sourceTimeZoneOffsetMinutes: number | null): DateWindow {
   const normalizedLookbackDays = normalizeLookbackDays(lookbackDays);
 
   // Always anchor report windows to the noon boundary that ends today so the
   // included clinical day is yesterday noon -> today noon, regardless of the
-  // current clock time.
+  // current clock time. When the card exposes an explicit UTC offset, anchor
+  // to that calendar day instead of the host timezone.
   const now = new Date();
-  const windowEnd = createLocalCalendarDateNoon(now);
+  const windowEnd = createCalendarDateNoonAtUtcOffset(now, sourceTimeZoneOffsetMinutes) ?? createLocalCalendarDateNoon(now);
   const windowStart = addUtcDays(windowEnd, -normalizedLookbackDays);
   return { start: windowStart, end: windowEnd };
 }
@@ -756,6 +758,49 @@ function selectGenericCandidates(
     totalBytes += item.meta.file.size;
   }
   return out;
+}
+
+async function extractSourceTimeZoneOffsetMinutes(
+  selectedFamily: ParserFamilyDefinition,
+  meta: SourceMeta[]
+): Promise<number | null> {
+  if (selectedFamily.id === "resmed") {
+    const settingsCandidates = meta.filter((candidate) => /(?:^|\/)settings\/currentsettings\.json$/i.test(candidate.normalizedPath));
+    for (const candidate of settingsCandidates) {
+      try {
+        const metadata = { sourceTimeZoneOffsetMinutes: null };
+        const machine: QuickReportMetrics["machine"] = {};
+        const text = await candidate.file.readText();
+        applyResMedCurrentSettingsJson(text, machine, metadata);
+        if (metadata.sourceTimeZoneOffsetMinutes !== null) {
+          return metadata.sourceTimeZoneOffsetMinutes;
+        }
+      } catch {
+        // Keep scanning.
+      }
+    }
+  }
+
+  const genericCandidates = meta.filter(
+    (candidate) =>
+      candidate.file.size > 0 &&
+      candidate.file.size <= MAX_GENERIC_BINARY_FILE_BYTES &&
+      /\.(?:txt|csv|json|xml|log|cfg|ini|tgt)$/i.test(candidate.baseName) &&
+      /(?:^|\/)(?:settings?|config|profile|profiles|identification)(?:\/|$|[._-])/i.test(candidate.normalizedPath)
+  );
+
+  for (const candidate of genericCandidates) {
+    try {
+      const explicitUtcOffsetMinutes = extractExplicitUtcOffsetMinutes(parseKeyValueLines(await candidate.file.readText()));
+      if (explicitUtcOffsetMinutes !== null) {
+        return explicitUtcOffsetMinutes;
+      }
+    } catch {
+      // Keep scanning.
+    }
+  }
+
+  return null;
 }
 
 function decodeLikelyTextVariants(bytes: Uint8Array): string[] {
@@ -1981,6 +2026,7 @@ async function prepareQuickReportSourceInternal(request: PrepareQuickReportSourc
   const warnings: string[] = [];
   const machine: QuickReportMetrics["machine"] = {};
   const records: ParsedRecord[] = [];
+  let sourceTimeZoneOffsetMinutes: number | null = null;
 
   const meta = files.map(toSourceMeta);
   const loaderRanking = rankParserFamilies(meta);
@@ -1993,6 +2039,7 @@ async function prepareQuickReportSourceInternal(request: PrepareQuickReportSourc
   if (!selectedFamily.supportedQuickReport) {
     throw new Error(`${selectedFamily.label} data is not loadable in this webapp. Only supported CPAP/NIV device layouts are accepted.`);
   }
+  sourceTimeZoneOffsetMinutes = await extractSourceTimeZoneOffsetMinutes(selectedFamily, meta);
 
   const hasResventStructure =
     selectedFamily.id === "resvent" &&
@@ -2244,6 +2291,7 @@ async function prepareQuickReportSourceInternal(request: PrepareQuickReportSourc
     lookbackDays: normalizedLookbackDays,
     machine,
     records,
+    sourceTimeZoneOffsetMinutes,
     warnings,
     onProgress,
     progressStart: 70,
@@ -2274,6 +2322,8 @@ async function prepareQuickReportSourceInternal(request: PrepareQuickReportSourc
   } else {
     await runTextFamilyParser(familyParserContext, familyParserDeps);
   }
+
+  sourceTimeZoneOffsetMinutes = familyParserContext.sourceTimeZoneOffsetMinutes;
 
   emit(onProgress, { phase: "verify", detail: "Verifying therapy mode...", percent: 81 });
   resolveTherapyModeOrThrow(machine, selectedFamily.label);
@@ -2332,6 +2382,7 @@ async function prepareQuickReportSourceInternal(request: PrepareQuickReportSourc
   return {
     selectedLoader: selectedFamily.label,
     machine: cloneMachineSettings(machine),
+    sourceTimeZoneOffsetMinutes,
     warnings,
     latestClinicalDayIso: toIsoDate(latest),
     maxLookbackDays: normalizedLookbackDays,
@@ -2352,6 +2403,7 @@ export function buildQuickReportMetricsFromPreparedSource(
   const warnings = [...prepared.warnings];
   const now = new Date();
   const machine = cloneMachineSettings(prepared.machine);
+  const sourceTimeZoneOffsetMinutes = prepared.sourceTimeZoneOffsetMinutes ?? null;
 
   emit(onProgress, { phase: "compute", detail: `Computing ${normalizedLookbackDays}-day metrics...`, percent: 82 });
 
@@ -2362,7 +2414,7 @@ export function buildQuickReportMetricsFromPreparedSource(
 
   const { start: windowStart, end: windowEnd } = windowEndClinicalDayIso
     ? resolveWindowFromClinicalEndIso(windowEndClinicalDayIso, normalizedLookbackDays)
-    : resolveRecentWindow(latest, normalizedLookbackDays);
+    : resolveRecentWindow(latest, normalizedLookbackDays, sourceTimeZoneOffsetMinutes);
   const windowStartIso = toIsoDate(windowStart);
   const windowEndIso = toIsoDate(windowEnd);
   let effectiveWindowStartIso = windowStartIso;
@@ -2570,6 +2622,7 @@ export function buildQuickReportMetricsFromPreparedSource(
       minute: "2-digit"
     }),
     selectedLoader: prepared.selectedLoader,
+    sourceTimeZoneOffsetMinutes,
     patientName: patientName.trim(),
     dateOfBirth: formatDateHuman(dateOfBirthIso),
     physicianName: physicianName.trim(),

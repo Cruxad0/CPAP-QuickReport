@@ -1,6 +1,7 @@
 import { resolveExplicitTherapyMode } from "@/lib/machine-mode";
 import { runTextFamilyParser } from "@/lib/parsers/text-family-runner";
 import type { FamilyParserCandidate, FamilyParserContext, FamilyParserDeps } from "@/lib/parsers/text-family-types";
+import { parseUtcOffsetMinutes } from "@/lib/timezone";
 import type { ParsedRecord, QuickReportMetrics } from "@/lib/types";
 
 const RESMED_MODE_BY_CODE = new Map<string, string>([
@@ -142,7 +143,8 @@ function formatPressureSupport(minPs: number | undefined, maxPs: number | undefi
 
 export function applyResMedCurrentSettingsJson(
   text: string,
-  machine: QuickReportMetrics["machine"]
+  machine: QuickReportMetrics["machine"],
+  metadata?: { sourceTimeZoneOffsetMinutes: number | null }
 ): boolean {
   let root: JsonObject | null = null;
   try {
@@ -155,7 +157,17 @@ export function applyResMedCurrentSettingsJson(
   const settingProfiles = asObject(flowGenerator?.SettingProfiles);
   const activeProfiles = asObject(settingProfiles?.ActiveProfiles);
   const therapyProfiles = asObject(settingProfiles?.TherapyProfiles);
+  const featureProfiles = asObject(settingProfiles?.FeatureProfiles);
   if (!settingProfiles || !therapyProfiles) return false;
+
+  if (metadata && metadata.sourceTimeZoneOffsetMinutes === null) {
+    const timeZoneFeature = asObject(featureProfiles?.TimeZoneFeature);
+    const rawTimeZoneOffset = asString(timeZoneFeature?.TimeZoneOffset);
+    const parsedTimeZoneOffsetMinutes = parseUtcOffsetMinutes(rawTimeZoneOffset);
+    if (parsedTimeZoneOffsetMinutes !== null) {
+      metadata.sourceTimeZoneOffsetMinutes = parsedTimeZoneOffsetMinutes;
+    }
+  }
 
   const activeProfileName = asString(activeProfiles?.TherapyProfile);
   const selectedProfile = activeProfileName ? asObject(therapyProfiles[activeProfileName]) : null;
@@ -636,9 +648,10 @@ function inferResMedMachineSettings(
   text: string,
   _candidate: FamilyParserCandidate,
   machine: QuickReportMetrics["machine"],
-  deps: FamilyParserDeps
+  deps: FamilyParserDeps,
+  metadata?: { sourceTimeZoneOffsetMinutes: number | null }
 ) {
-  if (applyResMedCurrentSettingsJson(text, machine)) {
+  if (applyResMedCurrentSettingsJson(text, machine, metadata)) {
     return;
   }
 
@@ -688,7 +701,7 @@ export async function parseResMedFamily(context: FamilyParserContext, deps: Fami
       deps,
       {
         inferFamilyMachineSettings: (text, candidate, machine, familyDeps) => {
-          inferResMedMachineSettings(text, candidate, machine, familyDeps);
+          inferResMedMachineSettings(text, candidate, machine, familyDeps, context);
         }
       }
     );

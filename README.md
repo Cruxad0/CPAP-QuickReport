@@ -10,7 +10,7 @@ The app is designed to run on any work computer, process device data locally in 
 - Detects the device family from card structure and uses a family-specific parser.
 - Builds `90 / 60 / 30 / 7` day reports from one prepared dataset.
 - Uses a noon-to-noon clinical day.
-- Anchors the latest included day to `yesterday 12:00 PM -> today 12:00 PM`.
+- Anchors the latest included day to `yesterday 12:00 PM -> today 12:00 PM`, using the card's explicit UTC offset when the device exposes one.
 - Generates an A4 PDF preview and export.
 - Keeps processing local to the browser in the default architecture.
 
