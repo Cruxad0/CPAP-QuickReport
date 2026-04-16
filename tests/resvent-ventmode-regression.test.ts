@@ -1,0 +1,176 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import { buildQuickReportMetricsFromPreparedSource, prepareQuickReportSource } from "../lib/parser";
+import type { PreparedDayBucket, PreparedQuickReportSource, SourceFile } from "../lib/types";
+
+function bucket(usageHours: number): PreparedDayBucket {
+  return {
+    usageSum: usageHours,
+    usageCount: 1,
+    ahiWeightedSum: 0,
+    ahiWeightHours: 0,
+    ahiSum: 0,
+    ahiCount: 0,
+    residualApneaSum: 0,
+    residualApneaCount: 0,
+    centralApneaSum: 0,
+    centralApneaCount: 0,
+    reraSum: 0,
+    reraCount: 0,
+    leakSum: 0,
+    leakCount: 0,
+    leak95Sum: 0,
+    leak95Count: 0,
+    leakMax: null,
+    leakMax30m: null,
+    leakMax60m: null,
+    pressureAvgSum: 0,
+    pressureAvgCount: 0,
+    pressure95Sum: 0,
+    pressure95Count: 0
+  };
+}
+
+function nextClinicalDayIso(isoDay: string): string {
+  return new Date(new Date(`${isoDay}T00:00:00Z`).getTime() + 24 * 3600 * 1000).toISOString().slice(0, 10);
+}
+
+function createSourceFile(path: string, bytes: Uint8Array): SourceFile {
+  return {
+    name: path.split("/").pop() ?? path,
+    path,
+    size: bytes.byteLength,
+    readText: async () => new TextDecoder("utf-8", { fatal: false }).decode(bytes),
+    readBytes: async () => bytes
+  };
+}
+
+function createResventTextFile(path: string, text: string): SourceFile {
+  const payload = new TextEncoder().encode(text);
+  const bytes = new Uint8Array(payload.length + 4);
+  bytes.set(payload, 4);
+  return createSourceFile(path, bytes);
+}
+
+async function loadSyntheticResventFixture(files: SourceFile[]) {
+  const prepared = await prepareQuickReportSource({
+    sourceKind: "folder",
+    files,
+    lookbackDays: 30
+  });
+  const metrics = buildQuickReportMetricsFromPreparedSource(prepared, {
+    patientName: "Fixture Patient",
+    dateOfBirthIso: "1970-01-01",
+    physicianName: "",
+    lookbackDays: 30,
+    windowEndClinicalDayIso: nextClinicalDayIso(prepared.latestClinicalDayIso)
+  });
+  return { prepared, metrics };
+}
+
+test("report finalization preserves explicit parser-reported mode labels", () => {
+  const prepared: PreparedQuickReportSource = {
+    selectedLoader: "Fixture Loader",
+    machine: {
+      mode: "Auto S30",
+      epap: "6 cmH2O",
+      ipap: "10 cmH2O",
+      pressure: "EPAP 6 / IPAP 10 (cmH2O)"
+    },
+    warnings: [],
+    latestClinicalDayIso: "2026-03-23",
+    maxLookbackDays: 90,
+    dayBuckets: {
+      "2026-03-23": bucket(8)
+    }
+  };
+
+  const metrics = buildQuickReportMetricsFromPreparedSource(prepared, {
+    patientName: "Fixture Patient",
+    dateOfBirthIso: "1970-01-01",
+    physicianName: "",
+    lookbackDays: 7,
+    windowEndClinicalDayIso: "2026-03-24"
+  });
+
+  assert.equal(metrics.machine.mode, "Auto S30");
+  assert.equal(metrics.daysWithData, 1);
+  assert.equal(metrics.daysWithUsage, 1);
+});
+
+test("Resvent latest STAT VentMode confirms active Auto S30 bilevel mode", async () => {
+  const files: SourceFile[] = [
+    createResventTextFile("THERAPY/CONFIG/SYSCFG", ["models=iBreeze 30STA", "sn=GB-2B420607"].join("\n")),
+    createResventTextFile("THERAPY/CONFIG/TCTRL", "VentMode=11\n"),
+    createResventTextFile(
+      "THERAPY/CONFIG/N_AS30",
+      ["PMin=400", "PMax=1200", "EPAP=600", "IPAP=1000", "PS=200"].join("\n")
+    ),
+    createResventTextFile(
+      "THERAPY/RECORD/202603/23/STAT",
+      [
+        "VentMode=11",
+        "secUsed=28800",
+        "cntAI=8",
+        "cntHI=4",
+        "cntCAI=2",
+        "cntRERA=2",
+        "medIPAP=440",
+        "medEPAP=380",
+        "p95IPAP=570",
+        "p95EPAP=400"
+      ].join("\n")
+    )
+  ];
+
+  const { prepared, metrics } = await loadSyntheticResventFixture(files);
+
+  assert.equal(prepared.selectedLoader, "Resvent / Hoffrichter");
+  assert.equal(prepared.machine.device, "iBreeze 30STA (GB-2B420607)");
+  assert.equal(prepared.machine.mode, "Auto S30");
+  assert.equal(prepared.machine.epap, "6 cmH2O");
+  assert.equal(prepared.machine.ipap, "10 cmH2O");
+  assert.equal(prepared.latestClinicalDayIso, "2026-03-23");
+  assert.equal(metrics.machine.mode, "Auto S30");
+  assert.equal(metrics.daysWithData, 1);
+  assert.equal(metrics.daysWithUsage, 1);
+});
+
+test("Resvent latest STAT VentMode overrides stale TCTRL mode selection", async () => {
+  const files: SourceFile[] = [
+    createResventTextFile("THERAPY/CONFIG/SYSCFG", ["models=iBreeze 30STA", "sn=GB-2B420607"].join("\n")),
+    createResventTextFile("THERAPY/CONFIG/TCTRL", "VentMode=3\n"),
+    createResventTextFile("THERAPY/CONFIG/N_APAP", ["PMin=500", "PMax=1000"].join("\n")),
+    createResventTextFile(
+      "THERAPY/CONFIG/N_AS30",
+      ["PMin=400", "PMax=1200", "EPAP=600", "IPAP=1000", "PS=200"].join("\n")
+    ),
+    createResventTextFile(
+      "THERAPY/RECORD/202603/23/STAT",
+      [
+        "VentMode=11",
+        "secUsed=28800",
+        "cntAI=8",
+        "cntHI=4",
+        "cntCAI=2",
+        "medIPAP=440",
+        "medEPAP=380",
+        "p95IPAP=570",
+        "p95EPAP=400"
+      ].join("\n")
+    )
+  ];
+
+  const { prepared, metrics } = await loadSyntheticResventFixture(files);
+
+  assert.equal(prepared.machine.mode, "Auto S30");
+  assert.equal(prepared.machine.epap, "6 cmH2O");
+  assert.equal(prepared.machine.ipap, "10 cmH2O");
+  assert.equal(metrics.machine.mode, "Auto S30");
+  assert.ok(
+    prepared.warnings.some((warning) =>
+      warning.includes("Resvent VentMode disagreed between TCTRL (3) and latest STAT (11)")
+    )
+  );
+});

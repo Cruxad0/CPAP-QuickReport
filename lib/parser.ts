@@ -102,6 +102,17 @@ const RESVENT_MODE_FROM_FILE = new Map<string, string>([
   ["N_PC", "PC"]
 ]);
 
+const RESVENT_MODE_FROM_VENT_MODE = new Map<string, string>([
+  ["1", "CPAP"],
+  ["3", "APAP"],
+  ["10", "S30"],
+  ["11", "Auto S30"],
+  ["12", "ST30"],
+  ["13", "Auto ST30"],
+  ["14", "T30"],
+  ["15", "PC"]
+]);
+
 const RESVENT_SHARED_CONFIG_FILES = ["ALARM", "COMFORT", "CHECK.TXT", "SETTING", "VERSION", "SYSCFG", "TCTRL"] as const;
 
 const RESVENT_ACTIVE_CONFIG_BY_VENT_MODE = new Map<string, string>([
@@ -899,17 +910,6 @@ function inferMachineSettingsFromConfigFilename(path: string, machine: QuickRepo
 function inferMachineSettingsFromConfigMap(configMap: Map<string, string>, machine: QuickReportMetrics["machine"]) {
   if (isLikelyAutoMode(machine.mode)) machine.pressureIsAuto = true;
 
-  const ventModeMap = new Map<string, string>([
-    ["1", "CPAP"],
-    ["3", "APAP"],
-    ["10", "S30"],
-    ["11", "Auto S30"],
-    ["12", "ST30"],
-    ["13", "Auto ST30"],
-    ["14", "T30"],
-    ["15", "PC"]
-  ]);
-
   const model = configMap.get("models") ?? configMap.get("model");
   const sn = configMap.get("sn") ?? configMap.get("serial");
   const hasGenericResventLabel = typeof machine.device === "string" && /^Resvent\s*\/\s*Hoffrichter$/i.test(machine.device.trim());
@@ -920,7 +920,7 @@ function inferMachineSettingsFromConfigMap(configMap: Map<string, string>, machi
   if (!resolveExplicitTherapyMode(machine.mode)) {
     const modeRaw = configMap.get("VentMode") ?? configMap.get("mode");
     if (modeRaw) {
-      machine.mode = ventModeMap.get(modeRaw) ?? modeRaw;
+      machine.mode = RESVENT_MODE_FROM_VENT_MODE.get(modeRaw) ?? modeRaw;
       if (isLikelyAutoMode(machine.mode)) machine.pressureIsAuto = true;
     }
   }
@@ -1107,6 +1107,28 @@ function parseResventStatFromBytes(bytes: Uint8Array, fallbackDate: Date): Parse
   for (const text of variants) {
     const parsed = parseResventStatText(text, fallbackDate);
     if (parsed) return parsed;
+  }
+  return null;
+}
+
+function extractResventVentModeRawFromKeyValueMap(kv: Map<string, string>): string | null {
+  const ventMode = kv.get("VentMode") ?? kv.get("mode") ?? kv.get("ventmode");
+  if (!ventMode) return null;
+  const normalized = String(ventMode).trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function extractResventVentModeFromText(text: string): string | null {
+  const kv = parseKeyValueLines(text);
+  if (kv.size === 0) return null;
+  return extractResventVentModeRawFromKeyValueMap(kv);
+}
+
+function extractResventVentModeFromBytes(bytes: Uint8Array): string | null {
+  const variants = decodeLikelyTextVariants(bytes);
+  for (const text of variants) {
+    const ventMode = extractResventVentModeFromText(text);
+    if (ventMode) return ventMode;
   }
   return null;
 }
@@ -1909,7 +1931,9 @@ function resolveTherapyModeOrThrow(
       `The ${familyLabel} layout was detected, but the therapy mode could not be verified as BiPAP, APAP, or CPAP. The device is loadable only when one of those modes can be confirmed.`
     );
   }
-  machine.mode = canonicalTherapyMode;
+  if (!resolveExplicitTherapyMode(machine.mode)) {
+    machine.mode = canonicalTherapyMode;
+  }
   sanitizeMachineSettingsForResolvedMode(machine, canonicalTherapyMode);
   return canonicalTherapyMode;
 }
@@ -2111,8 +2135,15 @@ async function prepareQuickReportSourceInternal(request: PrepareQuickReportSourc
 
       const mergedResventConfig = new Map<string, string>();
       let activeResventConfigBase: string | null = null;
+      let tctrlVentMode: string | null = null;
+      let latestStatVentMode: { raw: string; clinicalDayIso: string; normalizedPath: string } | null = null;
+      const appliedResventConfigBases = new Set<string>();
 
       const readResventConfigIntoMergedState = async (configFile: SourceMeta) => {
+        const baseName = configFile.baseName.toUpperCase();
+        if (appliedResventConfigBases.has(baseName)) return;
+        appliedResventConfigBases.add(baseName);
+
         processed += 1;
         const pct = 8 + Math.round((processed / Math.max(1, totalResventWork)) * 62);
         emit(onProgress, {
@@ -2131,10 +2162,11 @@ async function prepareQuickReportSourceInternal(request: PrepareQuickReportSourc
             mergedResventConfig.set(key, value);
           }
 
-          if (configFile.baseName.toUpperCase() === "TCTRL") {
-            const ventMode = kv.get("VentMode") ?? kv.get("mode") ?? kv.get("ventmode");
+          if (baseName === "TCTRL") {
+            const ventMode = extractResventVentModeRawFromKeyValueMap(kv);
             if (ventMode) {
-              activeResventConfigBase = RESVENT_ACTIVE_CONFIG_BY_VENT_MODE.get(String(ventMode).trim()) ?? null;
+              tctrlVentMode = ventMode;
+              activeResventConfigBase = RESVENT_ACTIVE_CONFIG_BY_VENT_MODE.get(ventMode) ?? null;
             }
           }
         } catch {
@@ -2161,8 +2193,6 @@ async function prepareQuickReportSourceInternal(request: PrepareQuickReportSourc
         }
       }
 
-      inferMachineSettingsFromConfigMap(mergedResventConfig, machine);
-
       for (const statFile of selected.statFiles) {
         processed += 1;
         const pct = 8 + Math.round((processed / Math.max(1, totalResventWork)) * 62);
@@ -2175,6 +2205,22 @@ async function prepareQuickReportSourceInternal(request: PrepareQuickReportSourc
         try {
           const bytes = await statFile.file.readBytes();
           if (statFile.recordDate === null) continue;
+          const statVentMode = extractResventVentModeFromBytes(bytes);
+          if (statVentMode) {
+            const clinicalDayIso = toClinicalIsoDate(statFile.recordDate);
+            if (
+              latestStatVentMode === null ||
+              clinicalDayIso > latestStatVentMode.clinicalDayIso ||
+              (clinicalDayIso === latestStatVentMode.clinicalDayIso &&
+                statFile.normalizedPath > latestStatVentMode.normalizedPath)
+            ) {
+              latestStatVentMode = {
+                raw: statVentMode,
+                clinicalDayIso,
+                normalizedPath: statFile.normalizedPath
+              };
+            }
+          }
           const parsed = parseResventStatFromBytes(bytes, statFile.recordDate);
           if (parsed) {
             const usage = extractUsageSuffix(statFile.baseName, "stat");
@@ -2203,6 +2249,30 @@ async function prepareQuickReportSourceInternal(request: PrepareQuickReportSourc
           await new Promise((resolve) => setTimeout(resolve, 0));
         }
       }
+
+      const verifiedResventVentMode = latestStatVentMode?.raw ?? tctrlVentMode;
+      if (tctrlVentMode && latestStatVentMode && latestStatVentMode.raw !== tctrlVentMode) {
+        warnings.push(
+          `Resvent VentMode disagreed between TCTRL (${tctrlVentMode}) and latest STAT (${latestStatVentMode.raw}); using latest STAT from ${latestStatVentMode.clinicalDayIso}.`
+        );
+      }
+      if (verifiedResventVentMode) {
+        const verifiedModeLabel = RESVENT_MODE_FROM_VENT_MODE.get(verifiedResventVentMode);
+        const verifiedConfigBase = RESVENT_ACTIVE_CONFIG_BY_VENT_MODE.get(verifiedResventVentMode) ?? null;
+        if (verifiedModeLabel) {
+          machine.mode = verifiedModeLabel;
+        }
+        if (verifiedConfigBase && verifiedConfigBase !== activeResventConfigBase) {
+          const verifiedConfigFile = resventConfigByBase.get(verifiedConfigBase);
+          if (verifiedConfigFile) {
+            await readResventConfigIntoMergedState(verifiedConfigFile);
+            inferMachineSettingsFromConfigFilename(verifiedConfigFile.normalizedPath, machine);
+            activeResventConfigBase = verifiedConfigBase;
+          }
+        }
+      }
+
+      inferMachineSettingsFromConfigMap(mergedResventConfig, machine);
 
       if (selected.summaryStatFiles.length > 0 && selected.summaryStatFiles !== selected.statFiles) {
         for (const statFile of selected.summaryStatFiles) {

@@ -1002,6 +1002,9 @@ export function QuickReportApp() {
                 <li>
                   Selected loader and Date range ({resolvedActiveReportDays ?? activeReportDays} days): {activeMetrics.selectedLoader} | {activeMetrics.dateRangeStart} to {activeMetrics.dateRangeEnd}
                 </li>
+                {loadedSourceLatestClinicalDayLabel ? (
+                  <li>Last date with data on card: {loadedSourceLatestClinicalDayLabel}</li>
+                ) : null}
               </ul>
             ) : null}
 
