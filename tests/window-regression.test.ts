@@ -258,6 +258,71 @@ test("default report window falls back to the latest available clinical day when
   assert.equal(metrics.daysInWindow, 7);
 });
 
+test("BMC/Luna reports also fall back to the latest available clinical day when current week is empty", () => {
+  const prepared: PreparedQuickReportSource = {
+    selectedLoader: "Apex / BMC / Luna",
+    machine: {
+      mode: "APAP",
+      pressureIsAuto: true,
+      pressureMin: "4 cmH2O",
+      pressureMax: "15 cmH2O"
+    },
+    warnings: [],
+    latestClinicalDayIso: "2026-03-21",
+    maxLookbackDays: 90,
+    dayBuckets: {
+      "2026-03-15": bucket(5),
+      "2026-03-16": bucket(6),
+      "2026-03-17": bucket(7),
+      "2026-03-18": bucket(8),
+      "2026-03-19": bucket(5),
+      "2026-03-20": bucket(6),
+      "2026-03-21": bucket(7)
+    }
+  };
+
+  const RealDate = Date;
+  class MockDate extends RealDate {
+    constructor(...args: any[]) {
+      if (args.length === 0) super("2026-04-16T12:00:00Z");
+      else if (args.length === 1) super(args[0]);
+      else if (args.length === 2) super(args[0], args[1]);
+      else if (args.length === 3) super(args[0], args[1], args[2]);
+      else if (args.length === 4) super(args[0], args[1], args[2], args[3]);
+      else if (args.length === 5) super(args[0], args[1], args[2], args[3], args[4]);
+      else if (args.length === 6) super(args[0], args[1], args[2], args[3], args[4], args[5]);
+      else super(args[0], args[1], args[2], args[3], args[4], args[5], args[6]);
+    }
+
+    static now() {
+      return new RealDate("2026-04-16T12:00:00Z").getTime();
+    }
+  }
+
+  const originalDate = globalThis.Date;
+  globalThis.Date = MockDate as unknown as DateConstructor;
+  try {
+    const metrics = buildQuickReportMetricsFromPreparedSource(prepared, {
+      patientName: "Fixture Patient",
+      dateOfBirthIso: "1970-01-01",
+      physicianName: "",
+      lookbackDays: 7
+    });
+
+    assert.equal(metrics.dateRangeStart, "March 16, 2026");
+    assert.equal(metrics.dateRangeEnd, "March 22, 2026");
+    assert.equal(metrics.daysWithData, 7);
+    assert.equal(metrics.daysInWindow, 7);
+    assert.ok(
+      metrics.warnings.includes(
+        "Latest available therapy data ended on March 21, 2026; calculations were anchored to the latest available clinical day instead of today."
+      )
+    );
+  } finally {
+    globalThis.Date = originalDate;
+  }
+});
+
 test("default report window prefers the card UTC offset over the host timezone when available", () => {
   const prepared: PreparedQuickReportSource = {
     selectedLoader: "ResMed",
