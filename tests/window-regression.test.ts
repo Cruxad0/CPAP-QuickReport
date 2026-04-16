@@ -242,6 +242,18 @@ test("default report window stays on the user's local calendar day across fall D
   assert.equal(metrics.daysInWindow, 7);
 });
 
+test("default report window falls back to the latest available clinical day when today's window is empty", () => {
+  const metrics = runLocalAnchorFixture(
+    "2026-04-16T12:00:00Z",
+    "America/Puerto_Rico",
+    "2026-03-23",
+    ["2026-03-17", "2026-03-18", "2026-03-19", "2026-03-20", "2026-03-21", "2026-03-22", "2026-03-23"]
+  );
+  assert.equal(metrics.dateRangeEnd, "March 24, 2026");
+  assert.equal(metrics.daysWithData, 7);
+  assert.equal(metrics.daysInWindow, 7);
+});
+
 test("default report window prefers the card UTC offset over the host timezone when available", () => {
   const prepared: PreparedQuickReportSource = {
     selectedLoader: "ResMed",

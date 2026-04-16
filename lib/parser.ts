@@ -726,6 +726,23 @@ function scoreGenericCandidate(meta: SourceMeta, window: DateWindow | null, prio
   return score;
 }
 
+function getPinnedResMedCandidates(allCandidates: SourceMeta[]): SourceMeta[] {
+  const pinnedPatterns = [
+    /(?:^|\/)str\.edf(?:\.gz)?$/i,
+    /(?:^|\/)identification\.(?:tgt|json)$/i,
+    /(?:^|\/)settings\/[^/]+\.(?:tgt|json|txt|xml|log)$/i
+  ];
+
+  const pinned: SourceMeta[] = [];
+  for (const candidate of allCandidates) {
+    if (!pinnedPatterns.some((pattern) => pattern.test(candidate.normalizedPath))) continue;
+    pinned.push(candidate);
+  }
+
+  pinned.sort((a, b) => a.normalizedPath.localeCompare(b.normalizedPath));
+  return pinned;
+}
+
 function selectGenericCandidates(
   allCandidates: SourceMeta[],
   selectedFamily: ParserFamilyDefinition | null,
@@ -749,12 +766,30 @@ function selectGenericCandidates(
       return a.meta.file.size - b.meta.file.size;
     });
 
+  const pinnedCandidates =
+    selectedFamily?.id === "resmed"
+      ? getPinnedResMedCandidates(allCandidates)
+      : [];
+
   let totalBytes = 0;
   const out: SourceMeta[] = [];
+  const seen = new Set<string>();
+
+  for (const candidate of pinnedCandidates) {
+    if (seen.has(candidate.normalizedPath)) continue;
+    if (out.length >= MAX_GENERIC_FILES_TO_SCAN) break;
+    if (totalBytes + candidate.file.size > MAX_GENERIC_TOTAL_BYTES) break;
+    out.push(candidate);
+    seen.add(candidate.normalizedPath);
+    totalBytes += candidate.file.size;
+  }
+
   for (const item of ranked) {
+    if (seen.has(item.meta.normalizedPath)) continue;
     if (out.length >= MAX_GENERIC_FILES_TO_SCAN) break;
     if (totalBytes + item.meta.file.size > MAX_GENERIC_TOTAL_BYTES) break;
     out.push(item.meta);
+    seen.add(item.meta.normalizedPath);
     totalBytes += item.meta.file.size;
   }
   return out;
@@ -2412,27 +2447,50 @@ export function buildQuickReportMetricsFromPreparedSource(
     throw new Error("Prepared therapy history could not determine a valid latest clinical day.");
   }
 
-  const { start: windowStart, end: windowEnd } = windowEndClinicalDayIso
+  const allDayEntries = Object.entries(prepared.dayBuckets);
+  const buildWindowSelection = (window: DateWindow) => {
+    const windowStartIso = toIsoDate(window.start);
+    const windowEndIso = toIsoDate(window.end);
+    let effectiveWindowStartIso = windowStartIso;
+
+    const availableDayKeys = new Set(allDayEntries.map(([day]) => day).filter((day) => day < windowEndIso));
+    if (availableDayKeys.size > 0) {
+      const earliestAvailableIso = [...availableDayKeys].sort((a, b) => a.localeCompare(b))[0];
+      if (earliestAvailableIso > effectiveWindowStartIso) {
+        effectiveWindowStartIso = earliestAvailableIso;
+      }
+    }
+
+    const dayMap = new Map<string, DayBucket>(
+      allDayEntries
+        .filter(([day]) => day >= effectiveWindowStartIso && day < windowEndIso)
+        .map(([day, bucket]) => [day, { ...bucket }])
+    );
+
+    return {
+      windowStartIso,
+      windowEndIso,
+      effectiveWindowStartIso,
+      dayMap
+    };
+  };
+
+  const defaultWindow = windowEndClinicalDayIso
     ? resolveWindowFromClinicalEndIso(windowEndClinicalDayIso, normalizedLookbackDays)
     : resolveRecentWindow(latest, normalizedLookbackDays, sourceTimeZoneOffsetMinutes);
-  const windowStartIso = toIsoDate(windowStart);
-  const windowEndIso = toIsoDate(windowEnd);
-  let effectiveWindowStartIso = windowStartIso;
+  let { windowStartIso, windowEndIso, effectiveWindowStartIso, dayMap } = buildWindowSelection(defaultWindow);
 
-  const allDayEntries = Object.entries(prepared.dayBuckets);
-  const availableDayKeys = new Set(allDayEntries.map(([day]) => day).filter((day) => day < windowEndIso));
-  if (availableDayKeys.size > 0) {
-    const earliestAvailableIso = [...availableDayKeys].sort((a, b) => a.localeCompare(b))[0];
-    if (earliestAvailableIso > effectiveWindowStartIso) {
-      effectiveWindowStartIso = earliestAvailableIso;
+  if (!windowEndClinicalDayIso && dayMap.size === 0) {
+    const latestDataWindow = resolveLatestDataWindow(latest, normalizedLookbackDays);
+    const fallbackSelection = buildWindowSelection(latestDataWindow);
+    if (fallbackSelection.dayMap.size > 0) {
+      ({ windowStartIso, windowEndIso, effectiveWindowStartIso, dayMap } = fallbackSelection);
+      warnings.push(
+        `Latest available therapy data ended on ${formatDateHuman(prepared.latestClinicalDayIso)}; calculations were anchored to the latest available clinical day instead of today.`
+      );
     }
   }
 
-  const dayMap = new Map<string, DayBucket>(
-    allDayEntries
-      .filter(([day]) => day >= effectiveWindowStartIso && day < windowEndIso)
-      .map(([day, bucket]) => [day, { ...bucket }])
-  );
   const summaryAggregationPolicy = getReportSummaryAggregationPolicy(prepared.selectedLoader);
 
   if (dayMap.size === 0) {

@@ -21,6 +21,7 @@ export const RESMED_FAMILY: ParserFamilyDefinition = {
     /(?:^|\/)datalog\/.*\/(?:str|eve|pld|sad|brp|crc)\.edf(?:\.gz)?$/i,
     /(?:^|\/)(?:str|eve|pld|sad|brp|crc)\.edf(?:\.gz)?$/i,
     /(?:^|\/)identification\.(?:tgt|json)$/i,
+    /(?:^|\/)settings\/[^/]+\.(?:tgt|json|txt|xml|log)$/i,
     /(?:^|\/)(?:settings|summary)\.edf(?:\.gz)?$/i
   ]
 };
