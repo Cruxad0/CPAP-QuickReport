@@ -208,15 +208,6 @@ async function clearSiteData(): Promise<void> {
   }
 }
 
-function attemptCloseCurrentTab(): boolean {
-  try {
-    window.close();
-    return !!window.closed;
-  } catch {
-    return false;
-  }
-}
-
 function clearUnloadSafeSiteData() {
   try {
     window.localStorage?.clear();
@@ -415,30 +406,34 @@ export function QuickReportApp() {
     sourceSelectionAttemptRef.current += 1;
 
     setStatus("working");
+    setErrors([]);
     setStatusMessage("Clearing local data...");
     setParseProgressImmediate({ phase: "reset", detail: "Clearing local cache and storage...", percent: 12 });
     setIsSourceLoading(true);
     await new Promise((resolve) => window.setTimeout(resolve, 0));
 
-    await clearSiteData();
-    await workerClientRef.current?.reset();
+    try {
+      await clearSiteData();
+      await workerClientRef.current?.reset();
 
-    resetResultState();
-    setSourceFiles([]);
-    setSourceFileCount(0);
-    setSourceFileBytes(0);
-    setPatientName("");
-    setDateOfBirthInput("");
-    clearSourceInputs();
-    setParseProgressImmediate({ phase: "idle", detail: "Idle", percent: 0 });
-    setStatus("idle");
-    setStatusMessage("Local data cleared. Attempting to close this tab...");
-    await new Promise((resolve) => window.setTimeout(resolve, 0));
-
-    const closed = attemptCloseCurrentTab();
-    if (!closed) {
+      resetResultState();
+      setSourceFiles([]);
+      setSourceFileCount(0);
+      setSourceFileBytes(0);
+      setPatientName("");
+      setDateOfBirthInput("");
+      clearSourceInputs();
+      setParseProgressImmediate({ phase: "idle", detail: "Idle", percent: 0 });
       setStatus("idle");
-      setStatusMessage("Local data cleared. Please close this tab/browser manually.");
+      setStatusMessage("Local data cleared.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not clear local data.";
+      setStatus("error");
+      setErrors([message]);
+      setStatusMessage("Reset / Clear All failed.");
+      setParseProgressImmediate({ phase: "error", detail: "Reset failed", percent: 0 });
+    } finally {
+      setIsSourceLoading(false);
     }
   };
 
@@ -898,6 +893,7 @@ export function QuickReportApp() {
 
           <div className="actions">
             <button
+              type="button"
               className="btn btn-secondary"
               onClick={() => {
                 void handleFolderButtonClick();
@@ -927,10 +923,11 @@ export function QuickReportApp() {
           </div>
 
           <div className="actions">
-            <button className="btn btn-primary" onClick={handleGenerate} disabled={!canGenerate}>
+            <button type="button" className="btn btn-primary" onClick={handleGenerate} disabled={!canGenerate}>
               Generate Reports
             </button>
             <button
+              type="button"
               className="btn btn-danger"
               onClick={handleResetClearAll}
               disabled={status === "working"}
@@ -998,13 +995,14 @@ export function QuickReportApp() {
               ))}
             </div>
             <div className="actions" style={{ marginTop: 0 }}>
-              <button className="btn btn-primary" onClick={triggerDownload}>
+              <button type="button" className="btn btn-primary" onClick={triggerDownload}>
                 Export PDF
               </button>
-              <button className="btn btn-secondary" onClick={openPreviewInNewTab}>
+              <button type="button" className="btn btn-secondary" onClick={openPreviewInNewTab}>
                 Open PDF
               </button>
               <button
+                type="button"
                 className="btn btn-secondary"
                 onClick={() => {
                   setIsPreviewCollapsed((current) => !current);
