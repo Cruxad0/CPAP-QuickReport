@@ -28,6 +28,7 @@ export interface ParsedRecord {
   centralApneas?: number;
   reraIndex?: number;
   leak?: number;
+  leak95th?: number;
   leakMax?: number;
   leakMax30m?: number;
   leakMax60m?: number;
@@ -125,6 +126,8 @@ export interface PreparedDayBucket {
   reraCount: number;
   leakSum: number;
   leakCount: number;
+  leak95Sum: number;
+  leak95Count: number;
   leakMax: number | null;
   leakMax30m: number | null;
   leakMax60m: number | null;

@@ -26,6 +26,12 @@ const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MIN_YEAR = 1900;
 const MAX_YEAR = 2100;
 const SOURCE_SELECTION_CANCEL_TIMEOUT_MS = 20000;
+const LONG_DATE_FORMATTER = new Intl.DateTimeFormat("en-US", {
+  month: "long",
+  day: "numeric",
+  year: "numeric",
+  timeZone: "UTC"
+});
 type GeneratedReportArtifact = {
   metrics: QuickReportMetrics;
   previewUrl: string;
@@ -96,6 +102,12 @@ function parseIsoDate(isoDate: string): { year: number; month: number; day: numb
   const day = Number(m[3]);
   if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) return null;
   return { year, month, day };
+}
+
+function formatIsoDateLong(isoDate: string): string {
+  const parsed = parseIsoDate(isoDate);
+  if (!parsed) return isoDate;
+  return LONG_DATE_FORMATTER.format(Date.UTC(parsed.year, parsed.month - 1, parsed.day, 12));
 }
 
 function toUsDate(year: number, month: number, day: number): string {
@@ -241,6 +253,8 @@ export function QuickReportApp() {
   const [sourceFiles, setSourceFiles] = useState<SourceFileSummary[]>([]);
   const [sourceFileCount, setSourceFileCount] = useState(0);
   const [sourceFileBytes, setSourceFileBytes] = useState(0);
+  const [loadedSourceLoader, setLoadedSourceLoader] = useState<string | null>(null);
+  const [loadedSourceLatestClinicalDayIso, setLoadedSourceLatestClinicalDayIso] = useState<string | null>(null);
   const [headerDataUrl, setHeaderDataUrl] = useState<string | undefined>(undefined);
   const [activeReportDays, setActiveReportDays] = useState<ReportRangeDays>(90);
 
@@ -301,6 +315,10 @@ export function QuickReportApp() {
     if (sourceFileCount === 0) return "No files selected";
     return `${sourceFileCount} files selected (${bytesToLabel(sourceFileBytes)})`;
   }, [sourceFileBytes, sourceFileCount]);
+  const loadedSourceLatestClinicalDayLabel = useMemo(
+    () => (loadedSourceLatestClinicalDayIso ? formatIsoDateLong(loadedSourceLatestClinicalDayIso) : null),
+    [loadedSourceLatestClinicalDayIso]
+  );
   const generatedReportDays = useMemo(
     () => REPORT_RANGE_OPTIONS.filter((days) => Boolean(generatedReports[days])),
     [generatedReports]
@@ -399,6 +417,8 @@ export function QuickReportApp() {
     setPendingSourceSelection(null);
     setSourceFileCount(0);
     setSourceFileBytes(0);
+    setLoadedSourceLoader(null);
+    setLoadedSourceLatestClinicalDayIso(null);
   };
 
   const handleResetClearAll = async () => {
@@ -453,6 +473,8 @@ export function QuickReportApp() {
     setStatus("working");
     setStatusMessage("Loading SD folder...");
     setParseProgressImmediate({ phase: "scan", detail: "Loading SD folder...", percent: 4 });
+    setLoadedSourceLoader(null);
+    setLoadedSourceLatestClinicalDayIso(null);
     await new Promise((resolve) => window.setTimeout(resolve, 0));
 
     try {
@@ -467,6 +489,8 @@ export function QuickReportApp() {
       setSourceFiles(loaded.files);
       setSourceFileCount(loaded.totalFileCount);
       setSourceFileBytes(loaded.totalBytes);
+      setLoadedSourceLoader(loaded.selectedLoader);
+      setLoadedSourceLatestClinicalDayIso(loaded.latestClinicalDayIso);
       revokeGeneratedReportUrls(generatedReports);
       setGeneratedReports({});
       setActiveReportDays(90);
@@ -476,6 +500,8 @@ export function QuickReportApp() {
       setStatusMessage(loaded.statusMessage);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Could not load selected folder.";
+      setLoadedSourceLoader(null);
+      setLoadedSourceLatestClinicalDayIso(null);
       setStatus("error");
       setErrors([message]);
       setStatusMessage("Folder load failed.");
@@ -495,6 +521,8 @@ export function QuickReportApp() {
         setStatus("working");
         setStatusMessage("Loading SD-CARD...");
         setParseProgressImmediate({ phase: "scan", detail: "Loading SD-CARD...", percent: 1 });
+        setLoadedSourceLoader(null);
+        setLoadedSourceLatestClinicalDayIso(null);
       });
       const client = workerClientRef.current;
       if (!client) throw new Error("Background worker is not available.");
@@ -535,6 +563,8 @@ export function QuickReportApp() {
       setSourceFiles(loaded.files);
       setSourceFileCount(loaded.totalFileCount);
       setSourceFileBytes(loaded.totalBytes);
+      setLoadedSourceLoader(loaded.selectedLoader);
+      setLoadedSourceLatestClinicalDayIso(loaded.latestClinicalDayIso);
       revokeGeneratedReportUrls(generatedReports);
       setGeneratedReports({});
       setActiveReportDays(90);
@@ -551,6 +581,8 @@ export function QuickReportApp() {
       }
 
       const message = error instanceof Error ? error.message : "Could not load selected folder.";
+      setLoadedSourceLoader(null);
+      setLoadedSourceLatestClinicalDayIso(null);
       setStatus("error");
       setErrors([message]);
       setStatusMessage("Folder load failed.");
@@ -587,6 +619,8 @@ export function QuickReportApp() {
     setStatus("working");
     setStatusMessage("Reading ZIP archive locally...");
     setParseProgressImmediate({ phase: "zip", detail: "Opening ZIP file...", percent: 8 });
+    setLoadedSourceLoader(null);
+    setLoadedSourceLatestClinicalDayIso(null);
 
     try {
       const client = workerClientRef.current;
@@ -600,6 +634,8 @@ export function QuickReportApp() {
       setSourceFiles(loaded.files);
       setSourceFileCount(loaded.totalFileCount);
       setSourceFileBytes(loaded.totalBytes);
+      setLoadedSourceLoader(loaded.selectedLoader);
+      setLoadedSourceLatestClinicalDayIso(loaded.latestClinicalDayIso);
       setStatus("idle");
       setStatusMessage(loaded.statusMessage);
       revokeGeneratedReportUrls(generatedReports);
@@ -609,6 +645,8 @@ export function QuickReportApp() {
       setIsPreviewCollapsed(false);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Could not parse ZIP file.";
+      setLoadedSourceLoader(null);
+      setLoadedSourceLatestClinicalDayIso(null);
       setStatus("error");
       setErrors([message]);
       setStatusMessage("ZIP import failed.");
@@ -910,6 +948,12 @@ export function QuickReportApp() {
           <p style={{ marginTop: 12 }}>
             <strong>Status:</strong> {selectedCountLabel}
           </p>
+          {loadedSourceLoader || loadedSourceLatestClinicalDayLabel ? (
+            <ul className="notes" style={{ marginTop: 8 }}>
+              {loadedSourceLoader ? <li>Detected loader: {loadedSourceLoader}</li> : null}
+              {loadedSourceLatestClinicalDayLabel ? <li>Last date with data on card: {loadedSourceLatestClinicalDayLabel}</li> : null}
+            </ul>
+          ) : null}
 
           <div className="file-list" aria-live="polite">
             <ul>

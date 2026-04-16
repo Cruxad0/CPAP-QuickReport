@@ -14,6 +14,7 @@ type LoadSourceResult = {
   totalBytes: number;
   statusMessage: string;
   selectedLoader: string;
+  latestClinicalDayIso: string;
 };
 
 type GenerateReportsResult = {
@@ -399,7 +400,8 @@ export class ReportWorkerClient {
         totalFileCount: message.totalFileCount,
         totalBytes: message.totalBytes,
         statusMessage: message.statusMessage,
-        selectedLoader: message.selectedLoader
+        selectedLoader: message.selectedLoader,
+        latestClinicalDayIso: message.latestClinicalDayIso
       });
       return;
     }

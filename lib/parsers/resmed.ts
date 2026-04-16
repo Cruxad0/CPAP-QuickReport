@@ -257,6 +257,24 @@ function parseAsciiNumber(bytes: Uint8Array, start: number, length: number): num
   return Number.isFinite(n) ? n : null;
 }
 
+function countAsciiOccurrences(bytes: Uint8Array, needle: string): number {
+  const pattern = new TextEncoder().encode(needle);
+  if (pattern.length === 0 || bytes.length < pattern.length) return 0;
+
+  let count = 0;
+  for (let i = 0; i <= bytes.length - pattern.length; i += 1) {
+    let matched = true;
+    for (let j = 0; j < pattern.length; j += 1) {
+      if (bytes[i + j] !== pattern[j]) {
+        matched = false;
+        break;
+      }
+    }
+    if (matched) count += 1;
+  }
+  return count;
+}
+
 function parseEdfStartDate(raw: string): Date | null {
   const match = raw.match(/^(\d{2})\.(\d{2})\.(\d{2})$/);
   if (!match) return null;
@@ -477,6 +495,8 @@ function parseResMedStrEdf(
   const residualAliases = ["AI"];
   const centralAliases = ["CAI"];
   const reraAliases = ["RERA"];
+  const leak50Aliases = ["Leak.50", "Leak 50", "Leak Med"];
+  const leak95Aliases = ["Leak.95", "Leak 95"];
   const leakMaxAliases = ["Leak Max", "Leak.Max"];
   const pressure50Aliases = ["MaskPress.50", "Mask Pres 50", "MaskPress.5", "Mask Pres Med"];
   const pressure95Aliases = ["MaskPress.95", "Mask Pres 95"];
@@ -490,6 +510,9 @@ function parseResMedStrEdf(
   const minIpapAliases = ["Min IPAP"];
   const maxIpapAliases = ["Max IPAP", "S.VA.MaxIPAP"];
   const psAliases = ["PS", "S.VA.PS"];
+  const eprClinEnableAliases = ["S.EPR.ClinEnable"];
+  const eprEnableAliases = ["S.EPR.EPREnable"];
+  const eprLevelAliases = ["S.EPR.Level"];
 
   const records: ParsedRecord[] = [];
   let latestRecordDate: Date | null = null;
@@ -503,6 +526,8 @@ function parseResMedStrEdf(
     const residualApneas = readResMedValue(bytes, edf, residualAliases, recordIndex);
     const centralApneas = readResMedValue(bytes, edf, centralAliases, recordIndex);
     const reraIndex = readResMedValue(bytes, edf, reraAliases, recordIndex);
+    const leak = readResMedValue(bytes, edf, leak50Aliases, recordIndex);
+    const leak95th = readResMedValue(bytes, edf, leak95Aliases, recordIndex);
     const leakMax = readResMedValue(bytes, edf, leakMaxAliases, recordIndex);
     const pressureAvg = readResMedValue(bytes, edf, pressure50Aliases, recordIndex);
     const pressure95th = readResMedValue(bytes, edf, pressure95Aliases, recordIndex);
@@ -513,6 +538,8 @@ function parseResMedStrEdf(
       (residualApneas !== undefined && residualApneas >= 0 && residualApneas < 200) ||
       (centralApneas !== undefined && centralApneas >= 0 && centralApneas < 200) ||
       (reraIndex !== undefined && reraIndex >= 0 && reraIndex < 200) ||
+      (leak !== undefined && leak >= 0 && leak < 500) ||
+      (leak95th !== undefined && leak95th >= 0 && leak95th < 500) ||
       (leakMax !== undefined && leakMax >= 0 && leakMax < 500) ||
       (pressureAvg !== undefined && pressureAvg >= 0 && pressureAvg <= 80) ||
       (pressure95th !== undefined && pressure95th >= 0 && pressure95th <= 80);
@@ -525,6 +552,8 @@ function parseResMedStrEdf(
       residualApneas: residualApneas !== undefined && residualApneas >= 0 && residualApneas < 200 ? residualApneas : undefined,
       centralApneas: centralApneas !== undefined && centralApneas >= 0 && centralApneas < 200 ? centralApneas : undefined,
       reraIndex: reraIndex !== undefined && reraIndex >= 0 && reraIndex < 200 ? reraIndex : undefined,
+      leak: leak !== undefined && leak >= 0 && leak < 500 ? leak : undefined,
+      leak95th: leak95th !== undefined && leak95th >= 0 && leak95th < 500 ? leak95th : undefined,
       leakMax: leakMax !== undefined && leakMax >= 0 && leakMax < 500 ? leakMax : undefined,
       pressureAvg: pressureAvg !== undefined && pressureAvg >= 0 && pressureAvg <= 80 ? pressureAvg : undefined,
       pressure95th: pressure95th !== undefined && pressure95th >= 0 && pressure95th <= 80 ? pressure95th : undefined
@@ -546,6 +575,9 @@ function parseResMedStrEdf(
       const minIpap = readResMedValue(bytes, edf, minIpapAliases, recordIndex);
       const maxIpap = readResMedValue(bytes, edf, maxIpapAliases, recordIndex);
       const ps = readResMedValue(bytes, edf, psAliases, recordIndex);
+      const eprClinEnableRaw = readResMedValue(bytes, edf, eprClinEnableAliases, recordIndex);
+      const eprEnableRaw = readResMedValue(bytes, edf, eprEnableAliases, recordIndex);
+      const eprLevel = readResMedValue(bytes, edf, eprLevelAliases, recordIndex);
 
       const inferredSignalMode = inferResMedModeFromSignals({
         setPressure,
@@ -595,6 +627,28 @@ function parseResMedStrEdf(
         }
       }
 
+      if (!machine.pressureRelief) {
+        const isElevenSeries = /\b(?:airsense|aircurve)\s*11\b/i.test(machine.device ?? "");
+        const normalizeToggle = (value: number | undefined) =>
+          value === undefined ? undefined : isElevenSeries ? value - 1 : value;
+        const eprEnable = normalizeToggle(eprEnableRaw);
+        const eprClinEnable = normalizeToggle(eprClinEnableRaw);
+        const hasEprSignals = eprEnableRaw !== undefined || eprClinEnableRaw !== undefined || eprLevel !== undefined;
+        if (hasEprSignals) {
+          const eprEnabledByToggle =
+            eprEnable !== undefined || eprClinEnable !== undefined
+              ? (eprEnable ?? 1) > 0 && (eprClinEnable ?? 1) > 0
+              : undefined;
+          if (eprEnabledByToggle === false || (eprLevel !== undefined && eprLevel <= 0)) {
+            machine.pressureRelief = "EPR: Off";
+          } else if (eprLevel !== undefined && eprLevel > 0) {
+            machine.pressureRelief = `EPR: On ${Number(eprLevel.toFixed(2)).toString()}`;
+          } else if (eprEnabledByToggle) {
+            machine.pressureRelief = "EPR: On";
+          }
+        }
+      }
+
       if (machine.pressureAvg === undefined && pressureAvg !== undefined && pressureAvg >= 0 && pressureAvg <= 80) {
         machine.pressureAvg = pressureAvg;
       }
@@ -605,6 +659,35 @@ function parseResMedStrEdf(
   }
 
   return records;
+}
+
+function parseResMedEveArousalCount(candidate: FamilyParserCandidate, bytes: Uint8Array): { dayIso: string; count: number } | null {
+  if (!/eve\.edf(?:\.gz)?$/i.test(candidate.baseName)) return null;
+
+  const edf = parseResMedEdf(bytes);
+  if (!edf) return null;
+
+  const count = countAsciiOccurrences(bytes.subarray(edf.headerBytes), "Arousal");
+  if (count <= 0) return null;
+
+  return {
+    dayIso: edf.startDate.toISOString().slice(0, 10),
+    count
+  };
+}
+
+function mergeResMedArousalCounts(records: ParsedRecord[], arousalCountsByDay: Map<string, number>) {
+  for (const record of records) {
+    if (typeof record.reraIndex === "number" && record.reraIndex >= 0) continue;
+    const dayIso = record.date.toISOString().slice(0, 10);
+    const arousalCount = arousalCountsByDay.get(dayIso);
+    if (!arousalCount || arousalCount <= 0) continue;
+    if (typeof record.usageHours === "number" && record.usageHours > 0 && record.usageHours <= 24) {
+      record.reraIndex = arousalCount / record.usageHours;
+    } else {
+      record.reraIndex = arousalCount;
+    }
+  }
 }
 
 function scanProductObject(text: string, machine: QuickReportMetrics["machine"]) {
@@ -707,9 +790,10 @@ export async function parseResMedFamily(context: FamilyParserContext, deps: Fami
     );
   }
 
+  const arousalCountsByDay = new Map<string, number>();
   let processed = 0;
   for (const candidate of context.candidates) {
-    if (!/str\.edf(?:\.gz)?$/i.test(candidate.baseName)) continue;
+    if (!/(?:str|eve)\.edf(?:\.gz)?$/i.test(candidate.baseName)) continue;
     processed += 1;
     const pct =
       context.progressStart +
@@ -723,12 +807,26 @@ export async function parseResMedFamily(context: FamilyParserContext, deps: Fami
 
     try {
       const bytes = await candidate.file.readBytes();
-      const records = parseResMedStrEdf(candidate, await maybeGunzip(bytes), context.machine);
-      if (records.length > 0) {
-        context.records.push(...records);
+      const inflated = await maybeGunzip(bytes);
+
+      if (/str\.edf(?:\.gz)?$/i.test(candidate.baseName)) {
+        const records = parseResMedStrEdf(candidate, inflated, context.machine);
+        if (records.length > 0) {
+          context.records.push(...records);
+        }
+        continue;
+      }
+
+      const arousalCounts = parseResMedEveArousalCount(candidate, inflated);
+      if (arousalCounts) {
+        arousalCountsByDay.set(arousalCounts.dayIso, (arousalCountsByDay.get(arousalCounts.dayIso) ?? 0) + arousalCounts.count);
       }
     } catch {
       continue;
     }
+  }
+
+  if (arousalCountsByDay.size > 0 && context.records.length > 0) {
+    mergeResMedArousalCounts(context.records, arousalCountsByDay);
   }
 }

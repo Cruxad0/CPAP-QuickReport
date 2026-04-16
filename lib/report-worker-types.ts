@@ -61,6 +61,7 @@ export type ReportWorkerResponse =
       totalBytes: number;
       statusMessage: string;
       selectedLoader: string;
+      latestClinicalDayIso: string;
     }
   | {
       requestId: number;

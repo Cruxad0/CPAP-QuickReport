@@ -180,7 +180,8 @@ async function loadSource(
     totalFileCount,
     totalBytes,
     statusMessage,
-    selectedLoader: prepared.selectedLoader
+    selectedLoader: prepared.selectedLoader,
+    latestClinicalDayIso: prepared.latestClinicalDayIso
   });
 }
 
