@@ -108,11 +108,14 @@ maybeLunaTest("Luna II sample card preserves APAP settings and efficacy metrics"
   assert.equal(metrics.daysWithUsage, 43);
   assert.equal(metrics.compliantDays, 32);
   assertApprox(metrics.avgUsageHours, 4.7729, 0.02, "avg usage");
+  assertApprox(metrics.machine.pressureAvg ?? null, 7.3459, 0.02, "avg pressure");
+  assertApprox(metrics.machine.pressure95th ?? null, 11.525, 0.02, "95th pressure");
   assertApprox(metrics.avgAhi, 1.8784, 0.02, "avg AHI");
   assertApprox(metrics.avgResidualApneas, 0.2650, 0.02, "avg residual apneas");
   assertApprox(metrics.avgCentralApneas, 1.2048, 0.02, "avg central apneas");
   assert.equal(metrics.avgReraIndex, null);
   assertApprox(metrics.avgLeak, 51.0985, 0.1, "avg leak");
+  assertApprox(metrics.leak95th, 79.7591, 0.1, "95th leak");
   assertApprox(metrics.maxLeak30m, 100, 0.1, "30 min leak");
   assertApprox(metrics.maxLeak60m, 100, 0.1, "60 min leak");
 });

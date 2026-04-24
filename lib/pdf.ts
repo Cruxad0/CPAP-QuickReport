@@ -285,6 +285,10 @@ export function formatReportMetricValue(value: number | null | undefined, digits
   return typeof value === "number" && Number.isFinite(value) ? value.toFixed(digits) : NO_DATA_FALLBACK;
 }
 
+export function shouldDisplayRespiratoryRate(machine: QuickReportMetrics["machine"]): boolean {
+  return typeof machine.respiratoryRate === "string" && machine.respiratoryRate.trim().length > 0;
+}
+
 function isBelowMedicareComplianceThreshold(report: QuickReportMetrics): boolean {
   return Number.isFinite(report.compliancePercent) && report.compliancePercent < 70;
 }
@@ -683,7 +687,9 @@ function machineSettingRows(report: QuickReportMetrics): TableRow[] {
   if (isBiPap) {
     rows.push(["IPAP", normalizePressureDisplay(report.machine.ipap)]);
     rows.push(["EPAP", normalizePressureDisplay(report.machine.epap)]);
-    rows.push(["Respiratory rate (RR)", textValue(report.machine.respiratoryRate)]);
+    if (shouldDisplayRespiratoryRate(report.machine)) {
+      rows.push(["Respiratory rate (RR)", textValue(report.machine.respiratoryRate)]);
+    }
   } else if (isAutoPap) {
     rows.push(["Min pressure", normalizePressureDisplay(report.machine.pressureMin ?? derivedRange?.min)]);
     rows.push(["Max pressure", normalizePressureDisplay(report.machine.pressureMax ?? derivedRange?.max)]);
