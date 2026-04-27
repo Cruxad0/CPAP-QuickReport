@@ -139,12 +139,15 @@ function parseSleepStyleSummary(bytes: Uint8Array, aggregates: Map<number, Sleep
       else machine.pressureRelief = "EPR: Off";
     }
 
+    if (!machine.rampTime) {
+      machine.rampTime = ramp > 0 ? `${ramp} ${ramp === 1 ? "minute" : "minutes"}` : "Off";
+    }
+
     if (!machine.device && sensAwake > 0 && (flags & 0x04) !== 0) {
       machine.device = `SleepStyle ${modeByte === 0 ? "Auto" : "CPAP"}`;
     }
 
     void runTime;
-    void ramp;
     void humidity;
   }
 }

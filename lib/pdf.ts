@@ -1,4 +1,4 @@
-import { isAutoBiPapLikeMode, isAutoPapLikeMode, isBiPapLikeMode, isFixedCpapLikeMode } from "@/lib/machine-mode";
+import { isAutoPapLikeMode, isBiPapLikeMode, isFixedCpapLikeMode } from "@/lib/machine-mode";
 import { QuickReportMetrics } from "@/lib/types";
 
 const PAGE_WIDTH_A4 = 595.28;
@@ -653,9 +653,8 @@ function pressureMetricText(value: number | null | undefined): string {
   return typeof value === "number" && Number.isFinite(value) ? `${value.toFixed(1)} cmH2O` : NO_DATA_FALLBACK;
 }
 
-function hasPressureRangeText(raw: string | null | undefined): boolean {
-  const text = raw?.trim();
-  return typeof text === "string" && /\d+(?:\.\d+)?\s*-\s*\d+(?:\.\d+)?/.test(text);
+function pressureSettingText(value: string | null | undefined): string {
+  return normalizePressureDisplay(value);
 }
 
 function extractPressureRangeValues(raw: string | null | undefined): { min: string; max: string } | null {
@@ -672,7 +671,15 @@ function extractPressureRangeValues(raw: string | null | undefined): { min: stri
   };
 }
 
-function machineSettingRows(report: QuickReportMetrics): TableRow[] {
+function isRampOff(machine: QuickReportMetrics["machine"]): boolean {
+  return /^off$/i.test(machine.rampTime?.trim() ?? "");
+}
+
+function shouldDisplayRampPressure(machine: QuickReportMetrics["machine"]): boolean {
+  return Boolean(machine.rampPressure?.trim()) && !isRampOff(machine);
+}
+
+export function machineSettingRows(report: QuickReportMetrics): TableRow[] {
   const rows: TableRow[] = [
     ["Device", textValue(report.machine.device)],
     ["Mode", textValue(report.machine.mode)]
@@ -697,23 +704,40 @@ function machineSettingRows(report: QuickReportMetrics): TableRow[] {
     rows.push(["Pressure", normalizePressureDisplay(report.machine.pressure)]);
   }
 
+  if (report.machine.rampTime?.trim()) {
+    rows.push(["Ramp time", textValue(report.machine.rampTime)]);
+  }
+  if (shouldDisplayRampPressure(report.machine)) {
+    rows.push(["Ramp pressure", normalizePressureDisplay(report.machine.rampPressure)]);
+  }
+
   rows.push(["Pressure relief", textValue(report.machine.pressureRelief)]);
   return rows;
 }
 
-function therapyPressureRows(report: QuickReportMetrics): TableRow[] {
+function hasAnyPressureSummaryValue(report: QuickReportMetrics, derivedRange: { min: string; max: string } | null): boolean {
+  return (
+    typeof report.machine.pressureAvg === "number" ||
+    typeof report.machine.pressure95th === "number" ||
+    Boolean(report.machine.pressureMin) ||
+    Boolean(report.machine.pressureMax) ||
+    Boolean(derivedRange) ||
+    Boolean(report.machine.pressure)
+  );
+}
+
+export function therapyPressureRows(report: QuickReportMetrics): TableRow[] {
   const mode = report.machine.mode?.trim() ?? "";
-  const isBiPap = isBiPapLikeMode(mode);
   const isFixedCpap = isFixedCpapLikeMode(mode);
-  const isAutoPap = !isBiPap && !isFixedCpap && (isAutoPapLikeMode(mode) || hasAutoPressureRange(report));
-  const isAutoBiPap =
-    isBiPap &&
-    (isAutoBiPapLikeMode(mode) || hasPressureRangeText(report.machine.epap) || hasPressureRangeText(report.machine.ipap));
-  if (!isAutoPap && !isAutoBiPap) return [];
+  const derivedRange = extractPressureRangeValues(report.machine.pressure);
+
+  if (!hasAnyPressureSummaryValue(report, derivedRange)) return [];
 
   return [
+    ["95th Pressure", pressureMetricText(report.machine.pressure95th)],
     ["Avg Pressure", pressureMetricText(report.machine.pressureAvg)],
-    ["95th Pressure", pressureMetricText(report.machine.pressure95th)]
+    ["Min Pressure", pressureSettingText(report.machine.pressureMin ?? derivedRange?.min ?? (isFixedCpap ? report.machine.pressure : undefined))],
+    ["Max Pressure", pressureSettingText(report.machine.pressureMax ?? derivedRange?.max ?? (isFixedCpap ? report.machine.pressure : undefined))]
   ];
 }
 
@@ -727,6 +751,11 @@ function reraValueText(report: QuickReportMetrics): string {
 function leakRow(label: string, value: number | null): TableRow {
   if (value === null || !Number.isFinite(value)) return [label, NO_DATA_FALLBACK];
   return [label, `${formatReportMetricValue(value)} L/min`, value > 30];
+}
+
+function primaryLeakLabel(report: QuickReportMetrics): string {
+  if (/^resvent\s*\/\s*hoffrichter$/i.test(report.selectedLoader.trim())) return "Median Leak";
+  return "Avg Leak";
 }
 
 function measureCompactTableHeight(
@@ -985,7 +1014,7 @@ export async function buildPdfReport(report: QuickReportMetrics, headerDataUrl?:
     ["Avg Central apneas", formatReportMetricValue(report.avgCentralApneas)],
     ["95th Central apneas", formatReportMetricValue(report.centralApneas95th)],
     ["Avg RERA index", reraValueText(report)],
-    leakRow("Avg Leak", report.avgLeak),
+    leakRow(primaryLeakLabel(report), report.avgLeak),
     leakRow("95th Leak", report.leak95th),
     leakRow("30 min Sustained Leak", report.maxLeak30m),
     leakRow("60 min Sustained Leak", report.maxLeak60m)

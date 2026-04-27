@@ -140,6 +140,8 @@ function formatCm(value: number | undefined): string | undefined {
 type BmcIdxSettingsPacket = {
   timestamp: Date;
   modeCode: number;
+  rampPressure: number;
+  rampTimeMinutes: number;
   epap: number;
   maxPressure: number;
   ipap: number;
@@ -175,7 +177,9 @@ function parseBmcIdxSettingsPacket(bytes: Uint8Array): BmcIdxSettingsPacket | nu
     return null;
   }
 
+  const rampPressure = (bytes[0x140] ?? 0) / 2;
   const epap = (bytes[0x141] ?? 0) / 2;
+  const rampTimeMinutes = bytes[0x142] ?? 0;
   const maxPressure = (bytes[0x14c] ?? 0) / 2;
   const pressureSupport = ((bytes[0x148] ?? 0) >> 2) / 2;
   const ipap = epap + pressureSupport;
@@ -187,6 +191,8 @@ function parseBmcIdxSettingsPacket(bytes: Uint8Array): BmcIdxSettingsPacket | nu
   return {
     timestamp,
     modeCode,
+    rampPressure,
+    rampTimeMinutes,
     epap,
     maxPressure,
     ipap,
@@ -197,7 +203,7 @@ function parseBmcIdxSettingsPacket(bytes: Uint8Array): BmcIdxSettingsPacket | nu
 }
 
 function applyBmcSettingsPacket(packet: BmcIdxSettingsPacket, machine: QuickReportMetrics["machine"]) {
-  const { modeCode, epap, maxPressure, ipap, reslex, reslexPatient, backupRR } = packet;
+  const { modeCode, rampPressure, rampTimeMinutes, epap, maxPressure, ipap, reslex, reslexPatient, backupRR } = packet;
   const modeLabel = BMC_MODE_LABELS.get(modeCode);
 
   if (modeLabel) {
@@ -233,6 +239,16 @@ function applyBmcSettingsPacket(packet: BmcIdxSettingsPacket, machine: QuickRepo
     if (reslex === 0) machine.pressureRelief = "Reslex: Off";
     else if (reslexPatient) machine.pressureRelief = "Reslex: Patient";
     else machine.pressureRelief = `Reslex: ${reslex}`;
+  }
+
+  if (!machine.rampTime) {
+    if (rampTimeMinutes === 0) machine.rampTime = "Off";
+    else if (rampTimeMinutes === 0xff) machine.rampTime = "Auto";
+    else machine.rampTime = `${rampTimeMinutes} ${rampTimeMinutes === 1 ? "minute" : "minutes"}`;
+  }
+  if (!machine.rampPressure && !/^off$/i.test(machine.rampTime ?? "")) {
+    const rampPressureText = formatCm(rampPressure);
+    if (rampPressureText) machine.rampPressure = rampPressureText;
   }
 }
 

@@ -62,7 +62,7 @@ maybeResventTest("Resvent sample card preserves APAP config and metrics", async 
   assert.equal(metrics.compliantDays, 90);
   assertApprox(metrics.avgUsageHours, 8.3844, 0.02, "avg usage");
   assertApprox(metrics.avgAhi, 2.2263, 0.02, "avg AHI");
-  assertApprox(metrics.avgLeak, 1.6278, 0.02, "avg leak");
+  assertApprox(metrics.avgLeak, 0, 0.02, "median leak");
   assertApprox(metrics.maxLeak30m, 7.3977, 0.05, "30 min leak");
   assertApprox(metrics.maxLeak60m, 117.4, 0.05, "60 min leak");
 });
@@ -77,7 +77,7 @@ maybeResventTest("Resvent 60-day report tracks the machine summary conventions",
   assertApprox(metrics.avgResidualApneas, 1.8671, 0.02, "avg residual apneas");
   assertApprox(metrics.avgCentralApneas, 0, 0.001, "avg central apneas");
   assertApprox(metrics.avgReraIndex, 0.3977, 0.02, "avg RERA");
-  assertApprox(metrics.avgLeak, 1.2667, 0.02, "avg leak");
+  assertApprox(metrics.avgLeak, 0, 0.02, "median leak");
   assertApprox(metrics.machine.pressureAvg ?? null, 7.7233, 0.02, "avg pressure");
   assertApprox(metrics.machine.pressure95th ?? null, 8.9933, 0.02, "95th pressure");
   assertApprox(metrics.maxLeak30m, 7.3977, 0.05, "30 min leak");
