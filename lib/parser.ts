@@ -169,6 +169,17 @@ function pressureText(value: number | undefined): string | undefined {
   return `${Number(n.toFixed(2)).toString()} cmH2O`;
 }
 
+function rampTimeText(value: number | undefined): string | undefined {
+  if (value === undefined || !Number.isFinite(value) || value < 0) return undefined;
+  if (value === 0) return "Off";
+  const minutes = Number(value.toFixed(2));
+  return `${minutes.toString()} ${minutes === 1 ? "minute" : "minutes"}`;
+}
+
+function isOffSettingText(value: string | undefined): boolean {
+  return typeof value === "string" && /^(?:off|disabled|false|no|0)$/i.test(value.trim());
+}
+
 const isLikelyAutoMode = isAutoPapLikeMode;
 const isLikelyBiPapMode = isBiPapLikeMode;
 
@@ -432,6 +443,7 @@ function inferMachineSettingsFromText(text: string, machine: QuickReportMetrics[
   const kv = parseKeyValueLines(text);
   inferPressureSettingsFromMap(kv, machine);
   inferBilevelSettingsFromMap(kv, machine);
+  inferRampSettingsFromMap(kv, machine);
 }
 
 function inferPressureSettingsFromMap(configMap: Map<string, string>, machine: QuickReportMetrics["machine"]) {
@@ -584,6 +596,52 @@ function inferBilevelSettingsFromMap(configMap: Map<string, string>, machine: Qu
 
   if (!machine.respiratoryRate && rr !== undefined) {
     machine.respiratoryRate = `${Number(rr.toFixed(2)).toString()} bpm`;
+  }
+}
+
+function inferRampSettingsFromMap(configMap: Map<string, string>, machine: QuickReportMetrics["machine"]) {
+  const kvNormalized = new Map<string, string>();
+  for (const [key, value] of configMap.entries()) {
+    kvNormalized.set(key.toLowerCase().replace(/[\s_-]+/g, ""), value);
+  }
+
+  const readRawByKey = (keys: string[]): string | undefined => {
+    for (const key of keys) {
+      const raw = kvNormalized.get(key.toLowerCase().replace(/[\s_-]+/g, ""));
+      if (raw !== undefined) return raw;
+    }
+    return undefined;
+  };
+
+  const readRawByPattern = (patterns: RegExp[]): string | undefined => {
+    for (const [key, value] of kvNormalized.entries()) {
+      if (!patterns.some((pattern) => pattern.test(key))) continue;
+      return value;
+    }
+    return undefined;
+  };
+
+  const rawRampTime =
+    readRawByKey(["rampTime", "rampMinutes", "rampTimeMinutes", "rampDuration"]) ??
+    readRawByPattern([/^ramp(?:time|minutes|duration)$/i, /^.*ramp.*(?:time|minutes|duration).*$/i]);
+  const rawRampPressure =
+    readRawByKey(["rampPress", "rampPressure", "pRamp", "rampStartPressure", "rampStartPress"]) ??
+    readRawByPattern([/^.*ramp.*(?:press|pressure).*$/i, /^(?:press|pressure).*ramp.*$/i]);
+
+  if (!machine.rampTime && rawRampTime !== undefined) {
+    const numericRampTime = safeNumber(rawRampTime);
+    if (numericRampTime !== undefined) {
+      machine.rampTime = rampTimeText(numericRampTime);
+    } else if (isOffSettingText(rawRampTime)) {
+      machine.rampTime = "Off";
+    } else if (/^(?:on|enabled|true|yes|auto)$/i.test(rawRampTime.trim())) {
+      machine.rampTime = rawRampTime.trim();
+    }
+  }
+
+  if (!machine.rampPressure && rawRampPressure !== undefined && !isOffSettingText(machine.rampTime)) {
+    const rampPressure = pressureText(safeNumber(rawRampPressure));
+    if (rampPressure) machine.rampPressure = rampPressure;
   }
 }
 
@@ -926,6 +984,14 @@ function inferMachineSettingsFromConfigMap(configMap: Map<string, string>, machi
   }
 
   const explicitMode = resolveExplicitTherapyMode(machine.mode);
+  const fixedResventPressure = formatCmH2O(configMap.get("Press"));
+
+  if (explicitMode === "CPAP" && fixedResventPressure) {
+    machine.pressure = `Fixed ${fixedResventPressure} (cmH2O)`;
+    machine.pressureIsAuto = false;
+    machine.pressureMin = undefined;
+    machine.pressureMax = undefined;
+  }
 
   if (!machine.pressure) {
     const press = configMap.get("Press");
@@ -944,7 +1010,14 @@ function inferMachineSettingsFromConfigMap(configMap: Map<string, string>, machi
     const epapMinText = formatCmH2O(epapMin);
     const ipapMaxText = formatCmH2O(ipapMax);
 
-    if (pressText) {
+    if (explicitMode === "CPAP") {
+      if (pressText) {
+        machine.pressure = `Fixed ${pressText} (cmH2O)`;
+      }
+      machine.pressureIsAuto = false;
+      machine.pressureMin = undefined;
+      machine.pressureMax = undefined;
+    } else if (pressText) {
       machine.pressure = `Fixed ${pressText} (cmH2O)`;
     } else if (pMinText && pMaxText) {
       machine.pressure = `${pMinText}-${pMaxText} (cmH2O)`;
@@ -972,6 +1045,14 @@ function inferMachineSettingsFromConfigMap(configMap: Map<string, string>, machi
 
   inferPressureSettingsFromMap(configMap, machine);
   inferBilevelSettingsFromMap(configMap, machine);
+  inferRampSettingsFromMap(configMap, machine);
+
+  if (explicitMode === "CPAP" && fixedResventPressure) {
+    machine.pressure = `Fixed ${fixedResventPressure} (cmH2O)`;
+    machine.pressureIsAuto = false;
+    machine.pressureMin = undefined;
+    machine.pressureMax = undefined;
+  }
 
   if (!machine.pressureRelief) {
     inferPressureReliefFromMap(configMap, machine);
@@ -1049,13 +1130,19 @@ function parseResventStatText(text: string, fallbackDate: Date): ParsedRecord | 
   }
 
   let leak: number | undefined;
+  let leak95th: number | undefined;
   let leakMax: number | undefined;
-  for (const preferredKey of ["p95leak", "avgleak", "averageleak", "meanleak", "medleak", "medianleak"]) {
+  for (const preferredKey of ["medleak", "medianleak", "avgleak", "averageleak", "meanleak"]) {
     const candidate = safeNumber(kvLower.get(preferredKey));
     if (candidate !== undefined && candidate >= 0 && candidate <= 500) {
       leak = candidate;
       break;
     }
+  }
+
+  const preferred95Leak = safeNumber(kvLower.get("p95leak") ?? kvLower.get("leak95") ?? kvLower.get("leak95th"));
+  if (preferred95Leak !== undefined && preferred95Leak >= 0 && preferred95Leak <= 500) {
+    leak95th = preferred95Leak;
   }
 
   const preferredMaxLeak = safeNumber(kvLower.get("maxleak"));
@@ -1067,6 +1154,10 @@ function parseResventStatText(text: string, fallbackDate: Date): ParsedRecord | 
     if (!/leak/i.test(key)) continue;
     const n = safeNumber(value);
     if (n === undefined) continue;
+    if (/(?:95|p95)/i.test(key)) {
+      if (leak95th === undefined && n >= 0 && n <= 500) leak95th = n;
+      continue;
+    }
     if (/max/i.test(key)) {
       if (leakMax === undefined && n >= 0 && n <= 500) leakMax = n;
       continue;
@@ -1083,6 +1174,7 @@ function parseResventStatText(text: string, fallbackDate: Date): ParsedRecord | 
     (centralApneas !== undefined && centralApneas >= 0 && centralApneas < 200) ||
     (reraIndex !== undefined && reraIndex >= 0 && reraIndex < 200) ||
     (leak !== undefined && leak >= 0 && leak < 500) ||
+    (leak95th !== undefined && leak95th >= 0 && leak95th < 500) ||
     (leakMax !== undefined && leakMax >= 0 && leakMax < 500) ||
     (pressureAvg !== undefined && pressureAvg >= 0 && pressureAvg <= 80) ||
     (pressure95th !== undefined && pressure95th >= 0 && pressure95th <= 80);
@@ -1096,6 +1188,7 @@ function parseResventStatText(text: string, fallbackDate: Date): ParsedRecord | 
     centralApneas: centralApneas !== undefined && centralApneas >= 0 && centralApneas < 200 ? centralApneas : undefined,
     reraIndex: reraIndex !== undefined && reraIndex >= 0 && reraIndex < 200 ? reraIndex : undefined,
     leak: leak !== undefined && leak >= 0 && leak < 500 ? leak : undefined,
+    leak95th: leak95th !== undefined && leak95th >= 0 && leak95th < 500 ? leak95th : undefined,
     leakMax: leakMax !== undefined && leakMax >= 0 && leakMax < 500 ? leakMax : undefined,
     pressureAvg: pressureAvg !== undefined && pressureAvg >= 0 && pressureAvg <= 80 ? pressureAvg : undefined,
     pressure95th: pressure95th !== undefined && pressure95th >= 0 && pressure95th <= 80 ? pressure95th : undefined
@@ -2654,8 +2747,8 @@ export function buildQuickReportMetricsFromPreparedSource(
   const effectiveWindowEnd = new Date(`${windowEndIso}T12:00:00Z`);
   const effectiveDaySpan = Math.max(0, Math.round((effectiveWindowEnd.getTime() - effectiveWindowStart.getTime()) / (24 * 3600 * 1000)));
   const effectiveWindowDays = Math.max(1, Math.min(normalizedLookbackDays, effectiveDaySpan));
-  const displayedWindowStartIso = toIsoDate(addUtcDays(effectiveWindowStart, 1));
-  const displayedWindowEndIso = windowEndIso;
+  const displayedWindowStartIso = effectiveWindowStartIso;
+  const displayedWindowEndIso = toIsoDate(addUtcDays(effectiveWindowEnd, -1));
   if (effectiveWindowDays < normalizedLookbackDays) {
     warnings.push(
       `Only ${effectiveWindowDays} days of therapy history are available; calculations were adjusted from ${normalizedLookbackDays} days to avoid false deficits.`

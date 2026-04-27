@@ -49,6 +49,8 @@ export interface MachineSettings {
   ipap?: string;
   respiratoryRate?: string;
   pressureRelief?: string;
+  rampTime?: string;
+  rampPressure?: string;
 }
 
 export interface QuickReportMetrics {

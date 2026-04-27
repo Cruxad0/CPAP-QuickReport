@@ -142,8 +142,8 @@ test("explicit clinical end day label is included in noon-to-noon report windows
   assert.equal(metrics.daysInWindow, 3);
   assert.equal(metrics.daysWithData, 3);
   assert.equal(metrics.daysWithUsage, 3);
-  assert.equal(metrics.dateRangeStart, "March 24, 2026");
-  assert.equal(metrics.dateRangeEnd, "March 26, 2026");
+  assert.equal(metrics.dateRangeStart, "March 23, 2026");
+  assert.equal(metrics.dateRangeEnd, "March 25, 2026");
   assert.equal(metrics.avgUsageHours, 7);
 });
 
@@ -178,8 +178,8 @@ test("latest completed noon-to-noon day does not look skipped in displayed range
     windowEndClinicalDayIso: "2026-03-26"
   });
 
-  assert.equal(metrics.dateRangeStart, "March 20, 2026");
-  assert.equal(metrics.dateRangeEnd, "March 26, 2026");
+  assert.equal(metrics.dateRangeStart, "March 19, 2026");
+  assert.equal(metrics.dateRangeEnd, "March 25, 2026");
   assert.equal(metrics.daysInWindow, 7);
   assert.equal(metrics.daysWithData, 7);
   assert.equal(metrics.daysWithUsage, 7);
@@ -215,8 +215,8 @@ test("displayed range contracts instead of implying a skipped current day when o
     windowEndClinicalDayIso: "2026-03-26"
   });
 
-  assert.equal(metrics.dateRangeStart, "March 21, 2026");
-  assert.equal(metrics.dateRangeEnd, "March 26, 2026");
+  assert.equal(metrics.dateRangeStart, "March 20, 2026");
+  assert.equal(metrics.dateRangeEnd, "March 25, 2026");
   assert.equal(metrics.daysInWindow, 6);
   assert.equal(metrics.daysWithData, 6);
   assert.equal(metrics.daysWithUsage, 6);
@@ -229,7 +229,7 @@ test("default report window stays on the user's local calendar day across spring
     "2026-03-06",
     ["2026-02-28", "2026-03-01", "2026-03-02", "2026-03-03", "2026-03-04", "2026-03-05", "2026-03-06"]
   );
-  assert.equal(metrics.dateRangeEnd, "March 7, 2026");
+  assert.equal(metrics.dateRangeEnd, "March 6, 2026");
   assert.equal(metrics.daysWithData, 7);
   assert.equal(metrics.daysInWindow, 7);
 });
@@ -241,7 +241,7 @@ test("default report window stays on the user's local calendar day across fall D
     "2026-10-30",
     ["2026-10-24", "2026-10-25", "2026-10-26", "2026-10-27", "2026-10-28", "2026-10-29", "2026-10-30"]
   );
-  assert.equal(metrics.dateRangeEnd, "October 31, 2026");
+  assert.equal(metrics.dateRangeEnd, "October 30, 2026");
   assert.equal(metrics.daysWithData, 7);
   assert.equal(metrics.daysInWindow, 7);
 });
@@ -253,7 +253,7 @@ test("default report window falls back to the latest available clinical day when
     "2026-03-23",
     ["2026-03-17", "2026-03-18", "2026-03-19", "2026-03-20", "2026-03-21", "2026-03-22", "2026-03-23"]
   );
-  assert.equal(metrics.dateRangeEnd, "March 24, 2026");
+  assert.equal(metrics.dateRangeEnd, "March 23, 2026");
   assert.equal(metrics.daysWithData, 7);
   assert.equal(metrics.daysInWindow, 7);
 });
@@ -309,8 +309,8 @@ test("BMC/Luna reports also fall back to the latest available clinical day when 
       lookbackDays: 7
     });
 
-    assert.equal(metrics.dateRangeStart, "March 16, 2026");
-    assert.equal(metrics.dateRangeEnd, "March 22, 2026");
+    assert.equal(metrics.dateRangeStart, "March 15, 2026");
+    assert.equal(metrics.dateRangeEnd, "March 21, 2026");
     assert.equal(metrics.daysWithData, 7);
     assert.equal(metrics.daysInWindow, 7);
     assert.ok(
@@ -374,7 +374,7 @@ test("default report window prefers the card UTC offset over the host timezone w
     });
 
     assert.equal(metrics.sourceTimeZoneOffsetMinutes, -480);
-    assert.equal(metrics.dateRangeEnd, "March 7, 2026");
+    assert.equal(metrics.dateRangeEnd, "March 6, 2026");
     assert.equal(metrics.daysWithData, 7);
     assert.equal(metrics.daysInWindow, 7);
   } finally {

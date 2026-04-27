@@ -137,6 +137,64 @@ test("Resvent latest STAT VentMode confirms active Auto S30 bilevel mode", async
   assert.equal(metrics.daysWithUsage, 1);
 });
 
+test("Resvent CPAP config reports fixed Press instead of APAP min/max range", async () => {
+  const files: SourceFile[] = [
+    createResventTextFile("THERAPY/CONFIG/SYSCFG", ["models=iBreeze 20A", "sn=GB-2B500568"].join("\n")),
+    createResventTextFile("THERAPY/CONFIG/TCTRL", "VentMode=1\n"),
+    createResventTextFile("THERAPY/CONFIG/N_CPAP", ["Press=600", "PMin=400", "PMax=1200", "iPR=1"].join("\n")),
+    createResventTextFile("THERAPY/CONFIG/COMFORT", ["RampTime=5", "RampPress=400"].join("\n")),
+    createResventTextFile(
+      "THERAPY/RECORD/202604/26/STAT",
+      ["VentMode=1", "secUsed=28800", "cntAI=8", "cntHI=4", "medLeak=1.4", "p95Leak=16.1"].join("\n")
+    )
+  ];
+
+  const { prepared, metrics } = await loadSyntheticResventFixture(files);
+
+  assert.equal(prepared.machine.mode, "CPAP");
+  assert.equal(prepared.machine.pressure, "Fixed 6 (cmH2O)");
+  assert.equal(prepared.machine.pressureMin, undefined);
+  assert.equal(prepared.machine.pressureMax, undefined);
+  assert.equal(prepared.machine.rampTime, "5 minutes");
+  assert.equal(prepared.machine.rampPressure, "4 cmH2O");
+  assert.equal(metrics.machine.pressure, "Fixed 6 (cmH2O)");
+});
+
+test("Resvent ramp pressure is omitted when ramp time is off", async () => {
+  const files: SourceFile[] = [
+    createResventTextFile("THERAPY/CONFIG/SYSCFG", ["models=iBreeze 20A", "sn=GB-2B500568"].join("\n")),
+    createResventTextFile("THERAPY/CONFIG/TCTRL", "VentMode=1\n"),
+    createResventTextFile("THERAPY/CONFIG/N_CPAP", ["Press=600", "iPR=1"].join("\n")),
+    createResventTextFile("THERAPY/CONFIG/COMFORT", ["RampTime=0", "RampPress=400"].join("\n")),
+    createResventTextFile(
+      "THERAPY/RECORD/202604/26/STAT",
+      ["VentMode=1", "secUsed=28800", "cntAI=8", "cntHI=4"].join("\n")
+    )
+  ];
+
+  const { prepared } = await loadSyntheticResventFixture(files);
+
+  assert.equal(prepared.machine.rampTime, "Off");
+  assert.equal(prepared.machine.rampPressure, undefined);
+});
+
+test("Resvent STAT leak median and p95 are kept as separate report metrics", async () => {
+  const files: SourceFile[] = [
+    createResventTextFile("THERAPY/CONFIG/SYSCFG", ["models=iBreeze 20A", "sn=GB-2B500568"].join("\n")),
+    createResventTextFile("THERAPY/CONFIG/TCTRL", "VentMode=1\n"),
+    createResventTextFile("THERAPY/CONFIG/N_CPAP", ["Press=600", "iPR=1"].join("\n")),
+    createResventTextFile(
+      "THERAPY/RECORD/202604/26/STAT",
+      ["VentMode=1", "secUsed=28800", "cntAI=8", "cntHI=4", "medLeak=1.4", "p95Leak=16.1"].join("\n")
+    )
+  ];
+
+  const { metrics } = await loadSyntheticResventFixture(files);
+
+  assert.equal(metrics.avgLeak, 1.4);
+  assert.equal(metrics.leak95th, 16.1);
+});
+
 test("Resvent latest STAT VentMode overrides stale TCTRL mode selection", async () => {
   const files: SourceFile[] = [
     createResventTextFile("THERAPY/CONFIG/SYSCFG", ["models=iBreeze 30STA", "sn=GB-2B420607"].join("\n")),

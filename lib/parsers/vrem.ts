@@ -126,6 +126,16 @@ function applyMachineSettings(
     machine.pressure = `Fixed ${formatPressure(latest.maxPressure ?? latest.minPressure) ?? ""}`.trim();
   }
 
+  if (latest.rampTime !== undefined && Number.isFinite(latest.rampTime)) {
+    machine.rampTime =
+      latest.rampTime > 0
+        ? `${latest.rampTime} ${latest.rampTime === 1 ? "minute" : "minutes"}`
+        : "Off";
+  }
+  if (latest.rampPressure !== undefined && latest.rampPressure > 0 && !/^off$/i.test(machine.rampTime ?? "")) {
+    machine.rampPressure = formatPressure(latest.rampPressure);
+  }
+
   if ((latest.flex ?? 0) > 0 || (latest.flexLevel ?? 0) > 0) {
     const flexLevel = latest.flexLevel && latest.flexLevel > 0 ? `: ${latest.flexLevel}` : ": On";
     machine.pressureRelief = `Flex${flexLevel}`;
