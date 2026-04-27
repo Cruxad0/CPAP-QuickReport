@@ -161,9 +161,11 @@ maybeAirCurve10Test("ResMed AirCurve 10 VAuto public fixture loads with bilevel 
   const { prepared, metrics } = await loadFixture(RESMED_AIRCURVE10_ROOT);
   assert.equal(prepared.selectedLoader, "ResMed");
   assert.equal(prepared.machine.device, "AirCurve 10 VAuto");
-  assert.equal(prepared.machine.mode, "BiPAP");
+  assert.equal(prepared.machine.mode, "VAuto");
   assert.equal(prepared.machine.epap, "11.2 cmH2O");
   assert.equal(prepared.machine.ipap, "13.4 cmH2O");
+  assert.equal(prepared.machine.pressureMin, "11.2 cmH2O");
+  assert.equal(prepared.machine.pressureMax, "13.4 cmH2O");
   assert.equal(prepared.machine.pressureRelief, "PS: 4 cmH2O");
   assert.equal(metrics.daysWithData, 76);
   assert.equal(metrics.daysWithUsage, 76);
@@ -194,9 +196,11 @@ maybeLocalAirCurve10Test("local ResMed AirCurve 10 VAuto sample reports BiPAP se
   const { prepared, metrics } = await loadFixture(LOCAL_RESMED_AIRCURVE10_ROOT);
   assert.equal(prepared.selectedLoader, "ResMed");
   assert.equal(prepared.machine.device, "AirCurve 10 VAuto");
-  assert.equal(prepared.machine.mode, "BiPAP");
+  assert.equal(prepared.machine.mode, "VAuto");
   assert.equal(prepared.machine.epap, "7 cmH2O");
   assert.equal(prepared.machine.ipap, "11 cmH2O");
+  assert.equal(prepared.machine.pressureMin, "7 cmH2O");
+  assert.equal(prepared.machine.pressureMax, "11 cmH2O");
   assert.equal(prepared.machine.rampTime, "30 minutes");
   assert.equal(prepared.machine.rampPressure, "7 cmH2O");
   assert.equal(metrics.daysWithData, 14);

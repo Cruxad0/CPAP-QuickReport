@@ -149,13 +149,32 @@ test("therapy summary derives min and max pressure rows from a fixed CPAP settin
   );
 });
 
-test("therapy summary derives min and max pressure rows from BiPAP EPAP and IPAP settings", () => {
+test("therapy summary does not derive min and max pressure rows from fixed BiPAP EPAP and IPAP settings", () => {
   assert.deepEqual(
     therapyPressureRows(
       reportWithMachine({
         mode: "BiPAP",
         epap: "7 cmH2O",
         ipap: "11 cmH2O",
+        pressureAvg: 10.08,
+        pressure95th: 11.4
+      })
+    ),
+    [
+      ["95th Pressure", "11.4 cmH2O"],
+      ["Avg Pressure", "10.1 cmH2O"]
+    ]
+  );
+});
+
+test("therapy summary shows min and max pressure rows for auto BiPAP settings", () => {
+  assert.deepEqual(
+    therapyPressureRows(
+      reportWithMachine({
+        mode: "VAuto",
+        pressureIsAuto: true,
+        pressureMin: "7 cmH2O",
+        pressureMax: "11 cmH2O",
         pressureAvg: 10.08,
         pressure95th: 11.4
       })

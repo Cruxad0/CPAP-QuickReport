@@ -142,6 +142,10 @@ function formatPressureSupport(minPs: number | undefined, maxPs: number | undefi
   return undefined;
 }
 
+function shouldLabelResMedVAuto(...candidates: Array<string | undefined>): boolean {
+  return candidates.some((candidate) => /\bvauto\b/i.test(candidate ?? ""));
+}
+
 export function applyResMedCurrentSettingsJson(
   text: string,
   machine: QuickReportMetrics["machine"],
@@ -191,8 +195,9 @@ export function applyResMedCurrentSettingsJson(
 
   const therapyMode = asString(profile.TherapyMode);
   const resolvedMode = inferResMedModeFromSettingsProfile(profileName, therapyMode, machine.device);
+  const shouldUseVAutoLabel = resolvedMode === "BiPAP" && shouldLabelResMedVAuto(profileName, therapyMode, machine.device);
   if (resolvedMode) {
-    machine.mode = resolvedMode;
+    machine.mode = shouldUseVAutoLabel ? "VAuto" : resolvedMode;
   }
 
   const setPressure = asNumber(profile.SetPressure);
@@ -230,6 +235,7 @@ export function applyResMedCurrentSettingsJson(
     const maxEpapText = formatPressureValue(maxEpap);
     const minIpapText = formatPressureValue(minIpap);
     const maxIpapText = formatPressureValue(maxIpap);
+    const isAutoBiPap = shouldUseVAutoLabel || minEpapText !== undefined || maxIpapText !== undefined;
 
     if (epapText) machine.epap = epapText;
     else if (minEpapText && maxEpapText) machine.epap = `${minEpapText}-${maxEpapText}`;
@@ -242,6 +248,11 @@ export function applyResMedCurrentSettingsJson(
 
     const pressureSupportText = formatPressureSupport(minPressureSupport, maxPressureSupport, pressureSupport);
     if (pressureSupportText) machine.pressureRelief = pressureSupportText;
+    if (isAutoBiPap) {
+      machine.pressureIsAuto = true;
+      machine.pressureMin = minEpapText ?? minIpapText;
+      machine.pressureMax = maxIpapText ?? maxEpapText;
+    }
     if (backupRate !== undefined && Number.isFinite(backupRate) && backupRate >= 0) {
       machine.respiratoryRate = `${Number(backupRate.toFixed(2)).toString()} bpm`;
     }
@@ -663,8 +674,14 @@ function parseResMedStrEdf(
 
       const existingMode = resolveExplicitTherapyMode(machine.mode);
       const resolvedMode = mappedMode ?? existingMode ?? inferredSignalMode;
+      const shouldUseVAutoLabel =
+        resolvedMode === "BiPAP" &&
+        (shouldLabelResMedVAuto(machine.device) ||
+          vautoStartPressure !== undefined ||
+          minEpap !== undefined ||
+          maxIpap !== undefined);
       if (resolvedMode) {
-        machine.mode = resolvedMode;
+        machine.mode = shouldUseVAutoLabel ? "VAuto" : resolvedMode;
       }
 
       if (resolvedMode === "CPAP" && setPressure !== undefined) {
@@ -681,6 +698,7 @@ function parseResMedStrEdf(
         const ipapText = formatPressureValue(ipap);
         const minIpapText = formatPressureValue(minIpap);
         const maxIpapText = formatPressureValue(maxIpap);
+        const isAutoBiPap = shouldUseVAutoLabel || minEpapText !== undefined || maxIpapText !== undefined;
 
         if (epapText) machine.epap = epapText;
         else if (minEpapText && maxEpapText) machine.epap = `${minEpapText}-${maxEpapText}`;
@@ -693,6 +711,11 @@ function parseResMedStrEdf(
         if (!machine.pressureRelief && ps !== undefined) {
           const psText = formatPressureValue(ps);
           if (psText) machine.pressureRelief = `PS: ${psText}`;
+        }
+        if (isAutoBiPap) {
+          machine.pressureIsAuto = true;
+          machine.pressureMin = minEpapText ?? minIpapText;
+          machine.pressureMax = maxIpapText ?? maxEpapText;
         }
       }
 

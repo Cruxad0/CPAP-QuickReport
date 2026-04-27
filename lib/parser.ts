@@ -1,5 +1,6 @@
 import {
   classifyTherapyMode,
+  isAutoBiPapLikeMode,
   isAutoPapLikeMode,
   isBiPapLikeMode,
   resolveExplicitTherapyMode,
@@ -1950,9 +1951,12 @@ function sanitizeMachineSettingsForResolvedMode(
     return;
   }
 
-  machine.pressureIsAuto = false;
-  machine.pressureMin = undefined;
-  machine.pressureMax = undefined;
+  const isAutoBiPap = isAutoBiPapLikeMode(machine.mode) || Boolean(machine.pressureMin || machine.pressureMax);
+  machine.pressureIsAuto = isAutoBiPap;
+  if (!isAutoBiPap) {
+    machine.pressureMin = undefined;
+    machine.pressureMax = undefined;
+  }
 }
 
 function normalizeMachineSettingsForModeResolution(machine: QuickReportMetrics["machine"]) {
@@ -1963,9 +1967,12 @@ function normalizeMachineSettingsForModeResolution(machine: QuickReportMetrics["
     machine.ipap = undefined;
     machine.respiratoryRate = undefined;
   } else if (explicitMode === "BiPAP") {
-    machine.pressureMin = undefined;
-    machine.pressureMax = undefined;
-    machine.pressureIsAuto = false;
+    const isAutoBiPap = isAutoBiPapLikeMode(machine.mode) || Boolean(machine.pressureMin || machine.pressureMax);
+    machine.pressureIsAuto = isAutoBiPap;
+    if (!isAutoBiPap) {
+      machine.pressureMin = undefined;
+      machine.pressureMax = undefined;
+    }
   }
 
   if (!machine.pressureIsAuto && (isLikelyAutoMode(machine.mode) || !!machine.pressureMin || !!machine.pressureMax)) {

@@ -278,10 +278,13 @@ test("ResMed CurrentSettings.json is treated as authoritative for active therapy
         }
       }),
       expected: {
-        mode: "BiPAP",
+        mode: "VAuto",
         epap: "6 cmH2O",
         ipap: "14 cmH2O",
-        pressureRelief: "PS: 4 cmH2O"
+        pressureMin: "6 cmH2O",
+        pressureMax: "14 cmH2O",
+        pressureRelief: "PS: 4 cmH2O",
+        pressureIsAuto: true
       }
     }
   ];
