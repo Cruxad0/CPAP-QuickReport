@@ -671,6 +671,16 @@ function extractPressureRangeValues(raw: string | null | undefined): { min: stri
   };
 }
 
+function extractSinglePressureValue(raw: string | null | undefined): string | null {
+  const text = raw?.trim();
+  if (!text) return null;
+  const match = text.match(/-?\d+(?:\.\d+)?/);
+  if (!match) return null;
+  const value = Number.parseFloat(match[0]);
+  if (!Number.isFinite(value)) return null;
+  return `${value.toFixed(1)} cmH2O`;
+}
+
 function isRampOff(machine: QuickReportMetrics["machine"]): boolean {
   return /^off$/i.test(machine.rampTime?.trim() ?? "");
 }
@@ -728,16 +738,19 @@ function hasAnyPressureSummaryValue(report: QuickReportMetrics, derivedRange: { 
 
 export function therapyPressureRows(report: QuickReportMetrics): TableRow[] {
   const mode = report.machine.mode?.trim() ?? "";
+  const isBiPap = isBiPapLikeMode(mode);
   const isFixedCpap = isFixedCpapLikeMode(mode);
   const derivedRange = extractPressureRangeValues(report.machine.pressure);
+  const derivedBiPapMin = isBiPap ? extractSinglePressureValue(report.machine.epap) : null;
+  const derivedBiPapMax = isBiPap ? extractSinglePressureValue(report.machine.ipap) : null;
 
   if (!hasAnyPressureSummaryValue(report, derivedRange)) return [];
 
   return [
     ["95th Pressure", pressureMetricText(report.machine.pressure95th)],
     ["Avg Pressure", pressureMetricText(report.machine.pressureAvg)],
-    ["Min Pressure", pressureSettingText(report.machine.pressureMin ?? derivedRange?.min ?? (isFixedCpap ? report.machine.pressure : undefined))],
-    ["Max Pressure", pressureSettingText(report.machine.pressureMax ?? derivedRange?.max ?? (isFixedCpap ? report.machine.pressure : undefined))]
+    ["Min Pressure", pressureSettingText(report.machine.pressureMin ?? derivedRange?.min ?? (isFixedCpap ? report.machine.pressure : undefined) ?? derivedBiPapMin)],
+    ["Max Pressure", pressureSettingText(report.machine.pressureMax ?? derivedRange?.max ?? (isFixedCpap ? report.machine.pressure : undefined) ?? derivedBiPapMax)]
   ];
 }
 

@@ -39,6 +39,7 @@ const DREAMSTATION_ROOT = path.join(process.cwd(), "Card Samples", "Dreamstation
 const RESMED_AIRSENSE11_ROOT = path.join(process.cwd(), "Card Samples", "ResMed", "AirSense", "11", "APAP");
 const RESMED_AIRCURVE10_ROOT = path.join(process.cwd(), "Card Samples", "ResMed", "AirCurve", "10", "VAuto");
 const RESMED_AIRBREAK_AS10_ROOT = path.join(process.cwd(), "Card Samples", "ResMed", "AirBreak", "AS10", "ASVAuto");
+const LOCAL_RESMED_AIRCURVE10_ROOT = path.join(process.cwd(), "Card Samples", "ResMed -3");
 
 const maybeResventTest = existsSync(RESVENT_ROOT) ? test : test.skip;
 const maybeResventTherapyTest = existsSync(RESVENT_THERAPY) ? test : test.skip;
@@ -47,6 +48,7 @@ const maybeDreamstationTest = existsSync(DREAMSTATION_ROOT) ? test : test.skip;
 const maybeAirSense11Test = existsSync(RESMED_AIRSENSE11_ROOT) ? test : test.skip;
 const maybeAirCurve10Test = existsSync(RESMED_AIRCURVE10_ROOT) ? test : test.skip;
 const maybeAirBreakTest = existsSync(RESMED_AIRBREAK_AS10_ROOT) ? test : test.skip;
+const maybeLocalAirCurve10Test = existsSync(LOCAL_RESMED_AIRCURVE10_ROOT) ? test : test.skip;
 
 maybeResventTest("Resvent sample card preserves APAP config and metrics", async () => {
   const { prepared, metrics } = await loadFixture(RESVENT_ROOT);
@@ -150,8 +152,8 @@ maybeAirSense11Test("ResMed AirSense 11 public fixture loads with active CPAP pr
   assert.equal(metrics.compliantDays, 76);
   assertApprox(metrics.avgUsageHours, 8.9816, 0.02, "avg usage");
   assertApprox(metrics.avgAhi, 3.2684, 0.02, "avg AHI");
-  assertApprox(metrics.maxLeak30m, 0.88, 0.01, "30 min leak");
-  assertApprox(metrics.maxLeak60m, 0.88, 0.01, "60 min leak");
+  assertApprox(metrics.maxLeak30m, 52.8, 0.1, "30 min leak");
+  assertApprox(metrics.maxLeak60m, 52.8, 0.1, "60 min leak");
   assert.ok(!metrics.warnings.includes("Leak metrics were not detected from the selected files."));
 });
 
@@ -168,8 +170,8 @@ maybeAirCurve10Test("ResMed AirCurve 10 VAuto public fixture loads with bilevel 
   assert.equal(metrics.compliantDays, 76);
   assertApprox(metrics.avgUsageHours, 9.9215, 0.02, "avg usage");
   assertApprox(metrics.avgAhi, 2.3, 0.02, "avg AHI");
-  assertApprox(metrics.maxLeak30m, 0.68, 0.01, "30 min leak");
-  assertApprox(metrics.maxLeak60m, 0.68, 0.01, "60 min leak");
+  assertApprox(metrics.maxLeak30m, 40.8, 0.1, "30 min leak");
+  assertApprox(metrics.maxLeak60m, 40.8, 0.1, "60 min leak");
   assert.ok(!metrics.warnings.includes("Leak metrics were not detected from the selected files."));
 });
 
@@ -183,7 +185,27 @@ maybeAirBreakTest("ResMed AirBreak AS10 public fixture still resolves a bilevel 
   assert.equal(metrics.compliantDays, 8);
   assertApprox(metrics.avgUsageHours, 9.7604, 0.02, "avg usage");
   assertApprox(metrics.avgAhi, 0.0125, 0.01, "avg AHI");
-  assertApprox(metrics.maxLeak30m, 0.18, 0.01, "30 min leak");
-  assertApprox(metrics.maxLeak60m, 0.18, 0.01, "60 min leak");
+  assertApprox(metrics.maxLeak30m, 10.8, 0.1, "30 min leak");
+  assertApprox(metrics.maxLeak60m, 10.8, 0.1, "60 min leak");
   assert.ok(!metrics.warnings.includes("Leak metrics were not detected from the selected files."));
+});
+
+maybeLocalAirCurve10Test("local ResMed AirCurve 10 VAuto sample reports BiPAP settings and L/min leak values", async () => {
+  const { prepared, metrics } = await loadFixture(LOCAL_RESMED_AIRCURVE10_ROOT);
+  assert.equal(prepared.selectedLoader, "ResMed");
+  assert.equal(prepared.machine.device, "AirCurve 10 VAuto");
+  assert.equal(prepared.machine.mode, "BiPAP");
+  assert.equal(prepared.machine.epap, "7 cmH2O");
+  assert.equal(prepared.machine.ipap, "11 cmH2O");
+  assert.equal(prepared.machine.rampTime, "30 minutes");
+  assert.equal(prepared.machine.rampPressure, "7 cmH2O");
+  assert.equal(metrics.daysWithData, 14);
+  assert.equal(metrics.daysWithUsage, 14);
+  assert.equal(metrics.compliantDays, 5);
+  assertApprox(metrics.avgUsageHours, 3.3774, 0.02, "avg usage");
+  assertApprox(metrics.avgAhi, 18.0571, 0.02, "avg AHI");
+  assertApprox(metrics.avgLeak, 6.9429, 0.02, "avg leak");
+  assertApprox(metrics.leak95th, 18, 0.02, "95th leak");
+  assertApprox(metrics.maxLeak30m, 54, 0.02, "30 min leak");
+  assertApprox(metrics.maxLeak60m, 54, 0.02, "60 min leak");
 });

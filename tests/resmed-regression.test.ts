@@ -19,7 +19,9 @@ function writeAsciiField(target: Uint8Array, offset: number, length: number, val
   target.set(encoded, offset);
 }
 
-function createSyntheticResMedStrEdf(): Uint8Array {
+function createSyntheticResMedStrEdf(options: { leakUnit?: string; leakRawValues?: [number, number, number] } = {}): Uint8Array {
+  const leakUnit = options.leakUnit ?? "cmH2O";
+  const leakRawValues = options.leakRawValues ?? [30, 90, 120];
   const signals = [
     { label: "Date", min: 0, max: 40000, dmin: 0, dmax: 40000, samples: 1, value: 20260415 },
     { label: "Duration", min: 0, max: 24, dmin: 0, dmax: 2400, samples: 1, value: 600 },
@@ -31,9 +33,9 @@ function createSyntheticResMedStrEdf(): Uint8Array {
     { label: "AHI", min: 0, max: 50, dmin: 0, dmax: 500, samples: 1, value: 15 },
     { label: "AI", min: 0, max: 50, dmin: 0, dmax: 500, samples: 1, value: 10 },
     { label: "CAI", min: 0, max: 50, dmin: 0, dmax: 500, samples: 1, value: 2 },
-    { label: "Leak.50", min: 0, max: 100, dmin: 0, dmax: 1000, samples: 1, value: 30 },
-    { label: "Leak.95", min: 0, max: 100, dmin: 0, dmax: 1000, samples: 1, value: 90 },
-    { label: "Leak Max", min: 0, max: 100, dmin: 0, dmax: 1000, samples: 1, value: 120 },
+    { label: "Leak.50", min: 0, max: 100, dmin: 0, dmax: 1000, samples: 1, value: leakRawValues[0], unit: leakUnit },
+    { label: "Leak.95", min: 0, max: 100, dmin: 0, dmax: 1000, samples: 1, value: leakRawValues[1], unit: leakUnit },
+    { label: "Leak Max", min: 0, max: 100, dmin: 0, dmax: 1000, samples: 1, value: leakRawValues[2], unit: leakUnit },
     { label: "MaskPress.50", min: 0, max: 20, dmin: 0, dmax: 200, samples: 1, value: 58 },
     { label: "MaskPress.95", min: 0, max: 20, dmin: 0, dmax: 200, samples: 1, value: 60 }
   ];
@@ -72,7 +74,7 @@ function createSyntheticResMedStrEdf(): Uint8Array {
     const signal = signals[i];
     writeAsciiField(bytes, labelsStart + i * 16, 16, signal.label);
     writeAsciiField(bytes, transducerStart + i * 80, 80, "");
-    writeAsciiField(bytes, physDimStart + i * 8, 8, "cmH2O");
+    writeAsciiField(bytes, physDimStart + i * 8, 8, signal.unit ?? "cmH2O");
     writeAsciiField(bytes, physMinStart + i * 8, 8, String(signal.min));
     writeAsciiField(bytes, physMaxStart + i * 8, 8, String(signal.max));
     writeAsciiField(bytes, digMinStart + i * 8, 8, String(signal.dmin));
@@ -191,4 +193,28 @@ test("ResMed STR and EVE parsing expose leak summaries, EPR, and arousal-derived
   assert.equal(metrics.maxLeak, 12);
   assert.equal(metrics.avgReraIndex, 0.5);
   assert.equal(metrics.rera95th, 0.5);
+});
+
+test("ResMed STR leak signals in L/s are converted to report L/min", async () => {
+  const files: SourceFile[] = [
+    createSourceFile("Identification.tgt", new TextEncoder().encode("#PNA AirSense_10_AutoSet\n")),
+    createSourceFile("STR.edf", createSyntheticResMedStrEdf({ leakUnit: "L/s", leakRawValues: [3, 6, 9] }))
+  ];
+
+  const prepared = await prepareQuickReportSource({
+    sourceKind: "folder",
+    files,
+    lookbackDays: 90
+  });
+  const metrics = buildQuickReportMetricsFromPreparedSource(prepared, {
+    patientName: "Fixture Patient",
+    dateOfBirthIso: "1970-01-01",
+    physicianName: "",
+    lookbackDays: 7,
+    windowEndClinicalDayIso: "2026-04-16"
+  });
+
+  assert.ok(Math.abs((metrics.avgLeak ?? 0) - 18) < 0.0001);
+  assert.ok(Math.abs((metrics.leak95th ?? 0) - 36) < 0.0001);
+  assert.ok(Math.abs((metrics.maxLeak ?? 0) - 54) < 0.0001);
 });

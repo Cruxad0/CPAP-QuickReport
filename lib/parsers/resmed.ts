@@ -53,6 +53,7 @@ type JsonObject = Record<string, unknown>;
 type EdfSignal = {
   label: string;
   normalizedLabel: string;
+  physicalDimension: string;
   physicalMin: number;
   physicalMax: number;
   digitalMin: number;
@@ -207,6 +208,13 @@ export function applyResMedCurrentSettingsJson(
   const minPressureSupport = asNumber(profile.MinPressureSupport) ?? asNumber(profile.MinPS);
   const maxPressureSupport = asNumber(profile.MaxPressureSupport) ?? asNumber(profile.MaxPS);
   const backupRate = asNumber(profile.BackupRate) ?? asNumber(profile.RespiratoryRate) ?? asNumber(profile.RR);
+  const rampEnable = asNumber(profile.RampEnable) ?? asNumber(profile.RampEnabled);
+  const rampTime = asNumber(profile.RampTime) ?? asNumber(profile.RampTimeMinutes);
+  const rampPressure =
+    asNumber(profile.RampPressure) ??
+    asNumber(profile.StartPressure) ??
+    asNumber(profile.RampStartPressure) ??
+    asNumber(profile.StartPress);
 
   if (resolvedMode === "CPAP" && setPressure !== undefined) {
     const fixed = formatPressureValue(setPressure);
@@ -238,6 +246,8 @@ export function applyResMedCurrentSettingsJson(
       machine.respiratoryRate = `${Number(backupRate.toFixed(2)).toString()} bpm`;
     }
   }
+
+  applyResMedRampSettings(machine, rampEnable, rampTime, rampPressure);
 
   return resolvedMode !== null;
 }
@@ -325,6 +335,7 @@ function parseResMedEdf(bytes: Uint8Array): EdfInfo | null {
     signals.push({
       label,
       normalizedLabel: normalizeLabel(label),
+      physicalDimension: parseAsciiField(bytes, physDimStart + i * 8, 8),
       physicalMin,
       physicalMax,
       digitalMin,
@@ -430,6 +441,51 @@ function formatPressureValue(value: number | undefined): string | undefined {
   return `${Number(value.toFixed(2)).toString()} cmH2O`;
 }
 
+function formatRampTimeValue(value: number | undefined): string | undefined {
+  if (value === undefined || !Number.isFinite(value) || value < 0) return undefined;
+  if (value === 0) return "Off";
+  const minutes = Number(value.toFixed(2));
+  return `${minutes.toString()} ${minutes === 1 ? "minute" : "minutes"}`;
+}
+
+function isRampOff(value: string | undefined): boolean {
+  return /^off$/i.test(value?.trim() ?? "");
+}
+
+function applyResMedRampSettings(
+  machine: QuickReportMetrics["machine"],
+  rampEnable: number | undefined,
+  rampTime: number | undefined,
+  rampPressure: number | undefined,
+  overwrite = false
+) {
+  if (overwrite || !machine.rampTime) {
+    if (rampEnable !== undefined && rampEnable <= 0) {
+      machine.rampTime = "Off";
+    } else {
+      const rampTimeText = formatRampTimeValue(rampTime);
+      if (rampTimeText) machine.rampTime = rampTimeText;
+      else if (rampEnable !== undefined && rampEnable > 0) machine.rampTime = "On";
+    }
+  }
+
+  if (isRampOff(machine.rampTime)) {
+    machine.rampPressure = undefined;
+    return;
+  }
+
+  if ((overwrite || !machine.rampPressure) && !isRampOff(machine.rampTime)) {
+    const rampPressureText = formatPressureValue(rampPressure);
+    if (rampPressureText) machine.rampPressure = rampPressureText;
+  }
+}
+
+function normalizeResMedLeakValue(value: number | undefined, signal: EdfSignal | null): number | undefined {
+  if (value === undefined || !Number.isFinite(value)) return undefined;
+  const unit = signal?.physicalDimension.replace(/\s+/g, "").toLowerCase();
+  return unit === "l/s" || unit === "lps" ? value * 60 : value;
+}
+
 export function inferResMedModeFromSignals(values: {
   setPressure?: number;
   minPressure?: number;
@@ -510,9 +566,17 @@ function parseResMedStrEdf(
   const minIpapAliases = ["Min IPAP"];
   const maxIpapAliases = ["Max IPAP", "S.VA.MaxIPAP"];
   const psAliases = ["PS", "S.VA.PS"];
+  const rampEnableAliases = ["S.RampEnable"];
+  const rampTimeAliases = ["S.RampTime"];
+  const cpapStartPressureAliases = ["S.C.StartPress"];
+  const bilevelStartPressureAliases = ["S.BL.StartPress"];
+  const vautoStartPressureAliases = ["S.VA.StartPress"];
   const eprClinEnableAliases = ["S.EPR.ClinEnable"];
   const eprEnableAliases = ["S.EPR.EPREnable"];
   const eprLevelAliases = ["S.EPR.Level"];
+  const leak50Signal = findSignal(edf, leak50Aliases);
+  const leak95Signal = findSignal(edf, leak95Aliases);
+  const leakMaxSignal = findSignal(edf, leakMaxAliases);
 
   const records: ParsedRecord[] = [];
   let latestRecordDate: Date | null = null;
@@ -526,9 +590,9 @@ function parseResMedStrEdf(
     const residualApneas = readResMedValue(bytes, edf, residualAliases, recordIndex);
     const centralApneas = readResMedValue(bytes, edf, centralAliases, recordIndex);
     const reraIndex = readResMedValue(bytes, edf, reraAliases, recordIndex);
-    const leak = readResMedValue(bytes, edf, leak50Aliases, recordIndex);
-    const leak95th = readResMedValue(bytes, edf, leak95Aliases, recordIndex);
-    const leakMax = readResMedValue(bytes, edf, leakMaxAliases, recordIndex);
+    const leak = normalizeResMedLeakValue(readSignalValue(bytes, edf, leak50Signal, recordIndex), leak50Signal);
+    const leak95th = normalizeResMedLeakValue(readSignalValue(bytes, edf, leak95Signal, recordIndex), leak95Signal);
+    const leakMax = normalizeResMedLeakValue(readSignalValue(bytes, edf, leakMaxSignal, recordIndex), leakMaxSignal);
     const pressureAvg = readResMedValue(bytes, edf, pressure50Aliases, recordIndex);
     const pressure95th = readResMedValue(bytes, edf, pressure95Aliases, recordIndex);
 
@@ -578,6 +642,11 @@ function parseResMedStrEdf(
       const eprClinEnableRaw = readResMedValue(bytes, edf, eprClinEnableAliases, recordIndex);
       const eprEnableRaw = readResMedValue(bytes, edf, eprEnableAliases, recordIndex);
       const eprLevel = readResMedValue(bytes, edf, eprLevelAliases, recordIndex);
+      const rampEnable = readResMedValue(bytes, edf, rampEnableAliases, recordIndex);
+      const rampTime = readResMedValue(bytes, edf, rampTimeAliases, recordIndex);
+      const cpapStartPressure = readResMedValue(bytes, edf, cpapStartPressureAliases, recordIndex);
+      const bilevelStartPressure = readResMedValue(bytes, edf, bilevelStartPressureAliases, recordIndex);
+      const vautoStartPressure = readResMedValue(bytes, edf, vautoStartPressureAliases, recordIndex);
 
       const inferredSignalMode = inferResMedModeFromSignals({
         setPressure,
@@ -626,6 +695,16 @@ function parseResMedStrEdf(
           if (psText) machine.pressureRelief = `PS: ${psText}`;
         }
       }
+
+      applyResMedRampSettings(
+        machine,
+        rampEnable,
+        rampTime,
+        resolvedMode === "BiPAP"
+          ? vautoStartPressure ?? bilevelStartPressure ?? cpapStartPressure
+          : cpapStartPressure ?? vautoStartPressure ?? bilevelStartPressure,
+        true
+      );
 
       if (!machine.pressureRelief) {
         const isElevenSeries = /\b(?:airsense|aircurve)\s*11\b/i.test(machine.device ?? "");
