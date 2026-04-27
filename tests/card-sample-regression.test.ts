@@ -33,21 +33,33 @@ function assertApprox(actual: number | null, expected: number, tolerance: number
 }
 
 const RESVENT_ROOT = path.join(process.cwd(), "Card Samples", "Resvent");
+const LOCAL_RESVENT_BIPAP_ROOT = path.join(process.cwd(), "Card Samples", "Resvent-2");
 const RESVENT_THERAPY = path.join(process.cwd(), "Card Samples", "Resvent", "THERAPY");
 const LUNA2_ROOT = path.join(process.cwd(), "Card Samples", "Luna2");
+const LOCAL_LUNA2_DUPLICATE_ROOT = path.join(process.cwd(), "Card Samples", "Luna2 -2");
 const DREAMSTATION_ROOT = path.join(process.cwd(), "Card Samples", "Dreamstation");
+const LOCAL_DREAMSTATION_ROOT = path.join(process.cwd(), "Card Samples", "Dreamstation2");
+const LOCAL_MIXED_DREAMSTATION_ROOT = path.join(process.cwd(), "Card Samples", "Dreamstation 2 -2");
 const RESMED_AIRSENSE11_ROOT = path.join(process.cwd(), "Card Samples", "ResMed", "AirSense", "11", "APAP");
 const RESMED_AIRCURVE10_ROOT = path.join(process.cwd(), "Card Samples", "ResMed", "AirCurve", "10", "VAuto");
 const RESMED_AIRBREAK_AS10_ROOT = path.join(process.cwd(), "Card Samples", "ResMed", "AirBreak", "AS10", "ASVAuto");
+const LOCAL_RESMED_AIRSENSE10_ROOT = path.join(process.cwd(), "Card Samples", "ResMed");
+const LOCAL_RESMED_CPAP_ROOT = path.join(process.cwd(), "Card Samples", "ResMed -2");
 const LOCAL_RESMED_AIRCURVE10_ROOT = path.join(process.cwd(), "Card Samples", "ResMed -3");
 
 const maybeResventTest = existsSync(RESVENT_ROOT) ? test : test.skip;
+const maybeLocalResventBipapTest = existsSync(LOCAL_RESVENT_BIPAP_ROOT) ? test : test.skip;
 const maybeResventTherapyTest = existsSync(RESVENT_THERAPY) ? test : test.skip;
 const maybeLunaTest = existsSync(LUNA2_ROOT) ? test : test.skip;
+const maybeLocalLunaDuplicateTest = existsSync(LOCAL_LUNA2_DUPLICATE_ROOT) ? test : test.skip;
 const maybeDreamstationTest = existsSync(DREAMSTATION_ROOT) ? test : test.skip;
+const maybeLocalDreamstationTest = existsSync(LOCAL_DREAMSTATION_ROOT) ? test : test.skip;
+const maybeLocalMixedDreamstationTest = existsSync(LOCAL_MIXED_DREAMSTATION_ROOT) ? test : test.skip;
 const maybeAirSense11Test = existsSync(RESMED_AIRSENSE11_ROOT) ? test : test.skip;
 const maybeAirCurve10Test = existsSync(RESMED_AIRCURVE10_ROOT) ? test : test.skip;
 const maybeAirBreakTest = existsSync(RESMED_AIRBREAK_AS10_ROOT) ? test : test.skip;
+const maybeLocalAirSense10Test = existsSync(LOCAL_RESMED_AIRSENSE10_ROOT) ? test : test.skip;
+const maybeLocalResMedCpapTest = existsSync(LOCAL_RESMED_CPAP_ROOT) ? test : test.skip;
 const maybeLocalAirCurve10Test = existsSync(LOCAL_RESMED_AIRCURVE10_ROOT) ? test : test.skip;
 
 maybeResventTest("Resvent sample card preserves APAP config and metrics", async () => {
@@ -97,6 +109,32 @@ maybeResventTherapyTest("Resvent THERAPY subfolder import matches root-folder im
   assertApprox(therapy.metrics.avgLeak, root.metrics.avgLeak as number, 0.0001, "avg leak");
 });
 
+maybeLocalResventBipapTest("local Resvent Auto S30 sample preserves auto-bilevel pressure settings and metrics", async () => {
+  const { prepared, metrics } = await loadFixture(LOCAL_RESVENT_BIPAP_ROOT);
+  assert.equal(prepared.selectedLoader, "Resvent / Hoffrichter");
+  assert.equal(prepared.machine.device, "iBreeze 30STA (GB-2B420607)");
+  assert.equal(prepared.machine.mode, "Auto S30");
+  assert.equal(prepared.machine.pressureMin, "4 cmH2O");
+  assert.equal(prepared.machine.pressureMax, "12 cmH2O");
+  assert.equal(prepared.machine.rampTime, "15 minutes");
+  assert.equal(prepared.machine.rampPressure, "4 cmH2O");
+  assert.equal(prepared.latestClinicalDayIso, "2026-03-23");
+  assert.equal(metrics.daysWithData, 75);
+  assert.equal(metrics.daysWithUsage, 75);
+  assert.equal(metrics.compliantDays, 54);
+  assertApprox(metrics.avgUsageHours, 6.5265, 0.02, "avg usage");
+  assertApprox(metrics.avgAhi, 9.3567, 0.02, "avg AHI");
+  assertApprox(metrics.avgResidualApneas, 2.9030, 0.02, "avg residual apneas");
+  assertApprox(metrics.avgCentralApneas, 2.7090, 0.02, "avg central apneas");
+  assertApprox(metrics.avgReraIndex, 1.0235, 0.02, "avg RERA");
+  assertApprox(metrics.machine.pressureAvg ?? null, 5.0760, 0.02, "avg pressure");
+  assertApprox(metrics.machine.pressure95th ?? null, 7.92, 0.02, "95th pressure");
+  assertApprox(metrics.avgLeak, 18.6467, 0.02, "avg leak");
+  assertApprox(metrics.leak95th, 77.62, 0.02, "95th leak");
+  assertApprox(metrics.maxLeak30m, 120, 0.02, "30 min leak");
+  assertApprox(metrics.maxLeak60m, 120, 0.02, "60 min leak");
+});
+
 maybeLunaTest("Luna II sample card preserves APAP settings and efficacy metrics", async () => {
   const { prepared, metrics } = await loadFixture(LUNA2_ROOT);
   assert.equal(prepared.selectedLoader, "Apex / BMC / Luna");
@@ -122,6 +160,19 @@ maybeLunaTest("Luna II sample card preserves APAP settings and efficacy metrics"
   assertApprox(metrics.maxLeak60m, 100, 0.1, "60 min leak");
 });
 
+maybeLocalLunaDuplicateTest("local Luna II duplicate folder matches the primary Luna II sample", async () => {
+  const root = await loadFixture(LUNA2_ROOT);
+  const duplicate = await loadFixture(LOCAL_LUNA2_DUPLICATE_ROOT);
+  assert.equal(duplicate.prepared.selectedLoader, root.prepared.selectedLoader);
+  assert.deepEqual(duplicate.metrics.machine, root.metrics.machine);
+  assert.equal(duplicate.metrics.daysWithData, root.metrics.daysWithData);
+  assert.equal(duplicate.metrics.daysWithUsage, root.metrics.daysWithUsage);
+  assert.equal(duplicate.metrics.compliantDays, root.metrics.compliantDays);
+  assertApprox(duplicate.metrics.avgUsageHours, root.metrics.avgUsageHours as number, 0.0001, "avg usage");
+  assertApprox(duplicate.metrics.avgAhi, root.metrics.avgAhi as number, 0.0001, "avg AHI");
+  assertApprox(duplicate.metrics.avgLeak, root.metrics.avgLeak as number, 0.0001, "avg leak");
+});
+
 maybeDreamstationTest("DreamStation sample card preserves active-root APAP settings and leak metrics", async () => {
   const { prepared, metrics } = await loadFixture(DREAMSTATION_ROOT);
   assert.equal(prepared.selectedLoader, "Philips Respironics System One / DreamStation");
@@ -137,6 +188,44 @@ maybeDreamstationTest("DreamStation sample card preserves active-root APAP setti
   assertApprox(metrics.avgLeak, 27.8245, 0.1, "avg leak");
   assertApprox(metrics.maxLeak30m, 88.2707, 0.1, "30 min leak");
   assertApprox(metrics.maxLeak60m, 88.2707, 0.1, "60 min leak");
+});
+
+maybeLocalDreamstationTest("local DreamStation sample reports selected-window pressure and leak metrics", async () => {
+  const { prepared, metrics } = await loadFixture(LOCAL_DREAMSTATION_ROOT);
+  assert.equal(prepared.selectedLoader, "Philips Respironics System One / DreamStation");
+  assert.equal(prepared.machine.mode, "APAP");
+  assert.equal(prepared.machine.pressureMin, "10 cmH2O");
+  assert.equal(prepared.machine.pressureMax, "16 cmH2O");
+  assert.equal(prepared.machine.pressureRelief, "Flex: Off");
+  assert.equal(prepared.latestClinicalDayIso, "2026-03-25");
+  assert.equal(metrics.daysWithData, 90);
+  assert.equal(metrics.daysWithUsage, 90);
+  assert.equal(metrics.compliantDays, 90);
+  assertApprox(metrics.avgUsageHours, 8.6251, 0.02, "avg usage");
+  assertApprox(metrics.avgAhi, 0.6972, 0.01, "avg AHI");
+  assertApprox(metrics.machine.pressureAvg ?? null, 11.3993, 0.02, "avg pressure");
+  assertApprox(metrics.machine.pressure95th ?? null, 16, 0.02, "95th pressure");
+  assertApprox(metrics.avgLeak, 27.8245, 0.1, "avg leak");
+  assertApprox(metrics.leak95th, 33.4024, 0.1, "95th leak");
+  assertApprox(metrics.maxLeak30m, 88.2707, 0.1, "30 min leak");
+  assertApprox(metrics.maxLeak60m, 88.2707, 0.1, "60 min leak");
+});
+
+maybeLocalMixedDreamstationTest("mixed Philips and ResMed folder keeps the importable Philips therapy root", async () => {
+  const { prepared, metrics } = await loadFixture(LOCAL_MIXED_DREAMSTATION_ROOT);
+  assert.equal(prepared.selectedLoader, "Philips Respironics System One / DreamStation");
+  assert.equal(prepared.machine.device, "DreamStation CPAP (J245604722190)");
+  assert.equal(prepared.machine.mode, "CPAP");
+  assert.equal(prepared.machine.pressure, "15 cmH2O");
+  assert.equal(prepared.machine.pressureRelief, "C-Flex: 3");
+  assert.equal(prepared.latestClinicalDayIso, "2023-01-04");
+  assert.equal(metrics.daysWithData, 90);
+  assert.equal(metrics.daysWithUsage, 90);
+  assert.equal(metrics.compliantDays, 90);
+  assertApprox(metrics.avgUsageHours, 7.0636, 0.02, "avg usage");
+  assert.equal(metrics.avgAhi, 0);
+  assert.equal(metrics.avgLeak, null);
+  assert.ok(metrics.warnings.some((warning) => warning.includes("ResMed (1)")));
 });
 
 maybeAirSense11Test("ResMed AirSense 11 public fixture loads with active CPAP profile", async () => {
@@ -192,6 +281,49 @@ maybeAirBreakTest("ResMed AirBreak AS10 public fixture still resolves a bilevel 
   assert.ok(!metrics.warnings.includes("Leak metrics were not detected from the selected files."));
 });
 
+maybeLocalAirSense10Test("local ResMed AirSense 10 CPAP sample reports selected-window pressure and leak summaries", async () => {
+  const { prepared, metrics } = await loadFixture(LOCAL_RESMED_AIRSENSE10_ROOT);
+  assert.equal(prepared.selectedLoader, "ResMed");
+  assert.equal(prepared.machine.device, "AirSense 10 AutoSet");
+  assert.equal(prepared.machine.mode, "CPAP");
+  assert.equal(prepared.machine.pressure, "Fixed 6 cmH2O");
+  assert.equal(prepared.machine.rampTime, "Off");
+  assert.equal(prepared.machine.rampPressure, undefined);
+  assert.equal(prepared.latestClinicalDayIso, "2026-04-14");
+  assert.equal(metrics.daysWithData, 90);
+  assert.equal(metrics.daysWithUsage, 90);
+  assert.equal(metrics.compliantDays, 89);
+  assertApprox(metrics.avgUsageHours, 7.3459, 0.02, "avg usage");
+  assertApprox(metrics.avgAhi, 0.75, 0.02, "avg AHI");
+  assertApprox(metrics.machine.pressureAvg ?? null, 5.8827, 0.02, "avg pressure");
+  assertApprox(metrics.machine.pressure95th ?? null, 6, 0.02, "95th pressure");
+  assertApprox(metrics.avgLeak, 1.4933, 0.02, "avg leak");
+  assertApprox(metrics.leak95th, 16.8133, 0.02, "95th leak");
+  assertApprox(metrics.maxLeak30m, 120, 0.02, "30 min leak");
+  assertApprox(metrics.maxLeak60m, 120, 0.02, "60 min leak");
+  assert.ok(!metrics.warnings.includes("Leak metrics were not detected from the selected files."));
+});
+
+maybeLocalResMedCpapTest("local ResMed CPAP sample treats 95th leak as valid leak evidence", async () => {
+  const { prepared, metrics } = await loadFixture(LOCAL_RESMED_CPAP_ROOT);
+  assert.equal(prepared.selectedLoader, "ResMed");
+  assert.equal(prepared.machine.device, "AirSense 10 CPAP");
+  assert.equal(prepared.machine.mode, "CPAP");
+  assert.equal(prepared.machine.pressure, "Fixed 9 cmH2O");
+  assert.equal(prepared.machine.rampTime, "Off");
+  assert.equal(prepared.latestClinicalDayIso, "2026-04-19");
+  assert.equal(metrics.daysWithData, 90);
+  assert.equal(metrics.daysWithUsage, 90);
+  assert.equal(metrics.compliantDays, 87);
+  assertApprox(metrics.avgUsageHours, 8.6106, 0.02, "avg usage");
+  assertApprox(metrics.avgAhi, 1.0778, 0.02, "avg AHI");
+  assertApprox(metrics.machine.pressureAvg ?? null, 8.88, 0.02, "avg pressure");
+  assertApprox(metrics.machine.pressure95th ?? null, 8.88, 0.02, "95th pressure");
+  assert.equal(metrics.avgLeak, null);
+  assertApprox(metrics.leak95th, 28.7067, 0.02, "95th leak");
+  assert.ok(!metrics.warnings.includes("Leak metrics were not detected from the selected files."));
+});
+
 maybeLocalAirCurve10Test("local ResMed AirCurve 10 VAuto sample reports BiPAP settings and L/min leak values", async () => {
   const { prepared, metrics } = await loadFixture(LOCAL_RESMED_AIRCURVE10_ROOT);
   assert.equal(prepared.selectedLoader, "ResMed");
@@ -203,11 +335,14 @@ maybeLocalAirCurve10Test("local ResMed AirCurve 10 VAuto sample reports BiPAP se
   assert.equal(prepared.machine.pressureMax, "11 cmH2O");
   assert.equal(prepared.machine.rampTime, "30 minutes");
   assert.equal(prepared.machine.rampPressure, "7 cmH2O");
+  assert.equal(prepared.machine.pressureRelief, "PS: 0 cmH2O");
   assert.equal(metrics.daysWithData, 14);
   assert.equal(metrics.daysWithUsage, 14);
   assert.equal(metrics.compliantDays, 5);
   assertApprox(metrics.avgUsageHours, 3.3774, 0.02, "avg usage");
   assertApprox(metrics.avgAhi, 18.0571, 0.02, "avg AHI");
+  assertApprox(metrics.machine.pressureAvg ?? null, 8.9914, 0.02, "avg pressure");
+  assertApprox(metrics.machine.pressure95th ?? null, 10.92, 0.02, "95th pressure");
   assertApprox(metrics.avgLeak, 6.9429, 0.02, "avg leak");
   assertApprox(metrics.leak95th, 18, 0.02, "95th leak");
   assertApprox(metrics.maxLeak30m, 54, 0.02, "30 min leak");

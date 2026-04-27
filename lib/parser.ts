@@ -2840,16 +2840,20 @@ export function buildQuickReportMetricsFromPreparedSource(
     warnings.push("AHI metrics were not detected from the selected files.");
   }
   const hasAnyLeakMetric =
-    leakValues.length > 0 || leakMaxValues.length > 0 || leakMax30mValues.length > 0 || leakMax60mValues.length > 0;
+    leakValues.length > 0 ||
+    leak95Values.length > 0 ||
+    leakMaxValues.length > 0 ||
+    leakMax30mValues.length > 0 ||
+    leakMax60mValues.length > 0;
 
   if (!hasAnyLeakMetric) {
     warnings.push("Leak metrics were not detected from the selected files.");
   }
 
-  if (machine.pressureAvg === undefined && avgPressure !== null) {
+  if (avgPressure !== null) {
     machine.pressureAvg = finite(avgPressure);
   }
-  if (machine.pressure95th === undefined && pressure95th !== null) {
+  if (pressure95th !== null) {
     machine.pressure95th = finite(pressure95th);
   }
   verifyResolvedTherapyModeOrThrow(machine, prepared.selectedLoader);
