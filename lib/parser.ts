@@ -2590,7 +2590,7 @@ async function prepareQuickReportSourceInternal(request: PrepareQuickReportSourc
       : genericCandidatesRaw;
   const familyParserCandidates =
     selectedFamily && usesDedicatedFamilyParser(selectedFamily.id)
-      ? selectGenericCandidates(familyScopedAllCandidates, selectedFamily, normalizedLookbackDays)
+      ? familyScopedAllCandidates
       : genericCandidates;
 
   if (runGenericPass && genericTextCandidates.length > MAX_GENERIC_FILES_TO_SCAN) {

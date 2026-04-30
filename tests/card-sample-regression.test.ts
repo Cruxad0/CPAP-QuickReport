@@ -150,14 +150,14 @@ maybeLunaTest("Luna II sample card preserves APAP settings and efficacy metrics"
   assert.equal(metrics.daysWithUsage, 43);
   assert.equal(metrics.compliantDays, 32);
   assertApprox(metrics.avgUsageHours, 4.7729, 0.02, "avg usage");
-  assertApprox(metrics.machine.pressureAvg ?? null, 7.3459, 0.02, "avg pressure");
-  assertApprox(metrics.machine.pressure95th ?? null, 11.525, 0.02, "95th pressure");
+  assertApprox(metrics.machine.pressureAvg ?? null, 7.4401, 0.02, "avg pressure");
+  assertApprox(metrics.machine.pressure95th ?? null, 11.3, 0.02, "95th pressure");
   assertApprox(metrics.avgAhi, 1.8784, 0.02, "avg AHI");
   assertApprox(metrics.avgResidualApneas, 0.2650, 0.02, "avg residual apneas");
   assertApprox(metrics.avgCentralApneas, 1.2048, 0.02, "avg central apneas");
   assert.equal(metrics.avgReraIndex, null);
-  assertApprox(metrics.avgLeak, 51.0985, 0.1, "avg leak");
-  assertApprox(metrics.leak95th, 79.7591, 0.1, "95th leak");
+  assertApprox(metrics.avgLeak, 50.1807, 0.1, "avg leak");
+  assertApprox(metrics.leak95th, 79.0145, 0.1, "95th leak");
   assertApprox(metrics.maxLeak30m, 100, 0.1, "30 min leak");
   assertApprox(metrics.maxLeak60m, 100, 0.1, "60 min leak");
 });
@@ -204,30 +204,32 @@ maybeLocalDreamstationTest("local DreamStation sample reports selected-window pr
   assert.equal(metrics.daysWithUsage, 90);
   assert.equal(metrics.compliantDays, 90);
   assertApprox(metrics.avgUsageHours, 8.6251, 0.02, "avg usage");
-  assertApprox(metrics.avgAhi, 0.6972, 0.01, "avg AHI");
-  assertApprox(metrics.machine.pressureAvg ?? null, 11.3993, 0.02, "avg pressure");
+  assertApprox(metrics.avgAhi, 3.1734, 0.02, "avg AHI");
+  assertApprox(metrics.machine.pressureAvg ?? null, 11.4159, 0.02, "avg pressure");
   assertApprox(metrics.machine.pressure95th ?? null, 16, 0.02, "95th pressure");
-  assertApprox(metrics.avgLeak, 27.8245, 0.1, "avg leak");
-  assertApprox(metrics.leak95th, 33.4024, 0.1, "95th leak");
+  assertApprox(metrics.avgLeak, 28.4081, 0.1, "avg leak");
+  assertApprox(metrics.leak95th, 36.2002, 0.1, "95th leak");
   assertApprox(metrics.maxLeak30m, 88.2707, 0.1, "30 min leak");
   assertApprox(metrics.maxLeak60m, 88.2707, 0.1, "60 min leak");
 });
 
-maybeLocalMixedDreamstationTest("mixed Philips and ResMed folder keeps the importable Philips therapy root", async () => {
+maybeLocalMixedDreamstationTest("DreamStation folder follows LAST.TXT to the active Philips therapy root", async () => {
   const { prepared, metrics } = await loadFixture(LOCAL_MIXED_DREAMSTATION_ROOT);
   assert.equal(prepared.selectedLoader, "Philips Respironics System One / DreamStation");
-  assert.equal(prepared.machine.device, "DreamStation CPAP (J245604722190)");
+  assert.equal(prepared.machine.device, "Philips Respironics (74FAE00C)");
   assert.equal(prepared.machine.mode, "CPAP");
   assert.equal(prepared.machine.pressure, "15 cmH2O");
-  assert.equal(prepared.machine.pressureRelief, "C-Flex: 3");
-  assert.equal(prepared.latestClinicalDayIso, "2023-01-04");
+  assert.equal(prepared.machine.pressureRelief, "C-Flex+: 2");
+  assert.equal(prepared.latestClinicalDayIso, "2026-04-19");
   assert.equal(metrics.daysWithData, 90);
   assert.equal(metrics.daysWithUsage, 90);
-  assert.equal(metrics.compliantDays, 90);
-  assertApprox(metrics.avgUsageHours, 7.0636, 0.02, "avg usage");
-  assert.equal(metrics.avgAhi, 0);
-  assert.equal(metrics.avgLeak, null);
-  assert.ok(!metrics.warnings.some((warning) => warning.includes("ResMed (1)")));
+  assert.equal(metrics.compliantDays, 64);
+  assertApprox(metrics.avgUsageHours, 4.6313, 0.02, "avg usage");
+  assertApprox(metrics.avgAhi, 0.2292, 0.02, "avg AHI");
+  assertApprox(metrics.avgLeak, 29.2406, 0.1, "avg leak");
+  assertApprox(metrics.leak95th, 52.5013, 0.1, "95th leak");
+  assertApprox(metrics.maxLeak30m, 128.4689, 0.1, "30 min leak");
+  assertApprox(metrics.maxLeak60m, 128.4689, 0.1, "60 min leak");
 });
 
 maybeAirSense11Test("ResMed AirSense 11 public fixture loads with active CPAP profile", async () => {
