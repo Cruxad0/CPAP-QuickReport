@@ -164,6 +164,10 @@ function normalizePressureNumber(raw: number | undefined): number | undefined {
   return undefined;
 }
 
+function isReportPressureMetric(value: number | undefined): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 && value <= 80;
+}
+
 function pressureText(value: number | undefined): string | undefined {
   const n = normalizePressureNumber(value);
   if (n === undefined) return undefined;
@@ -1195,12 +1199,12 @@ function parseResventStatText(text: string, fallbackDate: Date): ParsedRecord | 
     (leak !== undefined && leak >= 0 && leak < 500) ||
     (leak95th !== undefined && leak95th >= 0 && leak95th < 500) ||
     (leakMax !== undefined && leakMax >= 0 && leakMax < 500) ||
-    (pressureAvg !== undefined && pressureAvg >= 0 && pressureAvg <= 80) ||
-    (pressure95th !== undefined && pressure95th >= 0 && pressure95th <= 80) ||
-    (ipapAvg !== undefined && ipapAvg >= 0 && ipapAvg <= 80) ||
-    (ipap95th !== undefined && ipap95th >= 0 && ipap95th <= 80) ||
-    (epapAvg !== undefined && epapAvg >= 0 && epapAvg <= 80) ||
-    (epap95th !== undefined && epap95th >= 0 && epap95th <= 80);
+    isReportPressureMetric(pressureAvg) ||
+    isReportPressureMetric(pressure95th) ||
+    isReportPressureMetric(ipapAvg) ||
+    isReportPressureMetric(ipap95th) ||
+    isReportPressureMetric(epapAvg) ||
+    isReportPressureMetric(epap95th);
   if (!hasSignal) return null;
 
   return {
@@ -1213,12 +1217,12 @@ function parseResventStatText(text: string, fallbackDate: Date): ParsedRecord | 
     leak: leak !== undefined && leak >= 0 && leak < 500 ? leak : undefined,
     leak95th: leak95th !== undefined && leak95th >= 0 && leak95th < 500 ? leak95th : undefined,
     leakMax: leakMax !== undefined && leakMax >= 0 && leakMax < 500 ? leakMax : undefined,
-    pressureAvg: pressureAvg !== undefined && pressureAvg >= 0 && pressureAvg <= 80 ? pressureAvg : undefined,
-    pressure95th: pressure95th !== undefined && pressure95th >= 0 && pressure95th <= 80 ? pressure95th : undefined,
-    ipapAvg: ipapAvg !== undefined && ipapAvg >= 0 && ipapAvg <= 80 ? ipapAvg : undefined,
-    ipap95th: ipap95th !== undefined && ipap95th >= 0 && ipap95th <= 80 ? ipap95th : undefined,
-    epapAvg: epapAvg !== undefined && epapAvg >= 0 && epapAvg <= 80 ? epapAvg : undefined,
-    epap95th: epap95th !== undefined && epap95th >= 0 && epap95th <= 80 ? epap95th : undefined
+    pressureAvg: isReportPressureMetric(pressureAvg) ? pressureAvg : undefined,
+    pressure95th: isReportPressureMetric(pressure95th) ? pressure95th : undefined,
+    ipapAvg: isReportPressureMetric(ipapAvg) ? ipapAvg : undefined,
+    ipap95th: isReportPressureMetric(ipap95th) ? ipap95th : undefined,
+    epapAvg: isReportPressureMetric(epapAvg) ? epapAvg : undefined,
+    epap95th: isReportPressureMetric(epap95th) ? epap95th : undefined
   };
 }
 
@@ -1382,12 +1386,12 @@ function parseGenericDailyKeyValueRecord(text: string, fallbackDate: Date): Pars
     (reraIndex !== undefined && reraIndex >= 0 && reraIndex < 200) ||
     (leak !== undefined && leak >= 0 && leak < 500) ||
     (leakMax !== undefined && leakMax >= 0 && leakMax < 500) ||
-    (pressureAvg !== undefined && pressureAvg >= 0 && pressureAvg <= 80) ||
-    (pressure95th !== undefined && pressure95th >= 0 && pressure95th <= 80) ||
-    (ipapAvg !== undefined && ipapAvg >= 0 && ipapAvg <= 80) ||
-    (ipap95th !== undefined && ipap95th >= 0 && ipap95th <= 80) ||
-    (epapAvg !== undefined && epapAvg >= 0 && epapAvg <= 80) ||
-    (epap95th !== undefined && epap95th >= 0 && epap95th <= 80);
+    isReportPressureMetric(pressureAvg) ||
+    isReportPressureMetric(pressure95th) ||
+    isReportPressureMetric(ipapAvg) ||
+    isReportPressureMetric(ipap95th) ||
+    isReportPressureMetric(epapAvg) ||
+    isReportPressureMetric(epap95th);
 
   if (!hasSignal) return null;
   return {
@@ -1401,12 +1405,12 @@ function parseGenericDailyKeyValueRecord(text: string, fallbackDate: Date): Pars
     reraIndex: reraIndex !== undefined && reraIndex >= 0 && reraIndex < 200 ? reraIndex : undefined,
     leak: leak !== undefined && leak >= 0 && leak < 500 ? leak : undefined,
     leakMax: leakMax !== undefined && leakMax >= 0 && leakMax < 500 ? leakMax : undefined,
-    pressureAvg: pressureAvg !== undefined && pressureAvg >= 0 && pressureAvg <= 80 ? pressureAvg : undefined,
-    pressure95th: pressure95th !== undefined && pressure95th >= 0 && pressure95th <= 80 ? pressure95th : undefined,
-    ipapAvg: ipapAvg !== undefined && ipapAvg >= 0 && ipapAvg <= 80 ? ipapAvg : undefined,
-    ipap95th: ipap95th !== undefined && ipap95th >= 0 && ipap95th <= 80 ? ipap95th : undefined,
-    epapAvg: epapAvg !== undefined && epapAvg >= 0 && epapAvg <= 80 ? epapAvg : undefined,
-    epap95th: epap95th !== undefined && epap95th >= 0 && epap95th <= 80 ? epap95th : undefined
+    pressureAvg: isReportPressureMetric(pressureAvg) ? pressureAvg : undefined,
+    pressure95th: isReportPressureMetric(pressure95th) ? pressure95th : undefined,
+    ipapAvg: isReportPressureMetric(ipapAvg) ? ipapAvg : undefined,
+    ipap95th: isReportPressureMetric(ipap95th) ? ipap95th : undefined,
+    epapAvg: isReportPressureMetric(epapAvg) ? epapAvg : undefined,
+    epap95th: isReportPressureMetric(epap95th) ? epap95th : undefined
   };
 }
 
@@ -1534,12 +1538,12 @@ function sanitizeRecords(records: ParsedRecord[]): ParsedRecord[] {
       (typeof r.leakMax === "number" && r.leakMax >= 0 && r.leakMax < 500) ||
       (typeof r.leakMax30m === "number" && r.leakMax30m >= 0 && r.leakMax30m < 500) ||
       (typeof r.leakMax60m === "number" && r.leakMax60m >= 0 && r.leakMax60m < 500) ||
-      (typeof r.pressureAvg === "number" && r.pressureAvg >= 0 && r.pressureAvg <= 80) ||
-      (typeof r.pressure95th === "number" && r.pressure95th >= 0 && r.pressure95th <= 80) ||
-      (typeof r.ipapAvg === "number" && r.ipapAvg >= 0 && r.ipapAvg <= 80) ||
-      (typeof r.ipap95th === "number" && r.ipap95th >= 0 && r.ipap95th <= 80) ||
-      (typeof r.epapAvg === "number" && r.epapAvg >= 0 && r.epapAvg <= 80) ||
-      (typeof r.epap95th === "number" && r.epap95th >= 0 && r.epap95th <= 80);
+      isReportPressureMetric(r.pressureAvg) ||
+      isReportPressureMetric(r.pressure95th) ||
+      isReportPressureMetric(r.ipapAvg) ||
+      isReportPressureMetric(r.ipap95th) ||
+      isReportPressureMetric(r.epapAvg) ||
+      isReportPressureMetric(r.epap95th);
     return hasSignal;
   });
 }
@@ -1936,32 +1940,32 @@ function buildDayBucketsFromRecordsAndLeaks(
       bucket.reraCount += 1;
     }
 
-    if (typeof record.pressureAvg === "number" && record.pressureAvg >= 0 && record.pressureAvg <= 80) {
+    if (isReportPressureMetric(record.pressureAvg)) {
       bucket.pressureAvgSum += record.pressureAvg;
       bucket.pressureAvgCount += 1;
     }
 
-    if (typeof record.pressure95th === "number" && record.pressure95th >= 0 && record.pressure95th <= 80) {
+    if (isReportPressureMetric(record.pressure95th)) {
       bucket.pressure95Sum += record.pressure95th;
       bucket.pressure95Count += 1;
     }
 
-    if (typeof record.ipapAvg === "number" && record.ipapAvg >= 0 && record.ipapAvg <= 80) {
+    if (isReportPressureMetric(record.ipapAvg)) {
       bucket.ipapAvgSum += record.ipapAvg;
       bucket.ipapAvgCount += 1;
     }
 
-    if (typeof record.ipap95th === "number" && record.ipap95th >= 0 && record.ipap95th <= 80) {
+    if (isReportPressureMetric(record.ipap95th)) {
       bucket.ipap95Sum += record.ipap95th;
       bucket.ipap95Count += 1;
     }
 
-    if (typeof record.epapAvg === "number" && record.epapAvg >= 0 && record.epapAvg <= 80) {
+    if (isReportPressureMetric(record.epapAvg)) {
       bucket.epapAvgSum += record.epapAvg;
       bucket.epapAvgCount += 1;
     }
 
-    if (typeof record.epap95th === "number" && record.epap95th >= 0 && record.epap95th <= 80) {
+    if (isReportPressureMetric(record.epap95th)) {
       bucket.epap95Sum += record.epap95th;
       bucket.epap95Count += 1;
     }

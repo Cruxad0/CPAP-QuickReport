@@ -452,6 +452,10 @@ function formatPressureValue(value: number | undefined): string | undefined {
   return `${Number(value.toFixed(2)).toString()} cmH2O`;
 }
 
+function isReportPressureMetric(value: number | undefined): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 && value <= 80;
+}
+
 function formatRampTimeValue(value: number | undefined): string | undefined {
   if (value === undefined || !Number.isFinite(value) || value < 0) return undefined;
   if (value === 0) return "Off";
@@ -627,12 +631,12 @@ function parseResMedStrEdf(
       (leak !== undefined && leak >= 0 && leak < 500) ||
       (leak95th !== undefined && leak95th >= 0 && leak95th < 500) ||
       (leakMax !== undefined && leakMax >= 0 && leakMax < 500) ||
-      (pressureAvg !== undefined && pressureAvg >= 0 && pressureAvg <= 80) ||
-      (pressure95th !== undefined && pressure95th >= 0 && pressure95th <= 80) ||
-      (ipapAvg !== undefined && ipapAvg >= 0 && ipapAvg <= 80) ||
-      (ipap95th !== undefined && ipap95th >= 0 && ipap95th <= 80) ||
-      (epapAvg !== undefined && epapAvg >= 0 && epapAvg <= 80) ||
-      (epap95th !== undefined && epap95th >= 0 && epap95th <= 80);
+      isReportPressureMetric(pressureAvg) ||
+      isReportPressureMetric(pressure95th) ||
+      isReportPressureMetric(ipapAvg) ||
+      isReportPressureMetric(ipap95th) ||
+      isReportPressureMetric(epapAvg) ||
+      isReportPressureMetric(epap95th);
     if (!hasSignal) continue;
 
     records.push({
@@ -645,12 +649,12 @@ function parseResMedStrEdf(
       leak: leak !== undefined && leak >= 0 && leak < 500 ? leak : undefined,
       leak95th: leak95th !== undefined && leak95th >= 0 && leak95th < 500 ? leak95th : undefined,
       leakMax: leakMax !== undefined && leakMax >= 0 && leakMax < 500 ? leakMax : undefined,
-      pressureAvg: pressureAvg !== undefined && pressureAvg >= 0 && pressureAvg <= 80 ? pressureAvg : undefined,
-      pressure95th: pressure95th !== undefined && pressure95th >= 0 && pressure95th <= 80 ? pressure95th : undefined,
-      ipapAvg: ipapAvg !== undefined && ipapAvg >= 0 && ipapAvg <= 80 ? ipapAvg : undefined,
-      ipap95th: ipap95th !== undefined && ipap95th >= 0 && ipap95th <= 80 ? ipap95th : undefined,
-      epapAvg: epapAvg !== undefined && epapAvg >= 0 && epapAvg <= 80 ? epapAvg : undefined,
-      epap95th: epap95th !== undefined && epap95th >= 0 && epap95th <= 80 ? epap95th : undefined
+      pressureAvg: isReportPressureMetric(pressureAvg) ? pressureAvg : undefined,
+      pressure95th: isReportPressureMetric(pressure95th) ? pressure95th : undefined,
+      ipapAvg: isReportPressureMetric(ipapAvg) ? ipapAvg : undefined,
+      ipap95th: isReportPressureMetric(ipap95th) ? ipap95th : undefined,
+      epapAvg: isReportPressureMetric(epapAvg) ? epapAvg : undefined,
+      epap95th: isReportPressureMetric(epap95th) ? epap95th : undefined
     });
 
     if (!latestRecordDate || date > latestRecordDate) {
@@ -778,10 +782,10 @@ function parseResMedStrEdf(
         }
       }
 
-      if (machine.pressureAvg === undefined && pressureAvg !== undefined && pressureAvg >= 0 && pressureAvg <= 80) {
+      if (machine.pressureAvg === undefined && isReportPressureMetric(pressureAvg)) {
         machine.pressureAvg = pressureAvg;
       }
-      if (machine.pressure95th === undefined && pressure95th !== undefined && pressure95th >= 0 && pressure95th <= 80) {
+      if (machine.pressure95th === undefined && isReportPressureMetric(pressure95th)) {
         machine.pressure95th = pressure95th;
       }
     }

@@ -227,7 +227,7 @@ maybeLocalMixedDreamstationTest("mixed Philips and ResMed folder keeps the impor
   assertApprox(metrics.avgUsageHours, 7.0636, 0.02, "avg usage");
   assert.equal(metrics.avgAhi, 0);
   assert.equal(metrics.avgLeak, null);
-  assert.ok(metrics.warnings.some((warning) => warning.includes("ResMed (1)")));
+  assert.ok(!metrics.warnings.some((warning) => warning.includes("ResMed (1)")));
 });
 
 maybeAirSense11Test("ResMed AirSense 11 public fixture loads with active CPAP profile", async () => {
@@ -343,16 +343,26 @@ maybeLocalAirCurve10Test("local ResMed AirCurve 10 VAuto sample reports BiPAP se
   assert.equal(metrics.compliantDays, 5);
   assertApprox(metrics.avgUsageHours, 3.3774, 0.02, "avg usage");
   assertApprox(metrics.avgAhi, 18.0571, 0.02, "avg AHI");
-  assertApprox(metrics.machine.pressureAvg ?? null, 8.9914, 0.02, "avg pressure");
+  assertApprox(metrics.machine.pressureAvg ?? null, 9.6831, 0.02, "avg pressure");
   assertApprox(metrics.machine.pressure95th ?? null, 10.92, 0.02, "95th pressure");
-  assertApprox(metrics.machine.ipapAvg ?? null, 9.0086, 0.02, "avg IPAP");
+  assertApprox(metrics.machine.ipapAvg ?? null, 9.7015, 0.02, "avg IPAP");
   assertApprox(metrics.machine.ipap95th ?? null, 10.92, 0.02, "95th IPAP");
-  assertApprox(metrics.machine.epapAvg ?? null, 9.0086, 0.02, "avg EPAP");
+  assertApprox(metrics.machine.epapAvg ?? null, 9.7015, 0.02, "avg EPAP");
   assertApprox(metrics.machine.epap95th ?? null, 10.92, 0.02, "95th EPAP");
   assertApprox(metrics.avgLeak, 6.9429, 0.02, "avg leak");
   assertApprox(metrics.leak95th, 18, 0.02, "95th leak");
   assertApprox(metrics.maxLeak30m, 54, 0.02, "30 min leak");
   assertApprox(metrics.maxLeak60m, 54, 0.02, "60 min leak");
+});
+
+maybeLocalAirCurve10Test("local ResMed AirCurve 10 VAuto sample does not report zero IPAP/EPAP summaries", async () => {
+  const { metrics } = await loadFixture(LOCAL_RESMED_AIRCURVE10_ROOT, 7);
+  assert.equal(metrics.machine.ipapAvg, undefined);
+  assert.equal(metrics.machine.ipap95th, undefined);
+  assert.equal(metrics.machine.epapAvg, undefined);
+  assert.equal(metrics.machine.epap95th, undefined);
+  assertApprox(metrics.machine.pressureAvg ?? null, 10.08, 0.02, "avg mask pressure");
+  assertApprox(metrics.machine.pressure95th ?? null, 11.4, 0.02, "95th mask pressure");
 });
 
 maybeLocalAirCurve10StTest("local ResMed AirCurve 10 ST sample reports fixed bilevel settings and L/min leak values", async () => {
