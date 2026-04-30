@@ -1,8 +1,8 @@
 {
   "fixtures": [
     {
-      "name": "Resvent sample card",
-      "path": "/Users/joelrodz/Sites/oscar-clinician-work/Card Samples/Resvent",
+      "name": "Resvent APAP sample card",
+      "path": "Card Samples/Resvent",
       "sourceKind": "folder",
       "lookbackDays": 90,
       "anchorToLatestData": true,
@@ -12,6 +12,144 @@
         "deviceIncludes": "iBreeze 20A",
         "pressureMin": "8.5 cmH2O",
         "pressureMax": "11 cmH2O",
+        "minDaysWithData": 89,
+        "minDaysWithUsage": 89
+      }
+    },
+    {
+      "name": "Resvent Auto S30 sample card",
+      "path": "Card Samples/Resvent-2",
+      "sourceKind": "folder",
+      "lookbackDays": 90,
+      "anchorToLatestData": true,
+      "expect": {
+        "selectedLoaderIncludes": "Resvent",
+        "deviceIncludes": "iBreeze 30STA",
+        "pressureMin": "4 cmH2O",
+        "pressureMax": "12 cmH2O",
+        "minDaysWithData": 75,
+        "minDaysWithUsage": 75
+      }
+    },
+    {
+      "name": "Luna II sample card",
+      "path": "Card Samples/Luna2",
+      "sourceKind": "folder",
+      "lookbackDays": 90,
+      "anchorToLatestData": true,
+      "expect": {
+        "selectedLoaderIncludes": "BMC",
+        "mode": "APAP",
+        "deviceIncludes": "G2S A20",
+        "pressureMin": "4 cmH2O",
+        "pressureMax": "15 cmH2O",
+        "minDaysWithData": 45,
+        "minDaysWithUsage": 43
+      }
+    },
+    {
+      "name": "Luna II duplicate sample card",
+      "path": "Card Samples/Luna2 -2",
+      "sourceKind": "folder",
+      "lookbackDays": 90,
+      "anchorToLatestData": true,
+      "expect": {
+        "selectedLoaderIncludes": "BMC",
+        "mode": "APAP",
+        "deviceIncludes": "G2S A20",
+        "pressureMin": "4 cmH2O",
+        "pressureMax": "15 cmH2O",
+        "minDaysWithData": 45,
+        "minDaysWithUsage": 43
+      }
+    },
+    {
+      "name": "DreamStation sample card",
+      "path": "Card Samples/Dreamstation2",
+      "sourceKind": "folder",
+      "lookbackDays": 90,
+      "anchorToLatestData": true,
+      "expect": {
+        "selectedLoaderIncludes": "Philips",
+        "mode": "APAP",
+        "pressureMin": "10 cmH2O",
+        "pressureMax": "16 cmH2O",
+        "minDaysWithData": 89,
+        "minDaysWithUsage": 89
+      }
+    },
+    {
+      "name": "Mixed DreamStation sample card",
+      "path": "Card Samples/Dreamstation 2 -2",
+      "sourceKind": "folder",
+      "lookbackDays": 90,
+      "anchorToLatestData": true,
+      "expect": {
+        "selectedLoaderIncludes": "Philips",
+        "mode": "CPAP",
+        "deviceIncludes": "Philips Respironics",
+        "pressure": "15 cmH2O",
+        "minDaysWithData": 89,
+        "minDaysWithUsage": 89
+      }
+    },
+    {
+      "name": "ResMed AirSense 10 sample card",
+      "path": "Card Samples/ResMed",
+      "sourceKind": "folder",
+      "lookbackDays": 90,
+      "anchorToLatestData": true,
+      "expect": {
+        "selectedLoaderIncludes": "ResMed",
+        "mode": "CPAP",
+        "deviceIncludes": "AirSense 10 AutoSet",
+        "pressure": "Fixed 6 cmH2O",
+        "minDaysWithData": 89,
+        "minDaysWithUsage": 89
+      }
+    },
+    {
+      "name": "ResMed CPAP sample card",
+      "path": "Card Samples/ResMed -2",
+      "sourceKind": "folder",
+      "lookbackDays": 90,
+      "anchorToLatestData": true,
+      "expect": {
+        "selectedLoaderIncludes": "ResMed",
+        "mode": "CPAP",
+        "deviceIncludes": "AirSense 10 CPAP",
+        "pressure": "Fixed 9 cmH2O",
+        "minDaysWithData": 89,
+        "minDaysWithUsage": 89
+      }
+    },
+    {
+      "name": "ResMed AirCurve 10 VAuto sample card",
+      "path": "Card Samples/ResMed -3",
+      "sourceKind": "folder",
+      "lookbackDays": 90,
+      "anchorToLatestData": true,
+      "expect": {
+        "selectedLoaderIncludes": "ResMed",
+        "deviceIncludes": "AirCurve 10 VAuto",
+        "epap": "7 cmH2O",
+        "ipap": "11 cmH2O",
+        "minDaysWithData": 14,
+        "minDaysWithUsage": 14
+      }
+    },
+    {
+      "name": "ResMed AirCurve 10 ST sample card",
+      "path": "Card Samples/ResMed -4",
+      "sourceKind": "folder",
+      "lookbackDays": 90,
+      "anchorToLatestData": true,
+      "expect": {
+        "selectedLoaderIncludes": "ResMed",
+        "mode": "BiPAP",
+        "deviceIncludes": "AirCurve 10 ST",
+        "epap": "4 cmH2O",
+        "ipap": "14 cmH2O",
         "minDaysWithData": 89,
         "minDaysWithUsage": 89
       }

@@ -454,6 +454,22 @@ textarea {
   color: var(--muted);
 }
 
+.notes li.stale-data-warning {
+  color: var(--error);
+  font-weight: 700;
+}
+
+.notes li.mixed-data-warning {
+  color: var(--warn);
+  font-weight: 700;
+}
+
+.stale-data-detail {
+  display: block;
+  margin-top: 0.12rem;
+  font-weight: 600;
+}
+
 .legal-notice {
   background: #f8fafc;
   border-color: #dde5ec;

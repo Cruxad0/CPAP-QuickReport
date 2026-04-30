@@ -181,7 +181,8 @@ async function loadSource(
     totalBytes,
     statusMessage,
     selectedLoader: prepared.selectedLoader,
-    latestClinicalDayIso: prepared.latestClinicalDayIso
+    latestClinicalDayIso: prepared.latestClinicalDayIso,
+    warnings: prepared.warnings
   });
 }
 

@@ -94,6 +94,97 @@ export function rankParserFamilies(files: SourceMetaLike[]): LoaderMatch[] {
     .sort((a, b) => b.score - a.score || a.label.localeCompare(b.label));
 }
 
+export interface DatedSourceMetaLike extends SourceMetaLike {
+  recordDate?: Date | null;
+}
+
+export interface LoaderRecencySummary {
+  match: LoaderMatch;
+  candidateCount: number;
+  datedCandidateCount: number;
+  latestDate: Date | null;
+  latestPath: string | null;
+}
+
+export interface RecencyLoaderSelection {
+  selected: LoaderMatch | null;
+  selectedByLatestDatedData: boolean;
+  summaries: LoaderRecencySummary[];
+}
+
+function summarizeFamilyRecency(files: DatedSourceMetaLike[], match: LoaderMatch): LoaderRecencySummary {
+  const candidates = files.filter((file) => isCandidateForFamily(file, match.family));
+  let latestDate: Date | null = null;
+  let latestPath: string | null = null;
+  let datedCandidateCount = 0;
+
+  for (const candidate of candidates) {
+    const recordDate = candidate.recordDate ?? null;
+    if (!recordDate || Number.isNaN(recordDate.getTime())) continue;
+    datedCandidateCount += 1;
+    if (!latestDate || recordDate > latestDate) {
+      latestDate = recordDate;
+      latestPath = candidate.normalizedPath;
+    }
+  }
+
+  return {
+    match,
+    candidateCount: candidates.length,
+    datedCandidateCount,
+    latestDate,
+    latestPath
+  };
+}
+
+function compareRecencySummary(a: LoaderRecencySummary, b: LoaderRecencySummary): number {
+  const dateDelta = (b.latestDate?.getTime() ?? Number.NEGATIVE_INFINITY) - (a.latestDate?.getTime() ?? Number.NEGATIVE_INFINITY);
+  if (dateDelta !== 0) return dateDelta;
+  return b.match.score - a.match.score || a.match.label.localeCompare(b.match.label);
+}
+
+export function selectLoaderMatchByDatedRecency(
+  files: DatedSourceMetaLike[],
+  loaderRanking = rankParserFamilies(files)
+): RecencyLoaderSelection {
+  const defaultSelected = loaderRanking[0] ?? null;
+  const supportedSummaries = loaderRanking
+    .filter((match) => match.family.supportedQuickReport)
+    .map((match) => summarizeFamilyRecency(files, match));
+
+  if (!defaultSelected || supportedSummaries.length < 2) {
+    return {
+      selected: defaultSelected,
+      selectedByLatestDatedData: false,
+      summaries: supportedSummaries
+    };
+  }
+
+  const defaultSummary = supportedSummaries.find((summary) => summary.match.id === defaultSelected.id) ?? null;
+  const datedSummaries = supportedSummaries.filter((summary) => summary.latestDate !== null).sort(compareRecencySummary);
+  const newestSummary = datedSummaries[0] ?? null;
+  const defaultDate = defaultSummary?.latestDate ?? null;
+
+  if (
+    defaultDate &&
+    newestSummary?.latestDate &&
+    newestSummary.match.id !== defaultSelected.id &&
+    newestSummary.latestDate > defaultDate
+  ) {
+    return {
+      selected: newestSummary.match,
+      selectedByLatestDatedData: true,
+      summaries: supportedSummaries
+    };
+  }
+
+  return {
+    selected: defaultSelected,
+    selectedByLatestDatedData: false,
+    summaries: supportedSummaries
+  };
+}
+
 export function detectLikelyLoaderLabels(files: SourceMetaLike[]): string[] {
   return PARSER_FAMILIES.filter((family) => family.signaturePatterns.some((pattern) => familyHit(files, pattern))).map((family) => family.label);
 }

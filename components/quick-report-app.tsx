@@ -25,6 +25,7 @@ const MONTH_LABELS = [
 const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MIN_YEAR = 1900;
 const MAX_YEAR = 2100;
+const STALE_DATA_AGE_DAYS = 90;
 const SOURCE_SELECTION_CANCEL_TIMEOUT_MS = 20000;
 const LONG_DATE_FORMATTER = new Intl.DateTimeFormat("en-US", {
   month: "long",
@@ -108,6 +109,20 @@ function formatIsoDateLong(isoDate: string): string {
   const parsed = parseIsoDate(isoDate);
   if (!parsed) return isoDate;
   return LONG_DATE_FORMATTER.format(Date.UTC(parsed.year, parsed.month - 1, parsed.day, 12));
+}
+
+function daysSinceIsoDate(isoDate: string, now = new Date()): number | null {
+  const parsed = parseIsoDate(isoDate);
+  if (!parsed) return null;
+
+  const latestDateMs = Date.UTC(parsed.year, parsed.month - 1, parsed.day);
+  const todayMs = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+  const days = Math.floor((todayMs - latestDateMs) / 86_400_000);
+  return Number.isFinite(days) ? days : null;
+}
+
+function isMixedDataWarning(warning: string): boolean {
+  return /^(?:Mixed device data detected|Multiple device layouts detected)\./.test(warning);
 }
 
 function toUsDate(year: number, month: number, day: number): string {
@@ -255,6 +270,7 @@ export function QuickReportApp() {
   const [sourceFileBytes, setSourceFileBytes] = useState(0);
   const [loadedSourceLoader, setLoadedSourceLoader] = useState<string | null>(null);
   const [loadedSourceLatestClinicalDayIso, setLoadedSourceLatestClinicalDayIso] = useState<string | null>(null);
+  const [loadedSourceWarnings, setLoadedSourceWarnings] = useState<string[]>([]);
   const [headerDataUrl, setHeaderDataUrl] = useState<string | undefined>(undefined);
   const [activeReportDays, setActiveReportDays] = useState<ReportRangeDays>(90);
 
@@ -318,6 +334,19 @@ export function QuickReportApp() {
   const loadedSourceLatestClinicalDayLabel = useMemo(
     () => (loadedSourceLatestClinicalDayIso ? formatIsoDateLong(loadedSourceLatestClinicalDayIso) : null),
     [loadedSourceLatestClinicalDayIso]
+  );
+  const loadedSourceLatestClinicalDayAge = useMemo(
+    () => (loadedSourceLatestClinicalDayIso ? daysSinceIsoDate(loadedSourceLatestClinicalDayIso) : null),
+    [loadedSourceLatestClinicalDayIso]
+  );
+  const isLoadedSourceStale =
+    loadedSourceLatestClinicalDayAge !== null && loadedSourceLatestClinicalDayAge > STALE_DATA_AGE_DAYS;
+  const staleDataWarning = isLoadedSourceStale
+    ? `Data is ${loadedSourceLatestClinicalDayAge} days old. This suggests the device has not been used in more than ${STALE_DATA_AGE_DAYS} days.`
+    : null;
+  const loadedMixedDataWarning = useMemo(
+    () => loadedSourceWarnings.find(isMixedDataWarning) ?? null,
+    [loadedSourceWarnings]
   );
   const generatedReportDays = useMemo(
     () => REPORT_RANGE_OPTIONS.filter((days) => Boolean(generatedReports[days])),
@@ -419,6 +448,7 @@ export function QuickReportApp() {
     setSourceFileBytes(0);
     setLoadedSourceLoader(null);
     setLoadedSourceLatestClinicalDayIso(null);
+    setLoadedSourceWarnings([]);
   };
 
   const handleResetClearAll = async () => {
@@ -475,6 +505,7 @@ export function QuickReportApp() {
     setParseProgressImmediate({ phase: "scan", detail: "Loading SD folder...", percent: 4 });
     setLoadedSourceLoader(null);
     setLoadedSourceLatestClinicalDayIso(null);
+    setLoadedSourceWarnings([]);
     await new Promise((resolve) => window.setTimeout(resolve, 0));
 
     try {
@@ -491,6 +522,7 @@ export function QuickReportApp() {
       setSourceFileBytes(loaded.totalBytes);
       setLoadedSourceLoader(loaded.selectedLoader);
       setLoadedSourceLatestClinicalDayIso(loaded.latestClinicalDayIso);
+      setLoadedSourceWarnings(loaded.warnings);
       revokeGeneratedReportUrls(generatedReports);
       setGeneratedReports({});
       setActiveReportDays(90);
@@ -502,6 +534,7 @@ export function QuickReportApp() {
       const message = error instanceof Error ? error.message : "Could not load selected folder.";
       setLoadedSourceLoader(null);
       setLoadedSourceLatestClinicalDayIso(null);
+      setLoadedSourceWarnings([]);
       setStatus("error");
       setErrors([message]);
       setStatusMessage("Folder load failed.");
@@ -523,6 +556,7 @@ export function QuickReportApp() {
         setParseProgressImmediate({ phase: "scan", detail: "Loading SD-CARD...", percent: 1 });
         setLoadedSourceLoader(null);
         setLoadedSourceLatestClinicalDayIso(null);
+        setLoadedSourceWarnings([]);
       });
       const client = workerClientRef.current;
       if (!client) throw new Error("Background worker is not available.");
@@ -565,6 +599,7 @@ export function QuickReportApp() {
       setSourceFileBytes(loaded.totalBytes);
       setLoadedSourceLoader(loaded.selectedLoader);
       setLoadedSourceLatestClinicalDayIso(loaded.latestClinicalDayIso);
+      setLoadedSourceWarnings(loaded.warnings);
       revokeGeneratedReportUrls(generatedReports);
       setGeneratedReports({});
       setActiveReportDays(90);
@@ -583,6 +618,7 @@ export function QuickReportApp() {
       const message = error instanceof Error ? error.message : "Could not load selected folder.";
       setLoadedSourceLoader(null);
       setLoadedSourceLatestClinicalDayIso(null);
+      setLoadedSourceWarnings([]);
       setStatus("error");
       setErrors([message]);
       setStatusMessage("Folder load failed.");
@@ -621,6 +657,7 @@ export function QuickReportApp() {
     setParseProgressImmediate({ phase: "zip", detail: "Opening ZIP file...", percent: 8 });
     setLoadedSourceLoader(null);
     setLoadedSourceLatestClinicalDayIso(null);
+    setLoadedSourceWarnings([]);
 
     try {
       const client = workerClientRef.current;
@@ -636,6 +673,7 @@ export function QuickReportApp() {
       setSourceFileBytes(loaded.totalBytes);
       setLoadedSourceLoader(loaded.selectedLoader);
       setLoadedSourceLatestClinicalDayIso(loaded.latestClinicalDayIso);
+      setLoadedSourceWarnings(loaded.warnings);
       setStatus("idle");
       setStatusMessage(loaded.statusMessage);
       revokeGeneratedReportUrls(generatedReports);
@@ -647,6 +685,7 @@ export function QuickReportApp() {
       const message = error instanceof Error ? error.message : "Could not parse ZIP file.";
       setLoadedSourceLoader(null);
       setLoadedSourceLatestClinicalDayIso(null);
+      setLoadedSourceWarnings([]);
       setStatus("error");
       setErrors([message]);
       setStatusMessage("ZIP import failed.");
@@ -948,10 +987,16 @@ export function QuickReportApp() {
           <p style={{ marginTop: 12 }}>
             <strong>Status:</strong> {selectedCountLabel}
           </p>
-          {loadedSourceLoader || loadedSourceLatestClinicalDayLabel ? (
+          {loadedSourceLoader || loadedSourceLatestClinicalDayLabel || loadedMixedDataWarning ? (
             <ul className="notes" style={{ marginTop: 8 }}>
               {loadedSourceLoader ? <li>Detected loader: {loadedSourceLoader}</li> : null}
-              {loadedSourceLatestClinicalDayLabel ? <li>Last date with data on card: {loadedSourceLatestClinicalDayLabel}</li> : null}
+              {loadedMixedDataWarning ? <li className="mixed-data-warning">{loadedMixedDataWarning}</li> : null}
+              {loadedSourceLatestClinicalDayLabel ? (
+                <li className={isLoadedSourceStale ? "stale-data-warning" : undefined}>
+                  Last date with data on card: {loadedSourceLatestClinicalDayLabel}
+                  {staleDataWarning ? <span className="stale-data-detail"> {staleDataWarning}</span> : null}
+                </li>
+              ) : null}
             </ul>
           ) : null}
 
@@ -1003,8 +1048,12 @@ export function QuickReportApp() {
                   Selected loader and Date range ({resolvedActiveReportDays ?? activeReportDays} days): {activeMetrics.selectedLoader} | {activeMetrics.dateRangeStart} to {activeMetrics.dateRangeEnd}
                 </li>
                 {loadedSourceLatestClinicalDayLabel ? (
-                  <li>Last date with data on card: {loadedSourceLatestClinicalDayLabel}</li>
+                  <li className={isLoadedSourceStale ? "stale-data-warning" : undefined}>
+                    Last date with data on card: {loadedSourceLatestClinicalDayLabel}
+                    {staleDataWarning ? <span className="stale-data-detail"> {staleDataWarning}</span> : null}
+                  </li>
                 ) : null}
+                {loadedMixedDataWarning ? <li className="mixed-data-warning">{loadedMixedDataWarning}</li> : null}
               </ul>
             ) : null}
 

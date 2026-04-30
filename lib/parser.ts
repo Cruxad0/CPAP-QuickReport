@@ -12,8 +12,10 @@ import {
   hasFamilySignature,
   isCandidateForFamily,
   rankParserFamilies,
+  selectLoaderMatchByDatedRecency,
   type LoaderMatch,
-  type ParserFamilyDefinition
+  type ParserFamilyDefinition,
+  type RecencyLoaderSelection
 } from "@/lib/parsers/families";
 import { hasBmcBundleStructure } from "@/lib/parsers/families/bmc";
 import { parseBmcFamily } from "@/lib/parsers/bmc";
@@ -2201,12 +2203,40 @@ function usesDedicatedFamilyParser(familyId: string): boolean {
   );
 }
 
+function formatLoaderRecencyDate(date: Date | null): string {
+  return date ? toIsoDate(date) : "no dated folder evidence";
+}
+
+function buildMixedLoaderWarning(selection: RecencyLoaderSelection, selectedFamily: ParserFamilyDefinition): string | null {
+  if (selection.summaries.length < 2) return null;
+  const detectedIds = new Set(selection.summaries.map((summary) => summary.match.id));
+  const isOnlyFisherPaykelAmbiguity = [...detectedIds].every((id) => id === "sleepstyle" || id === "icon");
+  if (isOnlyFisherPaykelAmbiguity) return null;
+
+  const summaries = [...selection.summaries].sort((a, b) => {
+    const dateDelta = (b.latestDate?.getTime() ?? Number.NEGATIVE_INFINITY) - (a.latestDate?.getTime() ?? Number.NEGATIVE_INFINITY);
+    if (dateDelta !== 0) return dateDelta;
+    return b.match.score - a.match.score || a.match.label.localeCompare(b.match.label);
+  });
+  const recencyText = summaries
+    .slice(0, 4)
+    .map((summary) => `${summary.match.label}: ${formatLoaderRecencyDate(summary.latestDate)}`)
+    .join("; ");
+
+  if (selection.selectedByLatestDatedData) {
+    const selectedSummary = summaries.find((summary) => summary.match.id === selection.selected?.id) ?? null;
+    return `Mixed device data detected. Selected ${selectedFamily.label} because it has the newest dated folder data (${formatLoaderRecencyDate(selectedSummary?.latestDate ?? null)}). Detected layouts: ${recencyText}.`;
+  }
+
+  return `Multiple device layouts detected. Selected ${selectedFamily.label}. Dated folder comparison: ${recencyText}.`;
+}
+
 async function refineSelectedFamily(
   selectedFamily: ParserFamilyDefinition | null,
   loaderRanking: LoaderMatch[],
   meta: SourceMeta[]
 ): Promise<ParserFamilyDefinition | null> {
-  if (hasBmcBundleStructure(meta)) {
+  if (hasBmcBundleStructure(meta) && (!selectedFamily || selectedFamily.id === "bmc")) {
     return getParserFamily("bmc") ?? selectedFamily;
   }
 
@@ -2298,8 +2328,9 @@ async function prepareQuickReportSourceInternal(request: PrepareQuickReportSourc
 
   const meta = files.map(toSourceMeta);
   const loaderRanking = rankParserFamilies(meta);
+  const loaderSelection = selectLoaderMatchByDatedRecency(meta, loaderRanking);
   const likelyLoaders = loaderRanking.map((m) => m.label);
-  const selectedLoader = loaderRanking[0] ?? null;
+  const selectedLoader = loaderSelection.selected;
   const selectedFamily = await refineSelectedFamily(selectedLoader?.family ?? null, loaderRanking, meta);
   if (!selectedFamily) {
     throw new Error("Device structure was not recognized. This webapp only loads supported CPAP/NIV SD-card layouts.");
@@ -2689,6 +2720,8 @@ async function prepareQuickReportSourceInternal(request: PrepareQuickReportSourc
   if (selectedLoader) {
     const top = loaderRanking.slice(0, 4).map((m) => `${m.label} (${m.score})`).join(", ");
     warnings.unshift(`Selected loader: ${selectedFamily.label}. Candidate scores: ${top}.`);
+    const mixedLoaderWarning = buildMixedLoaderWarning(loaderSelection, selectedFamily);
+    if (mixedLoaderWarning) warnings.unshift(mixedLoaderWarning);
   } else if (likelyLoaders.length > 0) {
     warnings.unshift(`Detected OSCAR-compatible loader signatures: ${likelyLoaders.join(", ")}.`);
   }

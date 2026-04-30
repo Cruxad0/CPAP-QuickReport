@@ -62,6 +62,7 @@ export type ReportWorkerResponse =
       statusMessage: string;
       selectedLoader: string;
       latestClinicalDayIso: string;
+      warnings: string[];
     }
   | {
       requestId: number;
