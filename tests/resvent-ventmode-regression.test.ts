@@ -28,7 +28,15 @@ function bucket(usageHours: number): PreparedDayBucket {
     pressureAvgSum: 0,
     pressureAvgCount: 0,
     pressure95Sum: 0,
-    pressure95Count: 0
+    pressure95Count: 0,
+    ipapAvgSum: 0,
+    ipapAvgCount: 0,
+    ipap95Sum: 0,
+    ipap95Count: 0,
+    epapAvgSum: 0,
+    epapAvgCount: 0,
+    epap95Sum: 0,
+    epap95Count: 0
   };
 }
 
@@ -135,6 +143,12 @@ test("Resvent latest STAT VentMode confirms active Auto S30 bilevel mode", async
   assert.equal(metrics.machine.mode, "Auto S30");
   assert.equal(metrics.daysWithData, 1);
   assert.equal(metrics.daysWithUsage, 1);
+  assert.equal(metrics.machine.pressureAvg, undefined);
+  assert.equal(metrics.machine.pressure95th, undefined);
+  assert.equal(metrics.machine.ipapAvg, 4.4);
+  assert.equal(metrics.machine.ipap95th, 5.7);
+  assert.equal(metrics.machine.epapAvg, 3.8);
+  assert.equal(metrics.machine.epap95th, 4);
 });
 
 test("Resvent CPAP config reports fixed Press instead of APAP min/max range", async () => {

@@ -30,7 +30,15 @@ function bucket(usageHours: number): PreparedDayBucket {
     pressureAvgSum: 0,
     pressureAvgCount: 0,
     pressure95Sum: 0,
-    pressure95Count: 0
+    pressure95Count: 0,
+    ipapAvgSum: 0,
+    ipapAvgCount: 0,
+    ipap95Sum: 0,
+    ipap95Count: 0,
+    epapAvgSum: 0,
+    epapAvgCount: 0,
+    epap95Sum: 0,
+    epap95Count: 0
   };
 }
 
@@ -70,7 +78,15 @@ function runLocalAnchorFixture(
       pressureAvgSum: 0,
       pressureAvgCount: 0,
       pressure95Sum: 0,
-      pressure95Count: 0
+      pressure95Count: 0,
+      ipapAvgSum: 0,
+      ipapAvgCount: 0,
+      ipap95Sum: 0,
+      ipap95Count: 0,
+      epapAvgSum: 0,
+      epapAvgCount: 0,
+      epap95Sum: 0,
+      epap95Count: 0
     });
     const RealDate = Date;
     class MockDate extends RealDate {

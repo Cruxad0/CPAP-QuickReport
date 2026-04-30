@@ -156,13 +156,19 @@ test("therapy summary does not derive min and max pressure rows from fixed BiPAP
         mode: "BiPAP",
         epap: "7 cmH2O",
         ipap: "11 cmH2O",
+        epapAvg: 7.1,
+        epap95th: 7.8,
+        ipapAvg: 10.6,
+        ipap95th: 11.2,
         pressureAvg: 10.08,
         pressure95th: 11.4
       })
     ),
     [
-      ["95th Pressure", "11.4 cmH2O"],
-      ["Avg Pressure", "10.1 cmH2O"]
+      ["95th IPAP", "11.2 cmH2O"],
+      ["Avg IPAP", "10.6 cmH2O"],
+      ["95th EPAP", "7.8 cmH2O"],
+      ["Avg EPAP", "7.1 cmH2O"]
     ]
   );
 });
@@ -175,13 +181,21 @@ test("therapy summary shows min and max pressure rows for auto BiPAP settings", 
         pressureIsAuto: true,
         pressureMin: "7 cmH2O",
         pressureMax: "11 cmH2O",
+        epapAvg: 7.1,
+        epap95th: 7.8,
+        ipapAvg: 10.6,
+        ipap95th: 11.2,
         pressureAvg: 10.08,
         pressure95th: 11.4
       })
     ),
     [
-      ["95th Pressure", "11.4 cmH2O"],
-      ["Avg Pressure", "10.1 cmH2O"],
+      ["95th IPAP", "11.2 cmH2O"],
+      ["Avg IPAP", "10.6 cmH2O"],
+      ["95th EPAP", "7.8 cmH2O"],
+      ["Avg EPAP", "7.1 cmH2O"],
+      ["95th Mask Pressure", "11.4 cmH2O"],
+      ["Avg Mask Pressure", "10.1 cmH2O"],
       ["Min Pressure", "7.0 cmH2O"],
       ["Max Pressure", "11.0 cmH2O"]
     ]

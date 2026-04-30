@@ -726,6 +726,10 @@ function hasAnyPressureSummaryValue(report: QuickReportMetrics, derivedRange: { 
   return (
     typeof report.machine.pressureAvg === "number" ||
     typeof report.machine.pressure95th === "number" ||
+    typeof report.machine.ipapAvg === "number" ||
+    typeof report.machine.ipap95th === "number" ||
+    typeof report.machine.epapAvg === "number" ||
+    typeof report.machine.epap95th === "number" ||
     Boolean(report.machine.pressureMin) ||
     Boolean(report.machine.pressureMax) ||
     Boolean(derivedRange) ||
@@ -744,10 +748,20 @@ export function therapyPressureRows(report: QuickReportMetrics): TableRow[] {
 
   const minPressure = report.machine.pressureMin ?? derivedRange?.min ?? (isFixedCpap ? report.machine.pressure : undefined);
   const maxPressure = report.machine.pressureMax ?? derivedRange?.max ?? (isFixedCpap ? report.machine.pressure : undefined);
-  const rows: TableRow[] = [
-    ["95th Pressure", pressureMetricText(report.machine.pressure95th)],
-    ["Avg Pressure", pressureMetricText(report.machine.pressureAvg)]
-  ];
+  const rows: TableRow[] = [];
+  if (isBiPap) {
+    rows.push(["95th IPAP", pressureMetricText(report.machine.ipap95th)]);
+    rows.push(["Avg IPAP", pressureMetricText(report.machine.ipapAvg)]);
+    rows.push(["95th EPAP", pressureMetricText(report.machine.epap95th)]);
+    rows.push(["Avg EPAP", pressureMetricText(report.machine.epapAvg)]);
+    if (isAutoBiPap && (typeof report.machine.pressure95th === "number" || typeof report.machine.pressureAvg === "number")) {
+      rows.push(["95th Mask Pressure", pressureMetricText(report.machine.pressure95th)]);
+      rows.push(["Avg Mask Pressure", pressureMetricText(report.machine.pressureAvg)]);
+    }
+  } else {
+    rows.push(["95th Pressure", pressureMetricText(report.machine.pressure95th)]);
+    rows.push(["Avg Pressure", pressureMetricText(report.machine.pressureAvg)]);
+  }
   if (!isBiPap || isAutoBiPap) {
     rows.push(["Min Pressure", pressureSettingText(minPressure)]);
     rows.push(["Max Pressure", pressureSettingText(maxPressure)]);

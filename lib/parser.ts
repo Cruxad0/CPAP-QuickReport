@@ -1088,6 +1088,10 @@ function parseResventStatText(text: string, fallbackDate: Date): ParsedRecord | 
   let reraIndex: number | undefined;
   let pressureAvg: number | undefined;
   let pressure95th: number | undefined;
+  let ipapAvg: number | undefined;
+  let ipap95th: number | undefined;
+  let epapAvg: number | undefined;
+  let epap95th: number | undefined;
   let eventCount: number | undefined;
   if (cntAI !== undefined && cntHI !== undefined) {
     eventCount = cntAI + cntHI;
@@ -1117,15 +1121,29 @@ function parseResventStatText(text: string, fallbackDate: Date): ParsedRecord | 
   for (const [key, value] of kvLower.entries()) {
     const normalized = normalizePressureNumber(safeNumber(value));
     if (normalized === undefined) continue;
+    if (ipapAvg === undefined && /(?:med|median|avg|average|mean).*ipap|ipap.*(?:med|median|avg|average|mean)/i.test(key)) {
+      ipapAvg = normalized;
+      continue;
+    }
+    if (ipap95th === undefined && /(?:95|p95).*ipap|ipap.*(?:95|p95)/i.test(key)) {
+      ipap95th = normalized;
+      continue;
+    }
+    if (epapAvg === undefined && /(?:med|median|avg|average|mean).*epap|epap.*(?:med|median|avg|average|mean)/i.test(key)) {
+      epapAvg = normalized;
+      continue;
+    }
+    if (epap95th === undefined && /(?:95|p95).*epap|epap.*(?:95|p95)/i.test(key)) {
+      epap95th = normalized;
+      continue;
+    }
     if (
       pressureAvg === undefined &&
-      /(?:med|median|avg|average|mean).*(?:press|ipap|epap)|(?:press|ipap|epap).*(?:med|median|avg|average|mean)/i.test(
-        key
-      )
+      /(?:med|median|avg|average|mean).*press|press.*(?:med|median|avg|average|mean)/i.test(key)
     ) {
       pressureAvg = normalized;
     }
-    if (pressure95th === undefined && /(?:95|p95).*(?:press|ipap|epap)|(?:press|ipap|epap).*(?:95|p95)/i.test(key)) {
+    if (pressure95th === undefined && /(?:95|p95).*press|press.*(?:95|p95)/i.test(key)) {
       pressure95th = normalized;
     }
   }
@@ -1178,7 +1196,11 @@ function parseResventStatText(text: string, fallbackDate: Date): ParsedRecord | 
     (leak95th !== undefined && leak95th >= 0 && leak95th < 500) ||
     (leakMax !== undefined && leakMax >= 0 && leakMax < 500) ||
     (pressureAvg !== undefined && pressureAvg >= 0 && pressureAvg <= 80) ||
-    (pressure95th !== undefined && pressure95th >= 0 && pressure95th <= 80);
+    (pressure95th !== undefined && pressure95th >= 0 && pressure95th <= 80) ||
+    (ipapAvg !== undefined && ipapAvg >= 0 && ipapAvg <= 80) ||
+    (ipap95th !== undefined && ipap95th >= 0 && ipap95th <= 80) ||
+    (epapAvg !== undefined && epapAvg >= 0 && epapAvg <= 80) ||
+    (epap95th !== undefined && epap95th >= 0 && epap95th <= 80);
   if (!hasSignal) return null;
 
   return {
@@ -1192,7 +1214,11 @@ function parseResventStatText(text: string, fallbackDate: Date): ParsedRecord | 
     leak95th: leak95th !== undefined && leak95th >= 0 && leak95th < 500 ? leak95th : undefined,
     leakMax: leakMax !== undefined && leakMax >= 0 && leakMax < 500 ? leakMax : undefined,
     pressureAvg: pressureAvg !== undefined && pressureAvg >= 0 && pressureAvg <= 80 ? pressureAvg : undefined,
-    pressure95th: pressure95th !== undefined && pressure95th >= 0 && pressure95th <= 80 ? pressure95th : undefined
+    pressure95th: pressure95th !== undefined && pressure95th >= 0 && pressure95th <= 80 ? pressure95th : undefined,
+    ipapAvg: ipapAvg !== undefined && ipapAvg >= 0 && ipapAvg <= 80 ? ipapAvg : undefined,
+    ipap95th: ipap95th !== undefined && ipap95th >= 0 && ipap95th <= 80 ? ipap95th : undefined,
+    epapAvg: epapAvg !== undefined && epapAvg >= 0 && epapAvg <= 80 ? epapAvg : undefined,
+    epap95th: epap95th !== undefined && epap95th >= 0 && epap95th <= 80 ? epap95th : undefined
   };
 }
 
@@ -1318,23 +1344,21 @@ function parseGenericDailyKeyValueRecord(text: string, fallbackDate: Date): Pars
     "cnt_rera"
   ]);
 
-  const pressureAvg = (() => {
+  const readPressureByPattern = (pattern: RegExp): number | undefined => {
     for (const [key, value] of kvLower.entries()) {
-      if (!/(?:avg|average|mean).*(?:press|ipap|epap)|(?:press|ipap|epap).*(?:avg|average|mean)/i.test(key)) continue;
+      if (!pattern.test(key)) continue;
       const n = normalizePressureNumber(safeNumber(value));
       if (n !== undefined) return n;
     }
     return undefined;
-  })();
+  };
 
-  const pressure95th = (() => {
-    for (const [key, value] of kvLower.entries()) {
-      if (!/(?:95|p95).*(?:press|ipap|epap)|(?:press|ipap|epap).*(?:95|p95)/i.test(key)) continue;
-      const n = normalizePressureNumber(safeNumber(value));
-      if (n !== undefined) return n;
-    }
-    return undefined;
-  })();
+  const pressureAvg = readPressureByPattern(/(?:avg|average|mean).*press|press.*(?:avg|average|mean)/i);
+  const pressure95th = readPressureByPattern(/(?:95|p95).*press|press.*(?:95|p95)/i);
+  const ipapAvg = readPressureByPattern(/(?:med|median|avg|average|mean).*ipap|ipap.*(?:med|median|avg|average|mean)/i);
+  const ipap95th = readPressureByPattern(/(?:95|p95).*ipap|ipap.*(?:95|p95)/i);
+  const epapAvg = readPressureByPattern(/(?:med|median|avg|average|mean).*epap|epap.*(?:med|median|avg|average|mean)/i);
+  const epap95th = readPressureByPattern(/(?:95|p95).*epap|epap.*(?:95|p95)/i);
 
   let leak: number | undefined;
   let leakMax: number | undefined;
@@ -1359,7 +1383,11 @@ function parseGenericDailyKeyValueRecord(text: string, fallbackDate: Date): Pars
     (leak !== undefined && leak >= 0 && leak < 500) ||
     (leakMax !== undefined && leakMax >= 0 && leakMax < 500) ||
     (pressureAvg !== undefined && pressureAvg >= 0 && pressureAvg <= 80) ||
-    (pressure95th !== undefined && pressure95th >= 0 && pressure95th <= 80);
+    (pressure95th !== undefined && pressure95th >= 0 && pressure95th <= 80) ||
+    (ipapAvg !== undefined && ipapAvg >= 0 && ipapAvg <= 80) ||
+    (ipap95th !== undefined && ipap95th >= 0 && ipap95th <= 80) ||
+    (epapAvg !== undefined && epapAvg >= 0 && epapAvg <= 80) ||
+    (epap95th !== undefined && epap95th >= 0 && epap95th <= 80);
 
   if (!hasSignal) return null;
   return {
@@ -1374,7 +1402,11 @@ function parseGenericDailyKeyValueRecord(text: string, fallbackDate: Date): Pars
     leak: leak !== undefined && leak >= 0 && leak < 500 ? leak : undefined,
     leakMax: leakMax !== undefined && leakMax >= 0 && leakMax < 500 ? leakMax : undefined,
     pressureAvg: pressureAvg !== undefined && pressureAvg >= 0 && pressureAvg <= 80 ? pressureAvg : undefined,
-    pressure95th: pressure95th !== undefined && pressure95th >= 0 && pressure95th <= 80 ? pressure95th : undefined
+    pressure95th: pressure95th !== undefined && pressure95th >= 0 && pressure95th <= 80 ? pressure95th : undefined,
+    ipapAvg: ipapAvg !== undefined && ipapAvg >= 0 && ipapAvg <= 80 ? ipapAvg : undefined,
+    ipap95th: ipap95th !== undefined && ipap95th >= 0 && ipap95th <= 80 ? ipap95th : undefined,
+    epapAvg: epapAvg !== undefined && epapAvg >= 0 && epapAvg <= 80 ? epapAvg : undefined,
+    epap95th: epap95th !== undefined && epap95th >= 0 && epap95th <= 80 ? epap95th : undefined
   };
 }
 
@@ -1403,8 +1435,12 @@ function tryParseDelimited(text: string): ParsedRecord[] {
   const reraIdx = headers.findIndex((h) => /(?:^|[^a-z])rera(?:[^a-z]|$)|rera\s*index/.test(h));
   const leakIdx = headers.findIndex((h) => /leak/.test(h));
   const leakMaxIdx = headers.findIndex((h) => /(?:max).*(?:leak)|(?:leak).*(?:max)/.test(h));
-  const pressureAvgIdx = headers.findIndex((h) => /(?:avg|average|mean).*(?:press|ipap|epap)|(?:press|ipap|epap).*(?:avg|average|mean)/.test(h));
-  const pressure95Idx = headers.findIndex((h) => /(?:95|p95).*(?:press|ipap|epap)|(?:press|ipap|epap).*(?:95|p95)/.test(h));
+  const pressureAvgIdx = headers.findIndex((h) => /(?:avg|average|mean).*press|press.*(?:avg|average|mean)/.test(h));
+  const pressure95Idx = headers.findIndex((h) => /(?:95|p95).*press|press.*(?:95|p95)/.test(h));
+  const ipapAvgIdx = headers.findIndex((h) => /(?:med|median|avg|average|mean).*ipap|ipap.*(?:med|median|avg|average|mean)/.test(h));
+  const ipap95Idx = headers.findIndex((h) => /(?:95|p95).*ipap|ipap.*(?:95|p95)/.test(h));
+  const epapAvgIdx = headers.findIndex((h) => /(?:med|median|avg|average|mean).*epap|epap.*(?:med|median|avg|average|mean)/.test(h));
+  const epap95Idx = headers.findIndex((h) => /(?:95|p95).*epap|epap.*(?:95|p95)/.test(h));
 
   if (dateIdx < 0) return [];
 
@@ -1424,7 +1460,11 @@ function tryParseDelimited(text: string): ParsedRecord[] {
       leak: leakIdx >= 0 ? safeNumber(row[leakIdx]) : undefined,
       leakMax: leakMaxIdx >= 0 ? safeNumber(row[leakMaxIdx]) : undefined,
       pressureAvg: pressureAvgIdx >= 0 ? normalizePressureNumber(safeNumber(row[pressureAvgIdx])) : undefined,
-      pressure95th: pressure95Idx >= 0 ? normalizePressureNumber(safeNumber(row[pressure95Idx])) : undefined
+      pressure95th: pressure95Idx >= 0 ? normalizePressureNumber(safeNumber(row[pressure95Idx])) : undefined,
+      ipapAvg: ipapAvgIdx >= 0 ? normalizePressureNumber(safeNumber(row[ipapAvgIdx])) : undefined,
+      ipap95th: ipap95Idx >= 0 ? normalizePressureNumber(safeNumber(row[ipap95Idx])) : undefined,
+      epapAvg: epapAvgIdx >= 0 ? normalizePressureNumber(safeNumber(row[epapAvgIdx])) : undefined,
+      epap95th: epap95Idx >= 0 ? normalizePressureNumber(safeNumber(row[epap95Idx])) : undefined
     });
   }
 
@@ -1447,8 +1487,12 @@ function tryParseFreeText(text: string): ParsedRecord[] {
     const reraMatch = line.match(/(?:rera(?:\s*index)?)(?:\s*[:=]|\D)*(-?\d+(?:\.\d+)?)/i);
     const leakMatch = line.match(/leak(?:age)?\D*(-?\d+(?:\.\d+)?)/i);
     const leakMaxMatch = line.match(/(?:max(?:imum)?\s*leak(?:age)?|leak(?:age)?\s*max)\D*(-?\d+(?:\.\d+)?)/i);
-    const pressureAvgMatch = line.match(/(?:avg|average|mean)\s*(?:mask\s*)?(?:pressure|ipap|epap)\D*(-?\d+(?:\.\d+)?)/i);
-    const pressure95Match = line.match(/(?:95(?:th|%)|p95)\s*(?:mask\s*)?(?:pressure|ipap|epap)\D*(-?\d+(?:\.\d+)?)/i);
+    const pressureAvgMatch = line.match(/(?:avg|average|mean)\s*(?:mask\s*)?pressure\D*(-?\d+(?:\.\d+)?)/i);
+    const pressure95Match = line.match(/(?:95(?:th|%)|p95)\s*(?:mask\s*)?pressure\D*(-?\d+(?:\.\d+)?)/i);
+    const ipapAvgMatch = line.match(/(?:avg|average|mean|median|med)\s*ipap\D*(-?\d+(?:\.\d+)?)/i);
+    const ipap95Match = line.match(/(?:95(?:th|%)|p95)\s*ipap\D*(-?\d+(?:\.\d+)?)/i);
+    const epapAvgMatch = line.match(/(?:avg|average|mean|median|med)\s*epap\D*(-?\d+(?:\.\d+)?)/i);
+    const epap95Match = line.match(/(?:95(?:th|%)|p95)\s*epap\D*(-?\d+(?:\.\d+)?)/i);
 
     out.push({
       date,
@@ -1460,7 +1504,11 @@ function tryParseFreeText(text: string): ParsedRecord[] {
       leak: leakMatch ? safeNumber(leakMatch[1]) : undefined,
       leakMax: leakMaxMatch ? safeNumber(leakMaxMatch[1]) : undefined,
       pressureAvg: pressureAvgMatch ? normalizePressureNumber(safeNumber(pressureAvgMatch[1])) : undefined,
-      pressure95th: pressure95Match ? normalizePressureNumber(safeNumber(pressure95Match[1])) : undefined
+      pressure95th: pressure95Match ? normalizePressureNumber(safeNumber(pressure95Match[1])) : undefined,
+      ipapAvg: ipapAvgMatch ? normalizePressureNumber(safeNumber(ipapAvgMatch[1])) : undefined,
+      ipap95th: ipap95Match ? normalizePressureNumber(safeNumber(ipap95Match[1])) : undefined,
+      epapAvg: epapAvgMatch ? normalizePressureNumber(safeNumber(epapAvgMatch[1])) : undefined,
+      epap95th: epap95Match ? normalizePressureNumber(safeNumber(epap95Match[1])) : undefined
     });
   }
 
@@ -1487,7 +1535,11 @@ function sanitizeRecords(records: ParsedRecord[]): ParsedRecord[] {
       (typeof r.leakMax30m === "number" && r.leakMax30m >= 0 && r.leakMax30m < 500) ||
       (typeof r.leakMax60m === "number" && r.leakMax60m >= 0 && r.leakMax60m < 500) ||
       (typeof r.pressureAvg === "number" && r.pressureAvg >= 0 && r.pressureAvg <= 80) ||
-      (typeof r.pressure95th === "number" && r.pressure95th >= 0 && r.pressure95th <= 80);
+      (typeof r.pressure95th === "number" && r.pressure95th >= 0 && r.pressure95th <= 80) ||
+      (typeof r.ipapAvg === "number" && r.ipapAvg >= 0 && r.ipapAvg <= 80) ||
+      (typeof r.ipap95th === "number" && r.ipap95th >= 0 && r.ipap95th <= 80) ||
+      (typeof r.epapAvg === "number" && r.epapAvg >= 0 && r.epapAvg <= 80) ||
+      (typeof r.epap95th === "number" && r.epap95th >= 0 && r.epap95th <= 80);
     return hasSignal;
   });
 }
@@ -1505,7 +1557,11 @@ function recordSignature(record: ParsedRecord): string {
   const lmax60m = typeof record.leakMax60m === "number" ? record.leakMax60m.toFixed(3) : "";
   const pa = typeof record.pressureAvg === "number" ? record.pressureAvg.toFixed(3) : "";
   const p95 = typeof record.pressure95th === "number" ? record.pressure95th.toFixed(3) : "";
-  return `${toIsoDate(record.date)}|${u}|${a}|${r}|${c}|${re}|${l}|${l95}|${lmax}|${lmax30m}|${lmax60m}|${pa}|${p95}`;
+  const ia = typeof record.ipapAvg === "number" ? record.ipapAvg.toFixed(3) : "";
+  const i95 = typeof record.ipap95th === "number" ? record.ipap95th.toFixed(3) : "";
+  const ea = typeof record.epapAvg === "number" ? record.epapAvg.toFixed(3) : "";
+  const e95 = typeof record.epap95th === "number" ? record.epap95th.toFixed(3) : "";
+  return `${toIsoDate(record.date)}|${u}|${a}|${r}|${c}|${re}|${l}|${l95}|${lmax}|${lmax30m}|${lmax60m}|${pa}|${p95}|${ia}|${i95}|${ea}|${e95}`;
 }
 
 function dedupeParsedRecords(records: ParsedRecord[]): ParsedRecord[] {
@@ -1780,7 +1836,15 @@ function createEmptyDayBucket(): DayBucket {
     pressureAvgSum: 0,
     pressureAvgCount: 0,
     pressure95Sum: 0,
-    pressure95Count: 0
+    pressure95Count: 0,
+    ipapAvgSum: 0,
+    ipapAvgCount: 0,
+    ipap95Sum: 0,
+    ipap95Count: 0,
+    epapAvgSum: 0,
+    epapAvgCount: 0,
+    epap95Sum: 0,
+    epap95Count: 0
   };
 }
 
@@ -1882,6 +1946,26 @@ function buildDayBucketsFromRecordsAndLeaks(
       bucket.pressure95Count += 1;
     }
 
+    if (typeof record.ipapAvg === "number" && record.ipapAvg >= 0 && record.ipapAvg <= 80) {
+      bucket.ipapAvgSum += record.ipapAvg;
+      bucket.ipapAvgCount += 1;
+    }
+
+    if (typeof record.ipap95th === "number" && record.ipap95th >= 0 && record.ipap95th <= 80) {
+      bucket.ipap95Sum += record.ipap95th;
+      bucket.ipap95Count += 1;
+    }
+
+    if (typeof record.epapAvg === "number" && record.epapAvg >= 0 && record.epapAvg <= 80) {
+      bucket.epapAvgSum += record.epapAvg;
+      bucket.epapAvgCount += 1;
+    }
+
+    if (typeof record.epap95th === "number" && record.epap95th >= 0 && record.epap95th <= 80) {
+      bucket.epap95Sum += record.epap95th;
+      bucket.epap95Count += 1;
+    }
+
     if (typeof record.leak === "number" && record.leak >= 0 && record.leak < 500) {
       bucket.leakSum += record.leak;
       bucket.leakCount += 1;
@@ -1939,6 +2023,10 @@ function sanitizeMachineSettingsForResolvedMode(
     machine.pressureMax = undefined;
     machine.epap = undefined;
     machine.ipap = undefined;
+    machine.epapAvg = undefined;
+    machine.epap95th = undefined;
+    machine.ipapAvg = undefined;
+    machine.ipap95th = undefined;
     machine.respiratoryRate = undefined;
     return;
   }
@@ -1947,6 +2035,10 @@ function sanitizeMachineSettingsForResolvedMode(
     machine.pressureIsAuto = true;
     machine.epap = undefined;
     machine.ipap = undefined;
+    machine.epapAvg = undefined;
+    machine.epap95th = undefined;
+    machine.ipapAvg = undefined;
+    machine.ipap95th = undefined;
     machine.respiratoryRate = undefined;
     return;
   }
@@ -1965,6 +2057,10 @@ function normalizeMachineSettingsForModeResolution(machine: QuickReportMetrics["
   if (explicitMode === "APAP" || explicitMode === "CPAP") {
     machine.epap = undefined;
     machine.ipap = undefined;
+    machine.epapAvg = undefined;
+    machine.epap95th = undefined;
+    machine.ipapAvg = undefined;
+    machine.ipap95th = undefined;
     machine.respiratoryRate = undefined;
   } else if (explicitMode === "BiPAP") {
     const isAutoBiPap = isAutoBiPapLikeMode(machine.mode) || Boolean(machine.pressureMin || machine.pressureMax);
@@ -2730,6 +2826,22 @@ export function buildQuickReportMetricsFromPreparedSource(
     .filter((d) => d.pressure95Count > 0)
     .map((d) => d.pressure95Sum / d.pressure95Count);
 
+  const ipapAvgValues = dayBuckets
+    .filter((d) => d.ipapAvgCount > 0)
+    .map((d) => d.ipapAvgSum / d.ipapAvgCount);
+
+  const ipap95Values = dayBuckets
+    .filter((d) => d.ipap95Count > 0)
+    .map((d) => d.ipap95Sum / d.ipap95Count);
+
+  const epapAvgValues = dayBuckets
+    .filter((d) => d.epapAvgCount > 0)
+    .map((d) => d.epapAvgSum / d.epapAvgCount);
+
+  const epap95Values = dayBuckets
+    .filter((d) => d.epap95Count > 0)
+    .map((d) => d.epap95Sum / d.epap95Count);
+
   const weightedUsageRate = (
     values: number[],
     dayValue: (bucket: DayBucket) => number | null
@@ -2832,6 +2944,24 @@ export function buildQuickReportMetricsFromPreparedSource(
       : pressureAvgValues.length > 0
         ? percentile(pressureAvgValues, 95)
         : null;
+  const avgIpap = ipapAvgValues.length > 0 ? ipapAvgValues.reduce((a, b) => a + b, 0) / ipapAvgValues.length : null;
+  const ipap95th =
+    ipap95Values.length > 0
+      ? summaryAggregationPolicy.pressure95Aggregation === "daily-summary-mean"
+        ? ipap95Values.reduce((a, b) => a + b, 0) / ipap95Values.length
+        : percentile(ipap95Values, 95)
+      : ipapAvgValues.length > 0
+        ? percentile(ipapAvgValues, 95)
+        : null;
+  const avgEpap = epapAvgValues.length > 0 ? epapAvgValues.reduce((a, b) => a + b, 0) / epapAvgValues.length : null;
+  const epap95th =
+    epap95Values.length > 0
+      ? summaryAggregationPolicy.pressure95Aggregation === "daily-summary-mean"
+        ? epap95Values.reduce((a, b) => a + b, 0) / epap95Values.length
+        : percentile(epap95Values, 95)
+      : epapAvgValues.length > 0
+        ? percentile(epapAvgValues, 95)
+        : null;
 
   if (usageValues.length === 0) {
     warnings.push("Usage-hour fields were not found in the selected data. Compliance metrics are shown as 0.");
@@ -2855,6 +2985,18 @@ export function buildQuickReportMetricsFromPreparedSource(
   }
   if (pressure95th !== null) {
     machine.pressure95th = finite(pressure95th);
+  }
+  if (avgIpap !== null) {
+    machine.ipapAvg = finite(avgIpap);
+  }
+  if (ipap95th !== null) {
+    machine.ipap95th = finite(ipap95th);
+  }
+  if (avgEpap !== null) {
+    machine.epapAvg = finite(avgEpap);
+  }
+  if (epap95th !== null) {
+    machine.epap95th = finite(epap95th);
   }
   verifyResolvedTherapyModeOrThrow(machine, prepared.selectedLoader);
 

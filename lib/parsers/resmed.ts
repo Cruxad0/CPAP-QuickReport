@@ -567,16 +567,23 @@ function parseResMedStrEdf(
   const leakMaxAliases = ["Leak Max", "Leak.Max"];
   const pressure50Aliases = ["MaskPress.50", "Mask Pres 50", "MaskPress.5", "Mask Pres Med"];
   const pressure95Aliases = ["MaskPress.95", "Mask Pres 95"];
+  const ipap50Aliases = ["TgtIPAP.50", "IPAP.50"];
+  const ipap95Aliases = ["TgtIPAP.95", "IPAP.95"];
+  const epap50Aliases = ["TgtEPAP.50", "EPAP.50"];
+  const epap95Aliases = ["TgtEPAP.95", "EPAP.95"];
   const setPressureAliases = ["Set Pressure", "S.C.Press"];
   const minPressureAliases = ["Min Pressure", "S.AS.MinPress", "S.A.MinPress", "S.AFH.MinPress"];
   const maxPressureAliases = ["Max Pressure", "S.AS.MaxPress", "S.A.MaxPress", "S.AFH.MaxPress"];
   const epapAliases = ["EPAP", "Exp Pres Med"];
+  const fixedBilevelEpapAliases = ["S.BL.EPAP"];
   const minEpapAliases = ["Min EPAP", "S.VA.MinEPAP"];
   const maxEpapAliases = ["Max EPAP"];
   const ipapAliases = ["IPAP", "Insp Pres Med"];
+  const fixedBilevelIpapAliases = ["S.BL.IPAP"];
   const minIpapAliases = ["Min IPAP"];
   const maxIpapAliases = ["Max IPAP", "S.VA.MaxIPAP"];
   const psAliases = ["PS", "S.VA.PS"];
+  const backupRateAliases = ["S.BL.BackupRate", "Backup Rate"];
   const rampEnableAliases = ["S.RampEnable"];
   const rampTimeAliases = ["S.RampTime"];
   const cpapStartPressureAliases = ["S.C.StartPress"];
@@ -606,6 +613,10 @@ function parseResMedStrEdf(
     const leakMax = normalizeResMedLeakValue(readSignalValue(bytes, edf, leakMaxSignal, recordIndex), leakMaxSignal);
     const pressureAvg = readResMedValue(bytes, edf, pressure50Aliases, recordIndex);
     const pressure95th = readResMedValue(bytes, edf, pressure95Aliases, recordIndex);
+    const ipapAvg = readResMedValue(bytes, edf, ipap50Aliases, recordIndex);
+    const ipap95th = readResMedValue(bytes, edf, ipap95Aliases, recordIndex);
+    const epapAvg = readResMedValue(bytes, edf, epap50Aliases, recordIndex);
+    const epap95th = readResMedValue(bytes, edf, epap95Aliases, recordIndex);
 
     const hasSignal =
       (usageHours !== undefined && usageHours >= 0 && usageHours <= 24) ||
@@ -617,7 +628,11 @@ function parseResMedStrEdf(
       (leak95th !== undefined && leak95th >= 0 && leak95th < 500) ||
       (leakMax !== undefined && leakMax >= 0 && leakMax < 500) ||
       (pressureAvg !== undefined && pressureAvg >= 0 && pressureAvg <= 80) ||
-      (pressure95th !== undefined && pressure95th >= 0 && pressure95th <= 80);
+      (pressure95th !== undefined && pressure95th >= 0 && pressure95th <= 80) ||
+      (ipapAvg !== undefined && ipapAvg >= 0 && ipapAvg <= 80) ||
+      (ipap95th !== undefined && ipap95th >= 0 && ipap95th <= 80) ||
+      (epapAvg !== undefined && epapAvg >= 0 && epapAvg <= 80) ||
+      (epap95th !== undefined && epap95th >= 0 && epap95th <= 80);
     if (!hasSignal) continue;
 
     records.push({
@@ -631,7 +646,11 @@ function parseResMedStrEdf(
       leak95th: leak95th !== undefined && leak95th >= 0 && leak95th < 500 ? leak95th : undefined,
       leakMax: leakMax !== undefined && leakMax >= 0 && leakMax < 500 ? leakMax : undefined,
       pressureAvg: pressureAvg !== undefined && pressureAvg >= 0 && pressureAvg <= 80 ? pressureAvg : undefined,
-      pressure95th: pressure95th !== undefined && pressure95th >= 0 && pressure95th <= 80 ? pressure95th : undefined
+      pressure95th: pressure95th !== undefined && pressure95th >= 0 && pressure95th <= 80 ? pressure95th : undefined,
+      ipapAvg: ipapAvg !== undefined && ipapAvg >= 0 && ipapAvg <= 80 ? ipapAvg : undefined,
+      ipap95th: ipap95th !== undefined && ipap95th >= 0 && ipap95th <= 80 ? ipap95th : undefined,
+      epapAvg: epapAvg !== undefined && epapAvg >= 0 && epapAvg <= 80 ? epapAvg : undefined,
+      epap95th: epap95th !== undefined && epap95th >= 0 && epap95th <= 80 ? epap95th : undefined
     });
 
     if (!latestRecordDate || date > latestRecordDate) {
@@ -644,12 +663,15 @@ function parseResMedStrEdf(
       const minPressure = readResMedValue(bytes, edf, minPressureAliases, recordIndex);
       const maxPressure = readResMedValue(bytes, edf, maxPressureAliases, recordIndex);
       const epap = readResMedValue(bytes, edf, epapAliases, recordIndex);
+      const fixedBilevelEpap = readResMedValue(bytes, edf, fixedBilevelEpapAliases, recordIndex);
       const minEpap = readResMedValue(bytes, edf, minEpapAliases, recordIndex);
       const maxEpap = readResMedValue(bytes, edf, maxEpapAliases, recordIndex);
       const ipap = readResMedValue(bytes, edf, ipapAliases, recordIndex);
+      const fixedBilevelIpap = readResMedValue(bytes, edf, fixedBilevelIpapAliases, recordIndex);
       const minIpap = readResMedValue(bytes, edf, minIpapAliases, recordIndex);
       const maxIpap = readResMedValue(bytes, edf, maxIpapAliases, recordIndex);
       const ps = readResMedValue(bytes, edf, psAliases, recordIndex);
+      const backupRate = readResMedValue(bytes, edf, backupRateAliases, recordIndex);
       const eprClinEnableRaw = readResMedValue(bytes, edf, eprClinEnableAliases, recordIndex);
       const eprEnableRaw = readResMedValue(bytes, edf, eprEnableAliases, recordIndex);
       const eprLevel = readResMedValue(bytes, edf, eprLevelAliases, recordIndex);
@@ -692,10 +714,12 @@ function parseResMedStrEdf(
         if (minPressure !== undefined) machine.pressureMin = formatPressureValue(minPressure);
         if (maxPressure !== undefined) machine.pressureMax = formatPressureValue(maxPressure);
       } else if (resolvedMode === "BiPAP") {
-        const epapText = formatPressureValue(epap);
+        const activeEpap = shouldUseVAutoLabel ? epap : epap ?? fixedBilevelEpap;
+        const activeIpap = shouldUseVAutoLabel ? ipap : ipap ?? fixedBilevelIpap;
+        const epapText = formatPressureValue(activeEpap);
         const minEpapText = formatPressureValue(minEpap);
         const maxEpapText = formatPressureValue(maxEpap);
-        const ipapText = formatPressureValue(ipap);
+        const ipapText = formatPressureValue(activeIpap);
         const minIpapText = formatPressureValue(minIpap);
         const maxIpapText = formatPressureValue(maxIpap);
         const isAutoBiPap = shouldUseVAutoLabel || minEpapText !== undefined || maxIpapText !== undefined;
@@ -711,6 +735,9 @@ function parseResMedStrEdf(
         if (!machine.pressureRelief && ps !== undefined) {
           const psText = formatPressureValue(ps);
           if (psText) machine.pressureRelief = `PS: ${psText}`;
+        }
+        if (backupRate !== undefined && Number.isFinite(backupRate) && backupRate >= 0) {
+          machine.respiratoryRate = `${Number(backupRate.toFixed(2)).toString()} bpm`;
         }
         if (isAutoBiPap) {
           machine.pressureIsAuto = true;

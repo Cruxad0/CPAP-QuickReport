@@ -46,6 +46,7 @@ const RESMED_AIRBREAK_AS10_ROOT = path.join(process.cwd(), "Card Samples", "ResM
 const LOCAL_RESMED_AIRSENSE10_ROOT = path.join(process.cwd(), "Card Samples", "ResMed");
 const LOCAL_RESMED_CPAP_ROOT = path.join(process.cwd(), "Card Samples", "ResMed -2");
 const LOCAL_RESMED_AIRCURVE10_ROOT = path.join(process.cwd(), "Card Samples", "ResMed -3");
+const LOCAL_RESMED_AIRCURVE10_ST_ROOT = path.join(process.cwd(), "Card Samples", "ResMed -4");
 
 const maybeResventTest = existsSync(RESVENT_ROOT) ? test : test.skip;
 const maybeLocalResventBipapTest = existsSync(LOCAL_RESVENT_BIPAP_ROOT) ? test : test.skip;
@@ -61,6 +62,7 @@ const maybeAirBreakTest = existsSync(RESMED_AIRBREAK_AS10_ROOT) ? test : test.sk
 const maybeLocalAirSense10Test = existsSync(LOCAL_RESMED_AIRSENSE10_ROOT) ? test : test.skip;
 const maybeLocalResMedCpapTest = existsSync(LOCAL_RESMED_CPAP_ROOT) ? test : test.skip;
 const maybeLocalAirCurve10Test = existsSync(LOCAL_RESMED_AIRCURVE10_ROOT) ? test : test.skip;
+const maybeLocalAirCurve10StTest = existsSync(LOCAL_RESMED_AIRCURVE10_ST_ROOT) ? test : test.skip;
 
 maybeResventTest("Resvent sample card preserves APAP config and metrics", async () => {
   const { prepared, metrics } = await loadFixture(RESVENT_ROOT);
@@ -343,8 +345,43 @@ maybeLocalAirCurve10Test("local ResMed AirCurve 10 VAuto sample reports BiPAP se
   assertApprox(metrics.avgAhi, 18.0571, 0.02, "avg AHI");
   assertApprox(metrics.machine.pressureAvg ?? null, 8.9914, 0.02, "avg pressure");
   assertApprox(metrics.machine.pressure95th ?? null, 10.92, 0.02, "95th pressure");
+  assertApprox(metrics.machine.ipapAvg ?? null, 9.0086, 0.02, "avg IPAP");
+  assertApprox(metrics.machine.ipap95th ?? null, 10.92, 0.02, "95th IPAP");
+  assertApprox(metrics.machine.epapAvg ?? null, 9.0086, 0.02, "avg EPAP");
+  assertApprox(metrics.machine.epap95th ?? null, 10.92, 0.02, "95th EPAP");
   assertApprox(metrics.avgLeak, 6.9429, 0.02, "avg leak");
   assertApprox(metrics.leak95th, 18, 0.02, "95th leak");
   assertApprox(metrics.maxLeak30m, 54, 0.02, "30 min leak");
   assertApprox(metrics.maxLeak60m, 54, 0.02, "60 min leak");
+});
+
+maybeLocalAirCurve10StTest("local ResMed AirCurve 10 ST sample reports fixed bilevel settings and L/min leak values", async () => {
+  const { prepared, metrics } = await loadFixture(LOCAL_RESMED_AIRCURVE10_ST_ROOT);
+  assert.equal(prepared.selectedLoader, "ResMed");
+  assert.equal(prepared.machine.device, "AirCurve 10 ST");
+  assert.equal(prepared.machine.mode, "BiPAP");
+  assert.equal(prepared.machine.epap, "4 cmH2O");
+  assert.equal(prepared.machine.ipap, "14 cmH2O");
+  assert.equal(prepared.machine.respiratoryRate, "15 bpm");
+  assert.equal(prepared.machine.rampTime, "10 minutes");
+  assert.equal(prepared.machine.rampPressure, "4 cmH2O");
+  assert.equal(prepared.machine.pressureIsAuto, false);
+  assert.equal(prepared.latestClinicalDayIso, "2026-04-27");
+  assert.equal(metrics.daysWithData, 90);
+  assert.equal(metrics.daysWithUsage, 90);
+  assert.equal(metrics.compliantDays, 90);
+  assertApprox(metrics.avgUsageHours, 11.9670, 0.02, "avg usage");
+  assertApprox(metrics.avgAhi, 7.7067, 0.02, "avg AHI");
+  assertApprox(metrics.avgResidualApneas, 2.5078, 0.02, "avg residual apneas");
+  assert.equal(metrics.avgCentralApneas, null);
+  assertApprox(metrics.machine.pressureAvg ?? null, 6.9947, 0.02, "avg pressure");
+  assertApprox(metrics.machine.pressure95th ?? null, 8.76, 0.02, "95th pressure");
+  assertApprox(metrics.machine.ipapAvg ?? null, 13.92, 0.02, "avg IPAP");
+  assertApprox(metrics.machine.ipap95th ?? null, 13.92, 0.02, "95th IPAP");
+  assertApprox(metrics.machine.epapAvg ?? null, 3.96, 0.02, "avg EPAP");
+  assertApprox(metrics.machine.epap95th ?? null, 3.96, 0.02, "95th EPAP");
+  assertApprox(metrics.avgLeak, 0.72, 0.02, "avg leak");
+  assertApprox(metrics.leak95th, 49.12, 0.02, "95th leak");
+  assertApprox(metrics.maxLeak30m, 120, 0.02, "30 min leak");
+  assertApprox(metrics.maxLeak60m, 120, 0.02, "60 min leak");
 });
