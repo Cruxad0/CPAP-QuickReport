@@ -1,4 +1,10 @@
-import { isAutoBiPapLikeMode, isAutoPapLikeMode, isBiPapLikeMode, isFixedCpapLikeMode } from "@/lib/machine-mode";
+import {
+  classifyReportTherapyLayout,
+  classifyTherapyMode,
+  isAutoBiPapLikeMode,
+  isAutoPapLikeMode,
+  isFixedCpapLikeMode
+} from "@/lib/machine-mode";
 import { QuickReportMetrics } from "@/lib/types";
 
 const PAGE_WIDTH_A4 = 595.28;
@@ -785,10 +791,11 @@ export function machineSettingRows(report: QuickReportMetrics): TableRow[] {
   ];
 
   const mode = report.machine.mode?.trim() ?? "";
-  const isBiPap = isBiPapLikeMode(mode);
+  const therapyMode = classifyTherapyMode(report.machine);
+  const isBiPap = therapyMode === "BiPAP";
   const isAutoBiPap = isBiPap && (isAutoBiPapLikeMode(mode) || Boolean(report.machine.pressureMin || report.machine.pressureMax));
-  const isFixedCpap = isFixedCpapLikeMode(mode);
-  const isAutoPap = !isBiPap && !isFixedCpap && (isAutoPapLikeMode(mode) || hasAutoPressureRange(report));
+  const isFixedCpap = therapyMode === "CPAP" || isFixedCpapLikeMode(mode);
+  const isAutoPap = therapyMode === "APAP" || (!isBiPap && !isFixedCpap && (isAutoPapLikeMode(mode) || hasAutoPressureRange(report)));
   const derivedRange = extractPressureRangeValues(report.machine.pressure);
 
   if (isBiPap && isAutoBiPap) {
@@ -844,9 +851,10 @@ function hasAnyPressureSummaryValue(report: QuickReportMetrics, derivedRange: { 
 
 export function therapyPressureRows(report: QuickReportMetrics): TableRow[] {
   const mode = report.machine.mode?.trim() ?? "";
-  const isBiPap = isBiPapLikeMode(mode);
+  const therapyMode = classifyTherapyMode(report.machine);
+  const isBiPap = therapyMode === "BiPAP";
   const isAutoBiPap = isBiPap && (isAutoBiPapLikeMode(mode) || Boolean(report.machine.pressureMin || report.machine.pressureMax));
-  const isFixedCpap = isFixedCpapLikeMode(mode);
+  const isFixedCpap = therapyMode === "CPAP" || isFixedCpapLikeMode(mode);
   const derivedRange = extractPressureRangeValues(report.machine.pressure);
 
   if (!hasAnyPressureSummaryValue(report, derivedRange)) return [];
@@ -891,8 +899,7 @@ export function therapyPressureRows(report: QuickReportMetrics): TableRow[] {
 }
 
 export function bipapVentilationRows(report: QuickReportMetrics): TableRow[] {
-  const mode = report.machine.mode?.trim() ?? "";
-  if (!isBiPapLikeMode(mode)) return [];
+  if (classifyTherapyMode(report.machine) !== "BiPAP") return [];
 
   const rows: TableRow[] = [];
   const respiratoryRateSetting = numericSettingValue(report.machine.respiratoryRate);
@@ -1022,15 +1029,6 @@ function buildTherapySummaryRows(report: QuickReportMetrics): TableRow[] {
     ...sectionRows("Respiratory Events", eventRows),
     ...sectionRows("Leaks", leakRows)
   ];
-}
-
-function isAutoCpapPaginationMode(mode: string): boolean {
-  return /\bauto s30\b/i.test(mode);
-}
-
-function shouldUseTwoPageTherapyLayout(report: QuickReportMetrics): boolean {
-  const mode = report.machine.mode?.trim() ?? "";
-  return isBiPapLikeMode(mode) && !isAutoCpapPaginationMode(mode);
 }
 
 function measureCompactTableHeight(
@@ -1515,7 +1513,7 @@ export async function buildPdfReport(report: QuickReportMetrics, headerDataUrl?:
   ];
   const machineRows = machineSettingRows(report);
   const therapyRows = buildTherapySummaryRows(report);
-  const isTwoPageTherapyReport = shouldUseTwoPageTherapyLayout(report);
+  const isTwoPageTherapyReport = classifyReportTherapyLayout(report.machine) === "two-page-bipap";
   const therapyTitle = `Therapy Summary (Last ${report.daysInWindow} Days)`;
 
   const fullWidth = state.pageWidth - PAGE_MARGIN * 2;

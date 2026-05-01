@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { classifyTherapyMode, resolveExplicitTherapyMode, type CanonicalTherapyMode } from "../lib/machine-mode";
+import {
+  classifyReportTherapyLayout,
+  classifyTherapyMode,
+  resolveExplicitTherapyMode,
+  type CanonicalTherapyMode,
+  type ReportTherapyLayout
+} from "../lib/machine-mode";
 import {
   applyResMedCurrentSettingsJson,
   inferResMedModeFromSignals,
@@ -136,6 +142,51 @@ test("explicit mode parsing recognizes canonical variants", () => {
 
   for (const entry of cases) {
     assert.equal(resolveExplicitTherapyMode(entry.rawMode), entry.expected, entry.rawMode);
+  }
+});
+
+test("report layout classifier separates CPAP-style and BiPAP-style reports up front", () => {
+  const cases: Array<{
+    label: string;
+    machine: QuickReportMetrics["machine"];
+    expected: ReportTherapyLayout;
+  }> = [
+    {
+      label: "fixed CPAP",
+      machine: machine({ mode: "CPAP", pressure: "Fixed 9 cmH2O" }),
+      expected: "one-page-cpap"
+    },
+    {
+      label: "APAP pressure range",
+      machine: machine({ mode: "APAP", pressureIsAuto: true, pressureMin: "8 cmH2O", pressureMax: "12 cmH2O" }),
+      expected: "one-page-cpap"
+    },
+    {
+      label: "Resvent Auto S30 CPAP-layout report",
+      machine: machine({
+        mode: "Auto S30",
+        pressureIsAuto: true,
+        pressureMin: "4 cmH2O",
+        pressureMax: "12 cmH2O",
+        epap: "6 cmH2O",
+        ipap: "10 cmH2O"
+      }),
+      expected: "one-page-cpap"
+    },
+    {
+      label: "ResMed VAuto",
+      machine: machine({ mode: "VAuto", epap: "7 cmH2O", ipap: "11 cmH2O" }),
+      expected: "two-page-bipap"
+    },
+    {
+      label: "evidence-only BiPAP",
+      machine: machine({ epap: "7 cmH2O", ipap: "11 cmH2O" }),
+      expected: "two-page-bipap"
+    }
+  ];
+
+  for (const entry of cases) {
+    assert.equal(classifyReportTherapyLayout(entry.machine), entry.expected, entry.label);
   }
 });
 

@@ -84,6 +84,7 @@ export function isFixedCpapLikeMode(mode: string | undefined): boolean {
 }
 
 export type CanonicalTherapyMode = "BiPAP" | "APAP" | "CPAP";
+export type ReportTherapyLayout = "one-page-cpap" | "two-page-bipap";
 
 export function resolveExplicitTherapyMode(mode: string | undefined): CanonicalTherapyMode | null {
   if (isBiPapLikeMode(mode)) return "BiPAP";
@@ -109,4 +110,14 @@ export function classifyTherapyMode(machine: QuickReportMetrics["machine"]): Can
   }
 
   return null;
+}
+
+function isAutoCpapReportLayoutMode(mode: string | undefined): boolean {
+  const normalized = normalizeMachineMode(mode);
+  return /\bauto s30\b/.test(normalized);
+}
+
+export function classifyReportTherapyLayout(machine: QuickReportMetrics["machine"]): ReportTherapyLayout {
+  if (isAutoCpapReportLayoutMode(machine.mode)) return "one-page-cpap";
+  return classifyTherapyMode(machine) === "BiPAP" ? "two-page-bipap" : "one-page-cpap";
 }
