@@ -25,7 +25,9 @@ const MONTH_LABELS = [
 const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MIN_YEAR = 1900;
 const MAX_YEAR = 2100;
-const STALE_DATA_AGE_DAYS = 90;
+const STALE_DATA_NOTICE_DAYS = 7;
+const STALE_DATA_WARNING_DAYS = 30;
+const STALE_DATA_CRITICAL_DAYS = 90;
 const SOURCE_SELECTION_CANCEL_TIMEOUT_MS = 20000;
 const LONG_DATE_FORMATTER = new Intl.DateTimeFormat("en-US", {
   month: "long",
@@ -119,6 +121,14 @@ function daysSinceIsoDate(isoDate: string, now = new Date()): number | null {
   const todayMs = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
   const days = Math.floor((todayMs - latestDateMs) / 86_400_000);
   return Number.isFinite(days) ? days : null;
+}
+
+function staleDataSeverity(daysOld: number | null): "notice" | "warning" | "critical" | null {
+  if (daysOld === null) return null;
+  if (daysOld > STALE_DATA_CRITICAL_DAYS) return "critical";
+  if (daysOld > STALE_DATA_WARNING_DAYS) return "warning";
+  if (daysOld > STALE_DATA_NOTICE_DAYS) return "notice";
+  return null;
 }
 
 function isMixedDataWarning(warning: string): boolean {
@@ -339,11 +349,9 @@ export function QuickReportApp() {
     () => (loadedSourceLatestClinicalDayIso ? daysSinceIsoDate(loadedSourceLatestClinicalDayIso) : null),
     [loadedSourceLatestClinicalDayIso]
   );
-  const isLoadedSourceStale =
-    loadedSourceLatestClinicalDayAge !== null && loadedSourceLatestClinicalDayAge > STALE_DATA_AGE_DAYS;
-  const staleDataWarning = isLoadedSourceStale
-    ? `Data is ${loadedSourceLatestClinicalDayAge} days old. This suggests the device has not been used in more than ${STALE_DATA_AGE_DAYS} days.`
-    : null;
+  const loadedSourceStaleSeverity = staleDataSeverity(loadedSourceLatestClinicalDayAge);
+  const staleDataAgeText = loadedSourceStaleSeverity ? `Data is ${loadedSourceLatestClinicalDayAge} days old.` : null;
+  const staleDataAgeClass = loadedSourceStaleSeverity ? `stale-data-age stale-data-age-${loadedSourceStaleSeverity}` : undefined;
   const loadedMixedDataWarning = useMemo(
     () => loadedSourceWarnings.find(isMixedDataWarning) ?? null,
     [loadedSourceWarnings]
@@ -992,9 +1000,14 @@ export function QuickReportApp() {
               {loadedSourceLoader ? <li>Detected loader: {loadedSourceLoader}</li> : null}
               {loadedMixedDataWarning ? <li className="mixed-data-warning">{loadedMixedDataWarning}</li> : null}
               {loadedSourceLatestClinicalDayLabel ? (
-                <li className={isLoadedSourceStale ? "stale-data-warning" : undefined}>
+                <li>
                   Last date with data on card: {loadedSourceLatestClinicalDayLabel}
-                  {staleDataWarning ? <span className="stale-data-detail"> {staleDataWarning}</span> : null}
+                  {staleDataAgeText ? (
+                    <span className="stale-data-detail">
+                      <span className={staleDataAgeClass}>{staleDataAgeText}</span>
+                      <span className="stale-data-context"> This may indicate the device is not being used or the card is not current.</span>
+                    </span>
+                  ) : null}
                 </li>
               ) : null}
             </ul>
@@ -1048,9 +1061,14 @@ export function QuickReportApp() {
                   Selected loader and Date range ({resolvedActiveReportDays ?? activeReportDays} days): {activeMetrics.selectedLoader} | {activeMetrics.dateRangeStart} to {activeMetrics.dateRangeEnd}
                 </li>
                 {loadedSourceLatestClinicalDayLabel ? (
-                  <li className={isLoadedSourceStale ? "stale-data-warning" : undefined}>
+                  <li>
                     Last date with data on card: {loadedSourceLatestClinicalDayLabel}
-                    {staleDataWarning ? <span className="stale-data-detail"> {staleDataWarning}</span> : null}
+                    {staleDataAgeText ? (
+                      <span className="stale-data-detail">
+                        <span className={staleDataAgeClass}>{staleDataAgeText}</span>
+                        <span className="stale-data-context"> This may indicate the device is not being used or the card is not current.</span>
+                      </span>
+                    ) : null}
                   </li>
                 ) : null}
                 {loadedMixedDataWarning ? <li className="mixed-data-warning">{loadedMixedDataWarning}</li> : null}

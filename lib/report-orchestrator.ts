@@ -30,6 +30,16 @@ function emit(onProgress: BuildReportArtifactsRequest["onProgress"], progress: P
   if (onProgress) onProgress(progress);
 }
 
+function addIsoDays(isoDay: string, days: number): string {
+  const date = new Date(`${isoDay}T00:00:00Z`);
+  if (Number.isNaN(date.getTime())) {
+    throw new Error("Prepared therapy history could not determine a valid latest clinical day.");
+  }
+
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
 export async function buildReportArtifactsFromPreparedSource(
   request: BuildReportArtifactsRequest
 ): Promise<BuildReportArtifactsResult> {
@@ -45,6 +55,7 @@ export async function buildReportArtifactsFromPreparedSource(
 
   const reports: GeneratedPdfArtifact[] = [];
   const totalRanges = reportRanges.length;
+  const reportWindowEndClinicalDayIso = addIsoDays(prepared.latestClinicalDayIso, 1);
 
   for (let idx = 0; idx < totalRanges; idx += 1) {
     const days = reportRanges[idx];
@@ -62,6 +73,7 @@ export async function buildReportArtifactsFromPreparedSource(
       dateOfBirthIso,
       physicianName,
       lookbackDays: days,
+      windowEndClinicalDayIso: reportWindowEndClinicalDayIso,
       onProgress: (progress) =>
         emit(onProgress, {
           phase: progress.phase,

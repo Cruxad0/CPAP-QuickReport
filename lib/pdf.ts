@@ -13,8 +13,9 @@ const BRANDING_HEADER_MAX_HEIGHT = 90;
 const BRANDING_LOGO_MAX_HEIGHT = 72;
 const FOOTER_BLOCK_HEIGHT = 64;
 const THERAPY_MIN_FONT_SIZE = 10;
-const THERAPY_MAX_FONT_SIZE = 11;
+const THERAPY_MAX_FONT_SIZE = 12;
 const REPORT_METRIC_DECIMALS = 1;
+const PRESSURE_SETTING_WARNING_TOLERANCE = 0.1;
 
 type PdfLibModule = {
   PDFDocument: {
@@ -563,7 +564,9 @@ function drawBottomFooterBlock(
   });
 }
 
-type TableRow = [string, string, boolean?];
+type TableDataRow = [string, string, boolean?];
+type TableGroupRow = { kind: "group"; label: string };
+type TableRow = TableDataRow | TableGroupRow;
 type CompactTableStyle = {
   titleSize: number;
   titleGap: number;
@@ -621,12 +624,12 @@ function therapyTableStyle(fontSize: number): CompactTableStyle {
   return {
     titleSize: 11,
     titleGap: 3.5,
-    headerHeight: Math.max(16.5, clampedFontSize + 6.5),
+    headerHeight: Math.max(17.5, clampedFontSize + 7),
     headerFontSize: 10,
     bodyFontSize: clampedFontSize,
-    lineHeight: Math.max(11.2, clampedFontSize + 1.6),
-    insetX: 5.5,
-    insetY: 4,
+    lineHeight: Math.max(12.4, clampedFontSize + 2),
+    insetX: 6,
+    insetY: clampedFontSize >= 11.5 ? 5.2 : 4.5,
     leftRatio: 0.41,
     afterGap: 5
   };
@@ -691,6 +694,15 @@ function isMetricBelowSetting(value: number | null | undefined, setting: number 
   return Number(value.toFixed(REPORT_METRIC_DECIMALS)) < Number(setting.toFixed(REPORT_METRIC_DECIMALS));
 }
 
+function isPressureMetricBelowSetting(value: number | null | undefined, setting: number | null): boolean {
+  if (typeof value !== "number" || !Number.isFinite(value) || typeof setting !== "number" || !Number.isFinite(setting)) {
+    return false;
+  }
+  if (setting <= 0) return false;
+  const warningThreshold = setting * (1 - PRESSURE_SETTING_WARNING_TOLERANCE);
+  return Number(value.toFixed(REPORT_METRIC_DECIMALS)) < Number(warningThreshold.toFixed(REPORT_METRIC_DECIMALS));
+}
+
 function isTidalVolumeMetricBelowSetting(value: number | null | undefined, settingLiters: number | null): boolean {
   if (
     typeof value !== "number" ||
@@ -705,6 +717,14 @@ function isTidalVolumeMetricBelowSetting(value: number | null | undefined, setti
 
 function metricRow(label: string, value: string, emphasize: boolean): TableRow {
   return emphasize ? [label, value, true] : [label, value];
+}
+
+function groupRow(label: string): TableGroupRow {
+  return { kind: "group", label };
+}
+
+function isGroupRow(row: TableRow): row is TableGroupRow {
+  return !Array.isArray(row);
 }
 
 function normalizeRespiratoryRateDisplay(raw: string | null | undefined): string {
@@ -837,29 +857,29 @@ export function therapyPressureRows(report: QuickReportMetrics): TableRow[] {
     const autoBilevelMinimumSetting = numericSettingValue(report.machine.pressureMin ?? report.machine.epap ?? derivedRange?.min);
     const ipapMinimumSetting = isAutoBiPap ? autoBilevelMinimumSetting : numericSettingValue(report.machine.ipap);
     const epapMinimumSetting = isAutoBiPap ? autoBilevelMinimumSetting : numericSettingValue(report.machine.epap);
-    rows.push(metricRow("95th IPAP", pressureMetricText(report.machine.ipap95th), isMetricBelowSetting(report.machine.ipap95th, ipapMinimumSetting)));
-    rows.push(metricRow("Avg IPAP", pressureMetricText(report.machine.ipapAvg), isMetricBelowSetting(report.machine.ipapAvg, ipapMinimumSetting)));
-    rows.push(metricRow("95th EPAP", pressureMetricText(report.machine.epap95th), isMetricBelowSetting(report.machine.epap95th, epapMinimumSetting)));
-    rows.push(metricRow("Avg EPAP", pressureMetricText(report.machine.epapAvg), isMetricBelowSetting(report.machine.epapAvg, epapMinimumSetting)));
+    rows.push(metricRow("95th IPAP", pressureMetricText(report.machine.ipap95th), isPressureMetricBelowSetting(report.machine.ipap95th, ipapMinimumSetting)));
+    rows.push(metricRow("Avg IPAP", pressureMetricText(report.machine.ipapAvg), isPressureMetricBelowSetting(report.machine.ipapAvg, ipapMinimumSetting)));
+    rows.push(metricRow("95th EPAP", pressureMetricText(report.machine.epap95th), isPressureMetricBelowSetting(report.machine.epap95th, epapMinimumSetting)));
+    rows.push(metricRow("Avg EPAP", pressureMetricText(report.machine.epapAvg), isPressureMetricBelowSetting(report.machine.epapAvg, epapMinimumSetting)));
     if (isAutoBiPap && (typeof report.machine.pressure95th === "number" || typeof report.machine.pressureAvg === "number")) {
       rows.push(
         metricRow(
           "95th Mask Pressure",
           pressureMetricText(report.machine.pressure95th),
-          isMetricBelowSetting(report.machine.pressure95th, minimumPressureSetting)
+          isPressureMetricBelowSetting(report.machine.pressure95th, minimumPressureSetting)
         )
       );
       rows.push(
         metricRow(
           "Avg Mask Pressure",
           pressureMetricText(report.machine.pressureAvg),
-          isMetricBelowSetting(report.machine.pressureAvg, minimumPressureSetting)
+          isPressureMetricBelowSetting(report.machine.pressureAvg, minimumPressureSetting)
         )
       );
     }
   } else {
-    rows.push(metricRow("95th Pressure", pressureMetricText(report.machine.pressure95th), isMetricBelowSetting(report.machine.pressure95th, minimumPressureSetting)));
-    rows.push(metricRow("Avg Pressure", pressureMetricText(report.machine.pressureAvg), isMetricBelowSetting(report.machine.pressureAvg, minimumPressureSetting)));
+    rows.push(metricRow("95th Pressure", pressureMetricText(report.machine.pressure95th), isPressureMetricBelowSetting(report.machine.pressure95th, minimumPressureSetting)));
+    rows.push(metricRow("Avg Pressure", pressureMetricText(report.machine.pressureAvg), isPressureMetricBelowSetting(report.machine.pressureAvg, minimumPressureSetting)));
   }
   if (!isBiPap || isAutoBiPap) {
     rows.push(["Min Pressure", pressureSettingText(minPressure)]);
@@ -964,6 +984,44 @@ function primaryLeakLabel(report: QuickReportMetrics): string {
   return "Avg Leak";
 }
 
+function sectionRows(label: string, rows: TableRow[]): TableRow[] {
+  return rows.length > 0 ? [groupRow(label), ...rows] : [];
+}
+
+function buildTherapySummaryRows(report: QuickReportMetrics): TableRow[] {
+  const belowMedicareCompliance = isBelowMedicareComplianceThreshold(report);
+  const belowMedicareNightlyUse = isBelowMedicareNightlyUseThreshold(report);
+  const usageRows: TableRow[] = [
+    ["Date range", `${report.dateRangeStart} to ${report.dateRangeEnd}`],
+    ["Days with data", `${report.daysWithData} / ${report.daysInWindow}`],
+    ["Usage days (% of range)", `${report.usageDaysPercent.toFixed(1)}%`],
+    ["Compliant days (>= 4h)", `${report.compliantDays} / ${report.daysInWindow}`, belowMedicareCompliance],
+    ["Compliance (% of range)", `${report.compliancePercent.toFixed(1)}%`, belowMedicareCompliance],
+    ["Avg usage per day", report.avgUsageHours === null ? NO_DATA_FALLBACK : `${formatReportMetricValue(report.avgUsageHours)} h`, belowMedicareNightlyUse]
+  ];
+  const ventilationRows = bipapVentilationRows(report);
+  const eventRows: TableRow[] = [
+    ...ahiMetricRows(report),
+    ["Avg Residual apneas", formatReportMetricValue(report.avgResidualApneas)],
+    ["95th Residual apneas", formatReportMetricValue(report.residualApneas95th)],
+    ...optionalEventMetricRows(report)
+  ];
+  const leakRows: TableRow[] = [
+    leakRow(primaryLeakLabel(report), report.avgLeak),
+    leakRow("95th Leak", report.leak95th),
+    leakRow("30 min Sustained Leak", report.maxLeak30m),
+    leakRow("60 min Sustained Leak", report.maxLeak60m)
+  ];
+
+  return [
+    ...sectionRows("Usage Summary", usageRows),
+    ...sectionRows("BiPAP Report Information", ventilationRows),
+    ...sectionRows("Therapy Pressures", therapyPressureRows(report)),
+    ...sectionRows("Respiratory Events", eventRows),
+    ...sectionRows("Leaks", leakRows)
+  ];
+}
+
 function measureCompactTableHeight(
   title: string,
   rows: TableRow[],
@@ -976,7 +1034,12 @@ function measureCompactTableHeight(
   const rightW = width - leftW;
   let total = style.titleSize + style.titleGap + style.headerHeight;
 
-  for (const [label, value] of rows) {
+  for (const row of rows) {
+    if (isGroupRow(row)) {
+      total += style.headerHeight;
+      continue;
+    }
+    const [label, value] = row;
     const labelLines = splitLines(label, fontBold, style.bodyFontSize, leftW - style.insetX * 2);
     const valueLines = splitLines(value, fontRegular, style.bodyFontSize, rightW - style.insetX * 2);
     const lineCount = Math.max(labelLines.length, valueLines.length);
@@ -1037,12 +1100,37 @@ function drawCompactTableAt(
   });
   y -= style.headerHeight;
 
-  rows.forEach(([label, value, emphasize], idx) => {
+  let dataRowIndex = 0;
+  rows.forEach((row) => {
+    if (isGroupRow(row)) {
+      const rowHeight = style.headerHeight;
+      state.page.drawRectangle({
+        x,
+        y: y - rowHeight,
+        width,
+        height: rowHeight,
+        color: pdfColor(rgbFn, mixThemeColor(theme.primary, theme.rowBase, 0.2)),
+        borderColor: pdfColor(rgbFn, theme.primary),
+        borderWidth: 1.2
+      });
+      state.page.drawText(row.label, {
+        x: x + style.insetX,
+        y: y - rowHeight + 5,
+        size: style.headerFontSize,
+        font: fontBold,
+        color: pdfColor(rgbFn, theme.onPrimary)
+      });
+      y -= rowHeight;
+      dataRowIndex = 0;
+      return;
+    }
+
+    const [label, value, emphasize] = row;
     const labelLines = splitLines(label, fontBold, style.bodyFontSize, leftW - style.insetX * 2);
     const valueLines = splitLines(value, fontRegular, style.bodyFontSize, rightW - style.insetX * 2);
     const lineCount = Math.max(labelLines.length, valueLines.length);
     const rowHeight = style.insetY * 2 + lineCount * style.lineHeight;
-    const fill = idx % 2 === 0 ? pdfColor(rgbFn, theme.rowAlt) : pdfColor(rgbFn, theme.rowBase);
+    const fill = dataRowIndex % 2 === 0 ? pdfColor(rgbFn, theme.rowAlt) : pdfColor(rgbFn, theme.rowBase);
 
     state.page.drawRectangle({
       x,
@@ -1077,9 +1165,198 @@ function drawCompactTableAt(
     });
 
     y -= rowHeight;
+    dataRowIndex += 1;
   });
 
   return y - style.afterGap;
+}
+
+function drawCompactTableHeaderAt(
+  state: PdfState,
+  x: number,
+  yTop: number,
+  width: number,
+  style: CompactTableStyle,
+  fontBold: any,
+  rgbFn: PdfLibModule["rgb"],
+  theme: PdfTheme
+): number {
+  const leftW = width * style.leftRatio;
+  state.page.drawRectangle({
+    x,
+    y: yTop - style.headerHeight,
+    width,
+    height: style.headerHeight,
+    color: pdfColor(rgbFn, theme.primary),
+    borderColor: pdfColor(rgbFn, theme.primary),
+    borderWidth: 0.5
+  });
+  state.page.drawText("Field", {
+    x: x + style.insetX,
+    y: yTop - style.headerHeight + 5,
+    size: style.headerFontSize,
+    font: fontBold,
+    color: pdfColor(rgbFn, theme.onPrimary)
+  });
+  state.page.drawText("Value", {
+    x: x + leftW + style.insetX,
+    y: yTop - style.headerHeight + 5,
+    size: style.headerFontSize,
+    font: fontBold,
+    color: pdfColor(rgbFn, theme.onPrimary)
+  });
+  return yTop - style.headerHeight;
+}
+
+function drawCompactTableFlow(
+  pdfDoc: any,
+  state: PdfState,
+  reportDays: number,
+  reportMode: string | undefined,
+  x: number,
+  width: number,
+  title: string,
+  rows: TableRow[],
+  style: CompactTableStyle,
+  footerReserveHeight: number,
+  headerImage: any | undefined,
+  fontRegular: any,
+  fontBold: any,
+  rgbFn: PdfLibModule["rgb"],
+  theme: PdfTheme
+): number {
+  const leftW = width * style.leftRatio;
+  const rightW = width - leftW;
+
+  const drawTitleAndHeader = (continued: boolean) => {
+    ensureSpace(
+      pdfDoc,
+      state,
+      style.titleSize + style.titleGap + style.headerHeight + footerReserveHeight,
+      reportDays,
+      reportMode,
+      headerImage,
+      fontBold,
+      rgbFn,
+      theme
+    );
+    const titleText = continued ? `${title} (continued)` : title;
+    state.page.drawText(titleText, {
+      x,
+      y: state.y - style.titleSize,
+      size: style.titleSize,
+      font: fontBold,
+      color: pdfColor(rgbFn, theme.heading)
+    });
+    state.y -= style.titleSize + style.titleGap;
+    state.y = drawCompactTableHeaderAt(state, x, state.y, width, style, fontBold, rgbFn, theme);
+  };
+
+  drawTitleAndHeader(false);
+
+  const rowHeightFor = (row: TableRow): number => {
+    if (isGroupRow(row)) return style.headerHeight;
+    return (
+      style.insetY * 2 +
+      Math.max(
+        splitLines(row[0], fontBold, style.bodyFontSize, leftW - style.insetX * 2).length,
+        splitLines(row[1], fontRegular, style.bodyFontSize, rightW - style.insetX * 2).length
+      ) *
+        style.lineHeight
+    );
+  };
+
+  const sectionHeightFrom = (startIndex: number): number => {
+    let height = 0;
+    for (let idx = startIndex; idx < rows.length; idx += 1) {
+      if (idx > startIndex && isGroupRow(rows[idx])) break;
+      height += rowHeightFor(rows[idx]);
+    }
+    return height;
+  };
+
+  let dataRowIndex = 0;
+  for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
+    const row = rows[rowIndex];
+    const rowHeight = rowHeightFor(row);
+
+    if (isGroupRow(row) && state.y - sectionHeightFrom(rowIndex) < PAGE_MARGIN + footerReserveHeight) {
+      startNewPage(pdfDoc, state, reportDays, reportMode, headerImage, fontBold, rgbFn, theme);
+      drawTitleAndHeader(true);
+      dataRowIndex = 0;
+    }
+
+    if (state.y - rowHeight < PAGE_MARGIN + footerReserveHeight) {
+      startNewPage(pdfDoc, state, reportDays, reportMode, headerImage, fontBold, rgbFn, theme);
+      drawTitleAndHeader(true);
+      dataRowIndex = 0;
+    }
+
+    if (isGroupRow(row)) {
+      state.page.drawRectangle({
+        x,
+        y: state.y - rowHeight,
+        width,
+        height: rowHeight,
+        color: pdfColor(rgbFn, mixThemeColor(theme.primary, theme.rowBase, 0.2)),
+        borderColor: pdfColor(rgbFn, theme.primary),
+        borderWidth: 1.2
+      });
+      state.page.drawText(row.label, {
+        x: x + style.insetX,
+        y: state.y - rowHeight + 5,
+        size: style.headerFontSize,
+        font: fontBold,
+        color: pdfColor(rgbFn, theme.onPrimary)
+      });
+      state.y -= rowHeight;
+      dataRowIndex = 0;
+      continue;
+    }
+
+    const [label, value, emphasize] = row;
+    const labelLines = splitLines(label, fontBold, style.bodyFontSize, leftW - style.insetX * 2);
+    const valueLines = splitLines(value, fontRegular, style.bodyFontSize, rightW - style.insetX * 2);
+    const fill = dataRowIndex % 2 === 0 ? pdfColor(rgbFn, theme.rowAlt) : pdfColor(rgbFn, theme.rowBase);
+
+    state.page.drawRectangle({
+      x,
+      y: state.y - rowHeight,
+      width,
+      height: rowHeight,
+      color: fill,
+      borderColor: pdfColor(rgbFn, theme.border),
+      borderWidth: 0.5
+    });
+
+    const labelStartY = state.y - style.insetY - style.lineHeight + 3;
+    labelLines.forEach((line, i) => {
+      state.page.drawText(line, {
+        x: x + style.insetX,
+        y: labelStartY - i * style.lineHeight,
+        size: style.bodyFontSize,
+        font: fontBold,
+        color: pdfColor(rgbFn, theme.muted)
+      });
+    });
+
+    const valueStartY = state.y - style.insetY - style.lineHeight + 3;
+    valueLines.forEach((line, i) => {
+      state.page.drawText(line, {
+        x: x + leftW + style.insetX,
+        y: valueStartY - i * style.lineHeight,
+        size: style.bodyFontSize,
+        font: fontRegular,
+        color: emphasize ? pdfColor(rgbFn, theme.danger) : pdfColor(rgbFn, theme.body)
+      });
+    });
+
+    state.y -= rowHeight;
+    dataRowIndex += 1;
+  }
+
+  state.y -= style.afterGap;
+  return state.y;
 }
 
 function drawTable(
@@ -1131,7 +1408,31 @@ function drawTable(
   });
   state.y -= headerHeight;
 
-  rows.forEach(([label, value, emphasize], idx) => {
+  rows.forEach((row, idx) => {
+    if (isGroupRow(row)) {
+      const rowHeight = headerHeight;
+      ensureSpace(pdfDoc, state, rowHeight + 10, reportDays, reportMode, headerImage, fontBold, rgbFn, theme);
+      state.page.drawRectangle({
+        x: PAGE_MARGIN,
+        y: state.y - rowHeight,
+        width: tableWidth,
+        height: rowHeight,
+        color: pdfColor(rgbFn, mixThemeColor(theme.primary, theme.rowBase, 0.2)),
+        borderColor: pdfColor(rgbFn, theme.primary),
+        borderWidth: 1.2
+      });
+      state.page.drawText(row.label, {
+        x: PAGE_MARGIN + insetX,
+        y: state.y - rowHeight + 7,
+        size: 10,
+        font: fontBold,
+        color: pdfColor(rgbFn, theme.onPrimary)
+      });
+      state.y -= rowHeight;
+      return;
+    }
+
+    const [label, value, emphasize] = row;
     const labelLines = splitLines(label, fontBold, 10, leftW - insetX * 2);
     const valueLines = splitLines(value, fontRegular, 10, rightW - insetX * 2);
     const lineCount = Math.max(labelLines.length, valueLines.length);
@@ -1202,27 +1503,7 @@ export async function buildPdfReport(report: QuickReportMetrics, headerDataUrl?:
     ["Date of birth", textValue(report.dateOfBirth)]
   ];
   const machineRows = machineSettingRows(report);
-  const therapyPressureRowsForMode = therapyPressureRows(report);
-  const belowMedicareCompliance = isBelowMedicareComplianceThreshold(report);
-  const belowMedicareNightlyUse = isBelowMedicareNightlyUseThreshold(report);
-  const therapyRows: TableRow[] = [
-    ["Date range", `${report.dateRangeStart} to ${report.dateRangeEnd}`],
-    ["Days with data", `${report.daysWithData} / ${report.daysInWindow}`],
-    ["Usage days (% of range)", `${report.usageDaysPercent.toFixed(1)}%`],
-    ["Compliant days (>= 4h)", `${report.compliantDays} / ${report.daysInWindow}`, belowMedicareCompliance],
-    ["Compliance (% of range)", `${report.compliancePercent.toFixed(1)}%`, belowMedicareCompliance],
-    ["Avg usage per day", report.avgUsageHours === null ? NO_DATA_FALLBACK : `${formatReportMetricValue(report.avgUsageHours)} h`, belowMedicareNightlyUse],
-    ...therapyPressureRowsForMode,
-    ...bipapVentilationRows(report),
-    ...ahiMetricRows(report),
-    ["Avg Residual apneas", formatReportMetricValue(report.avgResidualApneas)],
-    ["95th Residual apneas", formatReportMetricValue(report.residualApneas95th)],
-    ...optionalEventMetricRows(report),
-    leakRow(primaryLeakLabel(report), report.avgLeak),
-    leakRow("95th Leak", report.leak95th),
-    leakRow("30 min Sustained Leak", report.maxLeak30m),
-    leakRow("60 min Sustained Leak", report.maxLeak60m)
-  ];
+  const therapyRows = buildTherapySummaryRows(report);
 
   const fullWidth = state.pageWidth - PAGE_MARGIN * 2;
   const columnGap = 10;
@@ -1250,7 +1531,7 @@ export async function buildPdfReport(report: QuickReportMetrics, headerDataUrl?:
       return topHeight + therapyHeight <= availableHeight;
     }) ?? {
       topStyle: TABLE_STYLE_CANDIDATES[TABLE_STYLE_CANDIDATES.length - 1],
-      therapyStyle: therapyTableStyle(THERAPY_MIN_FONT_SIZE)
+      therapyStyle: therapyTableStyle(THERAPY_MAX_FONT_SIZE)
     };
 
   const topY = state.y;
@@ -1282,20 +1563,25 @@ export async function buildPdfReport(report: QuickReportMetrics, headerDataUrl?:
   );
 
   state.y = Math.min(patientBottom, machineBottom);
-  state.y = drawCompactTableAt(
+  state.y = drawCompactTableFlow(
+    pdfDoc,
     state,
+    report.daysInWindow,
+    report.machine.mode,
     PAGE_MARGIN,
-    state.y,
     fullWidth,
     `Therapy Summary (Last ${report.daysInWindow} Days)`,
     therapyRows,
     layoutChoice.therapyStyle,
+    FOOTER_BLOCK_HEIGHT + 8,
+    headerImage,
     fontRegular,
     fontBold,
     rgbFn,
     theme
   );
 
+  ensureSpace(pdfDoc, state, FOOTER_BLOCK_HEIGHT + 8, report.daysInWindow, report.machine.mode, headerImage, fontBold, rgbFn, theme);
   drawBottomFooterBlock(pdfDoc, state, report, headerImage, fontRegular, fontBold, rgbFn, theme);
 
   const bytes = await pdfDoc.save();
