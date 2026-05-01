@@ -38,7 +38,17 @@ function bucket(usageHours: number): PreparedDayBucket {
     epapAvgSum: 0,
     epapAvgCount: 0,
     epap95Sum: 0,
-    epap95Count: 0
+    epap95Count: 0,
+    tidalVolumeSum: 0,
+    tidalVolumeCount: 0,
+    tidalVolumeMin: null,
+    tidalVolumeMax: null,
+    tidalVolumeBins: {},
+    tidalVolumeSecondsByBin: {},
+    respiratoryRateSum: 0,
+    respiratoryRateCount: 0,
+    respiratoryRateMin: null,
+    respiratoryRateBins: {}
   };
 }
 
@@ -86,7 +96,17 @@ function runLocalAnchorFixture(
       epapAvgSum: 0,
       epapAvgCount: 0,
       epap95Sum: 0,
-      epap95Count: 0
+      epap95Count: 0,
+      tidalVolumeSum: 0,
+      tidalVolumeCount: 0,
+      tidalVolumeMin: null,
+      tidalVolumeMax: null,
+      tidalVolumeBins: {},
+      tidalVolumeSecondsByBin: {},
+      respiratoryRateSum: 0,
+      respiratoryRateCount: 0,
+      respiratoryRateMin: null,
+      respiratoryRateBins: {}
     });
     const RealDate = Date;
     class MockDate extends RealDate {

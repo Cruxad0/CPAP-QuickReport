@@ -38,6 +38,18 @@ export interface ParsedRecord {
   ipap95th?: number;
   epapAvg?: number;
   epap95th?: number;
+  tidalVolumeAvg?: number;
+  tidalVolumeMin?: number;
+  tidalVolumeMedian?: number;
+  tidalVolumeMax?: number;
+  tidalVolumeSampleCount?: number;
+  tidalVolumeBins?: Record<string, number>;
+  tidalVolumeSecondsByBin?: Record<string, number>;
+  respiratoryRateAvg?: number;
+  respiratoryRate95th?: number;
+  respiratoryRateSampleCount?: number;
+  respiratoryRateBins?: Record<string, number>;
+  respiratoryRateMin?: number;
 }
 
 export interface MachineSettings {
@@ -56,6 +68,15 @@ export interface MachineSettings {
   epap?: string;
   ipap?: string;
   respiratoryRate?: string;
+  respiratoryRateAvg?: number | null;
+  respiratoryRateMin?: number | null;
+  respiratoryRate95th?: number | null;
+  tidalVolumeAvg?: number | null;
+  tidalVolumeMin?: number | null;
+  tidalVolumeMinMinutes?: number | null;
+  tidalVolumeMedian?: number | null;
+  tidalVolumeMax?: number | null;
+  tidalVolumeMaxMinutes?: number | null;
   pressureRelief?: string;
   rampTime?: string;
   rampPressure?: string;
@@ -153,6 +174,16 @@ export interface PreparedDayBucket {
   epapAvgCount: number;
   epap95Sum: number;
   epap95Count: number;
+  tidalVolumeSum: number;
+  tidalVolumeCount: number;
+  tidalVolumeMin: number | null;
+  tidalVolumeMax: number | null;
+  tidalVolumeBins: Record<string, number>;
+  tidalVolumeSecondsByBin: Record<string, number>;
+  respiratoryRateSum: number;
+  respiratoryRateCount: number;
+  respiratoryRateMin: number | null;
+  respiratoryRateBins: Record<string, number>;
 }
 
 export interface PreparedQuickReportSource {

@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { formatReportMetricValue, machineSettingRows, shouldDisplayRespiratoryRate, therapyPressureRows } from "../lib/pdf";
+import {
+  ahiMetricRows,
+  bipapVentilationRows,
+  formatReportMetricValue,
+  machineSettingRows,
+  optionalEventMetricRows,
+  shouldDisplayRespiratoryRate,
+  therapyPressureRows
+} from "../lib/pdf";
 import type { QuickReportMetrics } from "../lib/types";
 
 function reportWithMachine(machine: QuickReportMetrics["machine"]): QuickReportMetrics {
@@ -45,6 +53,91 @@ test("report metric formatter rounds summary values to tenths", () => {
   assert.equal(formatReportMetricValue(2.25), "2.3");
   assert.equal(formatReportMetricValue(117.4), "117.4");
   assert.equal(formatReportMetricValue(null), "Data point not available");
+});
+
+test("central apnea rows state when the card does not provide them", () => {
+  assert.deepEqual(optionalEventMetricRows(reportWithMachine({ mode: "BiPAP" })), [
+    ["Avg Central apneas", "Data is not present"],
+    ["95th Central apneas", "Data is not present"]
+  ]);
+});
+
+test("optional central apnea and RERA rows are shown when metrics are available", () => {
+  const report = {
+    ...reportWithMachine({ mode: "BiPAP" }),
+    avgCentralApneas: 1.24,
+    centralApneas95th: 2.25,
+    avgReraIndex: 0.36
+  };
+
+  assert.deepEqual(optionalEventMetricRows(report), [
+    ["Avg Central apneas", "1.2"],
+    ["95th Central apneas", "2.3"],
+    ["Avg RERA index", "0.4"]
+  ]);
+});
+
+test("AHI rows are highlighted when values are above 5", () => {
+  assert.deepEqual(
+    ahiMetricRows({
+      ...reportWithMachine({ mode: "BiPAP" }),
+      avgAhi: 7.74,
+      ahi95th: 12.44
+    }),
+    [
+      ["Avg AHI", "7.7", true],
+      ["95th AHI", "12.4", true]
+    ]
+  );
+});
+
+test("BiPAP ventilation rows show Vt and RR metrics when available", () => {
+  assert.deepEqual(
+    bipapVentilationRows(
+      reportWithMachine({
+        mode: "VAuto",
+        respiratoryRate: "14 bpm",
+        tidalVolumeAvg: 0.46,
+        tidalVolumeMin: 0.31,
+        tidalVolumeMinMinutes: 12.24,
+        tidalVolumeMedian: 0.44,
+        tidalVolumeMax: 0.89,
+        tidalVolumeMaxMinutes: 1.96,
+        respiratoryRateMin: 8.24,
+        respiratoryRateAvg: 13.25,
+        respiratoryRate95th: 22.04
+      })
+    ),
+    [
+      ["Min Vt (tidal volume)", "310.0 mL for 12.2 min"],
+      ["Median Vt (tidal volume)", "440.0 mL"],
+      ["Avg Vt (tidal volume)", "460.0 mL"],
+      ["Max Vt (tidal volume)", "890.0 mL for 2.0 min"],
+      ["Min RR", "8.2 bpm", true],
+      ["Avg RR", "13.3 bpm", true],
+      ["95th RR", "22.0 bpm"]
+    ]
+  );
+});
+
+test("BiPAP ventilation rows are hidden for non-BiPAP modes", () => {
+  assert.deepEqual(
+    bipapVentilationRows(
+      reportWithMachine({
+        mode: "CPAP",
+        tidalVolumeAvg: 0.46,
+        tidalVolumeMin: 0.31,
+        tidalVolumeMinMinutes: 12.24,
+        tidalVolumeMedian: 0.44,
+        tidalVolumeMax: 0.89,
+        tidalVolumeMaxMinutes: 1.96,
+        respiratoryRateMin: 8.24,
+        respiratoryRateAvg: 13.25,
+        respiratoryRate95th: 22.04
+      })
+    ),
+    []
+  );
 });
 
 test("respiratory rate row is only shown when a respiratory-rate value exists", () => {
@@ -109,6 +202,27 @@ test("machine settings show ramp pressure when ramp time is present", () => {
   );
 });
 
+test("machine settings round backup respiratory rate to tenths", () => {
+  assert.deepEqual(
+    machineSettingRows(
+      reportWithMachine({
+        mode: "BiPAP",
+        ipap: "14 cmH2O",
+        epap: "8 cmH2O",
+        respiratoryRate: "15 bpm"
+      })
+    ),
+    [
+      ["Device", "Data point not available"],
+      ["Mode", "BiPAP"],
+      ["IPAP", "14.0 cmH2O"],
+      ["EPAP", "8.0 cmH2O"],
+      ["Respiratory rate (RR)", "15.0 bpm"],
+      ["Pressure relief", "Data point not available"]
+    ]
+  );
+});
+
 test("therapy summary includes 95th, average, min, and max pressure rows for APAP", () => {
   assert.deepEqual(
     therapyPressureRows(
@@ -166,7 +280,7 @@ test("therapy summary does not derive min and max pressure rows from fixed BiPAP
     ),
     [
       ["95th IPAP", "11.2 cmH2O"],
-      ["Avg IPAP", "10.6 cmH2O"],
+      ["Avg IPAP", "10.6 cmH2O", true],
       ["95th EPAP", "7.8 cmH2O"],
       ["Avg EPAP", "7.1 cmH2O"]
     ]

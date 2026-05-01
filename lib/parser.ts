@@ -170,6 +170,14 @@ function isReportPressureMetric(value: number | undefined): value is number {
   return typeof value === "number" && Number.isFinite(value) && value > 0 && value <= 80;
 }
 
+function isReportRespiratoryRateMetric(value: number | undefined): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 && value <= 120;
+}
+
+function isReportTidalVolumeMetric(value: number | undefined): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 && value <= 5;
+}
+
 function pressureText(value: number | undefined): string | undefined {
   const n = normalizePressureNumber(value);
   if (n === undefined) return undefined;
@@ -283,6 +291,55 @@ function percentile(values: number[], p: number): number {
   const hi = Math.ceil(idx);
   const blend = idx - lo;
   return sorted[lo] * (1 - blend) + sorted[hi] * blend;
+}
+
+function mergeHistogram(target: Record<string, number>, source: Record<string, number> | undefined) {
+  if (!source) return;
+  for (const [key, count] of Object.entries(source)) {
+    const parsedKey = Number.parseFloat(key);
+    if (!Number.isFinite(parsedKey) || !Number.isFinite(count) || count <= 0) continue;
+    target[key] = (target[key] ?? 0) + count;
+  }
+}
+
+function histogramValueAt(entries: Array<[number, number]>, index: number): number {
+  let offset = 0;
+  for (const [value, count] of entries) {
+    if (index < offset + count) return value;
+    offset += count;
+  }
+  return entries.at(-1)?.[0] ?? 0;
+}
+
+function histogramPercentile(bins: Record<string, number>, p: number): number | null {
+  const entries = Object.entries(bins)
+    .map(([key, count]) => [Number.parseFloat(key), count] as [number, number])
+    .filter(([value, count]) => Number.isFinite(value) && Number.isFinite(count) && count > 0)
+    .sort(([a], [b]) => a - b);
+  const total = entries.reduce((sum, [, count]) => sum + count, 0);
+  if (total <= 0) return null;
+
+  const idx = (p / 100) * (total - 1);
+  const lo = Math.floor(idx);
+  const hi = Math.ceil(idx);
+  const blend = idx - lo;
+  if (lo === hi) return histogramValueAt(entries, lo);
+  return histogramValueAt(entries, lo) * (1 - blend) + histogramValueAt(entries, hi) * blend;
+}
+
+function mergeDayHistograms(
+  dayBuckets: DayBucket[],
+  key: "tidalVolumeBins" | "tidalVolumeSecondsByBin" | "respiratoryRateBins"
+): Record<string, number> {
+  const bins: Record<string, number> = {};
+  for (const bucket of dayBuckets) mergeHistogram(bins, bucket[key]);
+  return bins;
+}
+
+function histogramDurationMinutesForValue(secondsByBin: Record<string, number>, value: number | null): number | null {
+  if (value === null || !Number.isFinite(value)) return null;
+  const seconds = secondsByBin[value.toFixed(3)];
+  return typeof seconds === "number" && Number.isFinite(seconds) && seconds > 0 ? seconds / 60 : null;
 }
 
 function formatDateHuman(isoDate: string): string {
@@ -1545,7 +1602,14 @@ function sanitizeRecords(records: ParsedRecord[]): ParsedRecord[] {
       isReportPressureMetric(r.ipapAvg) ||
       isReportPressureMetric(r.ipap95th) ||
       isReportPressureMetric(r.epapAvg) ||
-      isReportPressureMetric(r.epap95th);
+      isReportPressureMetric(r.epap95th) ||
+      isReportTidalVolumeMetric(r.tidalVolumeAvg) ||
+      isReportTidalVolumeMetric(r.tidalVolumeMin) ||
+      isReportTidalVolumeMetric(r.tidalVolumeMedian) ||
+      isReportTidalVolumeMetric(r.tidalVolumeMax) ||
+      isReportRespiratoryRateMetric(r.respiratoryRateAvg) ||
+      isReportRespiratoryRateMetric(r.respiratoryRateMin) ||
+      isReportRespiratoryRateMetric(r.respiratoryRate95th);
     return hasSignal;
   });
 }
@@ -1567,7 +1631,16 @@ function recordSignature(record: ParsedRecord): string {
   const i95 = typeof record.ipap95th === "number" ? record.ipap95th.toFixed(3) : "";
   const ea = typeof record.epapAvg === "number" ? record.epapAvg.toFixed(3) : "";
   const e95 = typeof record.epap95th === "number" ? record.epap95th.toFixed(3) : "";
-  return `${toIsoDate(record.date)}|${u}|${a}|${r}|${c}|${re}|${l}|${l95}|${lmax}|${lmax30m}|${lmax60m}|${pa}|${p95}|${ia}|${i95}|${ea}|${e95}`;
+  const vt = typeof record.tidalVolumeAvg === "number" ? record.tidalVolumeAvg.toFixed(3) : "";
+  const vtMin = typeof record.tidalVolumeMin === "number" ? record.tidalVolumeMin.toFixed(3) : "";
+  const vtMedian = typeof record.tidalVolumeMedian === "number" ? record.tidalVolumeMedian.toFixed(3) : "";
+  const vtMax = typeof record.tidalVolumeMax === "number" ? record.tidalVolumeMax.toFixed(3) : "";
+  const vtCount = typeof record.tidalVolumeSampleCount === "number" ? record.tidalVolumeSampleCount.toString() : "";
+  const rr = typeof record.respiratoryRateAvg === "number" ? record.respiratoryRateAvg.toFixed(3) : "";
+  const rr95 = typeof record.respiratoryRate95th === "number" ? record.respiratoryRate95th.toFixed(3) : "";
+  const rrCount = typeof record.respiratoryRateSampleCount === "number" ? record.respiratoryRateSampleCount.toString() : "";
+  const rrMin = typeof record.respiratoryRateMin === "number" ? record.respiratoryRateMin.toFixed(3) : "";
+  return `${toIsoDate(record.date)}|${u}|${a}|${r}|${c}|${re}|${l}|${l95}|${lmax}|${lmax30m}|${lmax60m}|${pa}|${p95}|${ia}|${i95}|${ea}|${e95}|${vt}|${vtMin}|${vtMedian}|${vtMax}|${vtCount}|${rr}|${rr95}|${rrCount}|${rrMin}`;
 }
 
 function dedupeParsedRecords(records: ParsedRecord[]): ParsedRecord[] {
@@ -1850,7 +1923,17 @@ function createEmptyDayBucket(): DayBucket {
     epapAvgSum: 0,
     epapAvgCount: 0,
     epap95Sum: 0,
-    epap95Count: 0
+    epap95Count: 0,
+    tidalVolumeSum: 0,
+    tidalVolumeCount: 0,
+    tidalVolumeMin: null,
+    tidalVolumeMax: null,
+    tidalVolumeBins: {},
+    tidalVolumeSecondsByBin: {},
+    respiratoryRateSum: 0,
+    respiratoryRateCount: 0,
+    respiratoryRateMin: null,
+    respiratoryRateBins: {}
   };
 }
 
@@ -1971,6 +2054,48 @@ function buildDayBucketsFromRecordsAndLeaks(
       bucket.epap95Sum += record.epap95th;
       bucket.epap95Count += 1;
     }
+
+    if (isReportTidalVolumeMetric(record.tidalVolumeAvg)) {
+      const count =
+        typeof record.tidalVolumeSampleCount === "number" &&
+        Number.isFinite(record.tidalVolumeSampleCount) &&
+        record.tidalVolumeSampleCount > 0
+          ? record.tidalVolumeSampleCount
+          : 1;
+      bucket.tidalVolumeSum += record.tidalVolumeAvg * count;
+      bucket.tidalVolumeCount += count;
+    }
+
+    if (isReportTidalVolumeMetric(record.tidalVolumeMin)) {
+      bucket.tidalVolumeMin =
+        bucket.tidalVolumeMin === null ? record.tidalVolumeMin : Math.min(bucket.tidalVolumeMin, record.tidalVolumeMin);
+    }
+
+    if (isReportTidalVolumeMetric(record.tidalVolumeMax)) {
+      bucket.tidalVolumeMax =
+        bucket.tidalVolumeMax === null ? record.tidalVolumeMax : Math.max(bucket.tidalVolumeMax, record.tidalVolumeMax);
+    }
+
+    mergeHistogram(bucket.tidalVolumeBins, record.tidalVolumeBins);
+    mergeHistogram(bucket.tidalVolumeSecondsByBin, record.tidalVolumeSecondsByBin);
+
+    if (isReportRespiratoryRateMetric(record.respiratoryRateAvg)) {
+      const count =
+        typeof record.respiratoryRateSampleCount === "number" &&
+        Number.isFinite(record.respiratoryRateSampleCount) &&
+        record.respiratoryRateSampleCount > 0
+          ? record.respiratoryRateSampleCount
+          : 1;
+      bucket.respiratoryRateSum += record.respiratoryRateAvg * count;
+      bucket.respiratoryRateCount += count;
+    }
+
+    if (isReportRespiratoryRateMetric(record.respiratoryRateMin)) {
+      bucket.respiratoryRateMin =
+        bucket.respiratoryRateMin === null ? record.respiratoryRateMin : Math.min(bucket.respiratoryRateMin, record.respiratoryRateMin);
+    }
+
+    mergeHistogram(bucket.respiratoryRateBins, record.respiratoryRateBins);
 
     if (typeof record.leak === "number" && record.leak >= 0 && record.leak < 500) {
       bucket.leakSum += record.leak;
@@ -2879,6 +3004,31 @@ export function buildQuickReportMetricsFromPreparedSource(
     .filter((d) => d.epap95Count > 0)
     .map((d) => d.epap95Sum / d.epap95Count);
 
+  const tidalVolumeValues = dayBuckets
+    .filter((d) => d.tidalVolumeCount > 0)
+    .map((d) => d.tidalVolumeSum / d.tidalVolumeCount);
+
+  const tidalVolumeMinValues = dayBuckets
+    .map((d) => d.tidalVolumeMin)
+    .filter((v): v is number => typeof v === "number" && Number.isFinite(v));
+
+  const tidalVolumeMaxValues = dayBuckets
+    .map((d) => d.tidalVolumeMax)
+    .filter((v): v is number => typeof v === "number" && Number.isFinite(v));
+
+  const tidalVolumeBins = mergeDayHistograms(dayBuckets, "tidalVolumeBins");
+  const tidalVolumeSecondsByBin = mergeDayHistograms(dayBuckets, "tidalVolumeSecondsByBin");
+
+  const respiratoryRateAvgValues = dayBuckets
+    .filter((d) => d.respiratoryRateCount > 0)
+    .map((d) => d.respiratoryRateSum / d.respiratoryRateCount);
+
+  const respiratoryRateMinValues = dayBuckets
+    .map((d) => d.respiratoryRateMin)
+    .filter((v): v is number => typeof v === "number" && Number.isFinite(v));
+
+  const respiratoryRateBins = mergeDayHistograms(dayBuckets, "respiratoryRateBins");
+
   const weightedUsageRate = (
     values: number[],
     dayValue: (bucket: DayBucket) => number | null
@@ -2999,6 +3149,17 @@ export function buildQuickReportMetricsFromPreparedSource(
       : epapAvgValues.length > 0
         ? percentile(epapAvgValues, 95)
         : null;
+  const avgTidalVolume =
+    tidalVolumeValues.length > 0 ? tidalVolumeValues.reduce((a, b) => a + b, 0) / tidalVolumeValues.length : null;
+  const minTidalVolume = tidalVolumeMinValues.length > 0 ? Math.min(...tidalVolumeMinValues) : null;
+  const medianTidalVolume = histogramPercentile(tidalVolumeBins, 50);
+  const maxTidalVolume = tidalVolumeMaxValues.length > 0 ? Math.max(...tidalVolumeMaxValues) : null;
+  const minTidalVolumeMinutes = histogramDurationMinutesForValue(tidalVolumeSecondsByBin, minTidalVolume);
+  const maxTidalVolumeMinutes = histogramDurationMinutesForValue(tidalVolumeSecondsByBin, maxTidalVolume);
+  const avgRespiratoryRate =
+    respiratoryRateAvgValues.length > 0 ? respiratoryRateAvgValues.reduce((a, b) => a + b, 0) / respiratoryRateAvgValues.length : null;
+  const minRespiratoryRate = respiratoryRateMinValues.length > 0 ? Math.min(...respiratoryRateMinValues) : null;
+  const respiratoryRate95th = histogramPercentile(respiratoryRateBins, 95);
 
   if (usageValues.length === 0) {
     warnings.push("Usage-hour fields were not found in the selected data. Compliance metrics are shown as 0.");
@@ -3034,6 +3195,33 @@ export function buildQuickReportMetricsFromPreparedSource(
   }
   if (epap95th !== null) {
     machine.epap95th = finite(epap95th);
+  }
+  if (avgTidalVolume !== null) {
+    machine.tidalVolumeAvg = finite(avgTidalVolume);
+  }
+  if (minTidalVolume !== null) {
+    machine.tidalVolumeMin = finite(minTidalVolume);
+  }
+  if (minTidalVolumeMinutes !== null) {
+    machine.tidalVolumeMinMinutes = finite(minTidalVolumeMinutes);
+  }
+  if (medianTidalVolume !== null) {
+    machine.tidalVolumeMedian = finite(medianTidalVolume);
+  }
+  if (maxTidalVolume !== null) {
+    machine.tidalVolumeMax = finite(maxTidalVolume);
+  }
+  if (maxTidalVolumeMinutes !== null) {
+    machine.tidalVolumeMaxMinutes = finite(maxTidalVolumeMinutes);
+  }
+  if (avgRespiratoryRate !== null) {
+    machine.respiratoryRateAvg = finite(avgRespiratoryRate);
+  }
+  if (minRespiratoryRate !== null) {
+    machine.respiratoryRateMin = finite(minRespiratoryRate);
+  }
+  if (respiratoryRate95th !== null) {
+    machine.respiratoryRate95th = finite(respiratoryRate95th);
   }
   verifyResolvedTherapyModeOrThrow(machine, prepared.selectedLoader);
 

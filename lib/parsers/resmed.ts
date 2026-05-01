@@ -65,6 +65,7 @@ type EdfSignal = {
 type EdfInfo = {
   headerBytes: number;
   numRecords: number;
+  recordDurationSeconds: number;
   startDate: Date;
   signals: EdfSignal[];
   bytesPerRecord: number;
@@ -296,14 +297,18 @@ function countAsciiOccurrences(bytes: Uint8Array, needle: string): number {
   return count;
 }
 
-function parseEdfStartDate(raw: string): Date | null {
-  const match = raw.match(/^(\d{2})\.(\d{2})\.(\d{2})$/);
-  if (!match) return null;
-  const day = Number(match[1]);
-  const month = Number(match[2]);
-  const yy = Number(match[3]);
+function parseEdfStartDateTime(rawDate: string, rawTime: string): Date | null {
+  const dateMatch = rawDate.match(/^(\d{2})\.(\d{2})\.(\d{2})$/);
+  if (!dateMatch) return null;
+  const timeMatch = rawTime.match(/^(\d{2})[.:](\d{2})[.:](\d{2})$/);
+  const day = Number(dateMatch[1]);
+  const month = Number(dateMatch[2]);
+  const yy = Number(dateMatch[3]);
   const year = yy >= 70 ? 1900 + yy : 2000 + yy;
-  const dt = new Date(Date.UTC(year, month - 1, day, 12, 0, 0, 0));
+  const hour = timeMatch ? Number(timeMatch[1]) : 12;
+  const minute = timeMatch ? Number(timeMatch[2]) : 0;
+  const second = timeMatch ? Number(timeMatch[3]) : 0;
+  const dt = new Date(Date.UTC(year, month - 1, day, hour, minute, second, 0));
   return Number.isNaN(dt.getTime()) ? null : dt;
 }
 
@@ -312,8 +317,9 @@ function parseResMedEdf(bytes: Uint8Array): EdfInfo | null {
 
   const headerBytes = parseAsciiNumber(bytes, 184, 8);
   const numRecords = parseAsciiNumber(bytes, 236, 8);
+  const recordDurationSeconds = parseAsciiNumber(bytes, 244, 8) ?? 0;
   const numSignals = parseAsciiNumber(bytes, 252, 4);
-  const startDate = parseEdfStartDate(parseAsciiField(bytes, 168, 8));
+  const startDate = parseEdfStartDateTime(parseAsciiField(bytes, 168, 8), parseAsciiField(bytes, 176, 8));
   if (!headerBytes || !numRecords || !numSignals || !startDate) return null;
   if (headerBytes <= 0 || numRecords <= 0 || numSignals <= 0 || headerBytes > bytes.length) return null;
 
@@ -361,7 +367,7 @@ function parseResMedEdf(bytes: Uint8Array): EdfInfo | null {
   if (bytesPerRecord <= 0) return null;
   if (headerBytes + bytesPerRecord * numRecords > bytes.length) return null;
 
-  return { headerBytes, numRecords, startDate, signals, bytesPerRecord };
+  return { headerBytes, numRecords, recordDurationSeconds, startDate, signals, bytesPerRecord };
 }
 
 function findSignal(edf: EdfInfo, aliases: string[]): EdfSignal | null {
@@ -399,8 +405,96 @@ function readResMedValue(bytes: Uint8Array, edf: EdfInfo, aliases: string[], rec
   return readSignalValue(bytes, edf, findSignal(edf, aliases), recordIndex);
 }
 
-function normalizeUsageHours(raw: number | undefined): number | undefined {
+type SignalStats = {
+  avg: number;
+  min: number;
+  median: number;
+  max: number;
+  p95: number;
+  count: number;
+  bins: Record<string, number>;
+  secondsByBin: Record<string, number>;
+};
+
+function signalHistogramValueAt(entries: Array<[number, number]>, index: number): number {
+  let offset = 0;
+  for (const [value, count] of entries) {
+    if (index < offset + count) return value;
+    offset += count;
+  }
+  return entries.at(-1)?.[0] ?? 0;
+}
+
+function signalHistogramPercentile(bins: Record<string, number>, p: number): number | null {
+  const entries = Object.entries(bins)
+    .map(([key, count]) => [Number.parseFloat(key), count] as [number, number])
+    .filter(([value, count]) => Number.isFinite(value) && Number.isFinite(count) && count > 0)
+    .sort(([a], [b]) => a - b);
+  const total = entries.reduce((sum, [, count]) => sum + count, 0);
+  if (total <= 0) return null;
+
+  const idx = (p / 100) * (total - 1);
+  const lo = Math.floor(idx);
+  const hi = Math.ceil(idx);
+  const blend = idx - lo;
+  if (lo === hi) return signalHistogramValueAt(entries, lo);
+  return signalHistogramValueAt(entries, lo) * (1 - blend) + signalHistogramValueAt(entries, hi) * blend;
+}
+
+function summarizeSignal(
+  bytes: Uint8Array,
+  edf: EdfInfo,
+  signal: EdfSignal | null,
+  isValid: (value: number) => boolean
+): SignalStats | null {
+  if (!signal) return null;
+
+  let sum = 0;
+  let min = Number.POSITIVE_INFINITY;
+  let max = Number.NEGATIVE_INFINITY;
+  let count = 0;
+  const bins: Record<string, number> = {};
+  const secondsByBin: Record<string, number> = {};
+  const sampleSeconds =
+    Number.isFinite(edf.recordDurationSeconds) && edf.recordDurationSeconds > 0 && signal.samplesPerRecord > 0
+      ? edf.recordDurationSeconds / signal.samplesPerRecord
+      : 0;
+
+  for (let recordIndex = 0; recordIndex < edf.numRecords; recordIndex += 1) {
+    for (let sampleIndex = 0; sampleIndex < signal.samplesPerRecord; sampleIndex += 1) {
+      const value = readSignalValue(bytes, edf, signal, recordIndex, sampleIndex);
+      if (typeof value !== "number" || !Number.isFinite(value) || !isValid(value)) continue;
+      const binKey = value.toFixed(3);
+      bins[binKey] = (bins[binKey] ?? 0) + 1;
+      if (sampleSeconds > 0) {
+        secondsByBin[binKey] = (secondsByBin[binKey] ?? 0) + sampleSeconds;
+      }
+      sum += value;
+      min = Math.min(min, value);
+      max = Math.max(max, value);
+      count += 1;
+    }
+  }
+
+  if (count === 0) return null;
+  return {
+    avg: sum / count,
+    min,
+    median: signalHistogramPercentile(bins, 50) ?? sum / count,
+    max,
+    p95: signalHistogramPercentile(bins, 95) ?? max,
+    count,
+    bins,
+    secondsByBin
+  };
+}
+
+function normalizeUsageHours(raw: number | undefined, signal?: EdfSignal | null): number | undefined {
   if (raw === undefined || !Number.isFinite(raw) || raw < 0) return undefined;
+  const dimension = normalizeLabel(signal?.physicalDimension ?? "");
+  if (/^min\.?(?:ute)?s?$/.test(dimension)) return raw <= 24 * 60 ? raw / 60 : undefined;
+  if (/^sec\.?(?:ond)?s?$/.test(dimension)) return raw <= 24 * 3600 ? raw / 3600 : undefined;
+  if (/^(?:h|hr|hrs|hour|hours)$/.test(dimension)) return raw <= 24 ? raw : undefined;
   if (raw <= 24) return raw;
   if (raw <= 24 * 60) return raw / 60;
   return undefined;
@@ -599,6 +693,7 @@ function parseResMedStrEdf(
   const leak50Signal = findSignal(edf, leak50Aliases);
   const leak95Signal = findSignal(edf, leak95Aliases);
   const leakMaxSignal = findSignal(edf, leakMaxAliases);
+  const usageSignal = findSignal(edf, usageAliases);
 
   const records: ParsedRecord[] = [];
   let latestRecordDate: Date | null = null;
@@ -607,7 +702,7 @@ function parseResMedStrEdf(
     const date = new Date(edf.startDate);
     date.setUTCDate(date.getUTCDate() + recordIndex);
 
-    const usageHours = normalizeUsageHours(readResMedValue(bytes, edf, usageAliases, recordIndex));
+    const usageHours = normalizeUsageHours(readSignalValue(bytes, edf, usageSignal, recordIndex), usageSignal);
     const ahi = readResMedValue(bytes, edf, ahiAliases, recordIndex);
     const residualApneas = readResMedValue(bytes, edf, residualAliases, recordIndex);
     const centralApneas = readResMedValue(bytes, edf, centralAliases, recordIndex);
@@ -794,6 +889,38 @@ function parseResMedStrEdf(
   return records;
 }
 
+function parseResMedPldEdf(candidate: FamilyParserCandidate, bytes: Uint8Array): ParsedRecord | null {
+  if (!/pld\.edf(?:\.gz)?$/i.test(candidate.baseName)) return null;
+
+  const edf = parseResMedEdf(bytes);
+  if (!edf) return null;
+
+  const respiratoryRateStats = summarizeSignal(bytes, edf, findSignal(edf, ["RespRate.2s", "Resp Rate.2s", "RR.2s"]), (value) =>
+    value > 0 && value <= 120
+  );
+  const tidalVolumeStats = summarizeSignal(bytes, edf, findSignal(edf, ["TidVol.2s", "TidalVol.2s", "Tidal Volume.2s", "Vt.2s"]), (value) =>
+    value > 0 && value <= 5
+  );
+
+  if (!respiratoryRateStats && !tidalVolumeStats) return null;
+
+  return {
+    date: new Date(edf.startDate),
+    tidalVolumeAvg: tidalVolumeStats?.avg,
+    tidalVolumeMin: tidalVolumeStats?.min,
+    tidalVolumeMedian: tidalVolumeStats?.median,
+    tidalVolumeMax: tidalVolumeStats?.max,
+    tidalVolumeSampleCount: tidalVolumeStats?.count,
+    tidalVolumeBins: tidalVolumeStats?.bins,
+    tidalVolumeSecondsByBin: tidalVolumeStats?.secondsByBin,
+    respiratoryRateAvg: respiratoryRateStats?.avg,
+    respiratoryRate95th: respiratoryRateStats?.p95,
+    respiratoryRateSampleCount: respiratoryRateStats?.count,
+    respiratoryRateBins: respiratoryRateStats?.bins,
+    respiratoryRateMin: respiratoryRateStats?.min
+  };
+}
+
 function parseResMedEveArousalCount(candidate: FamilyParserCandidate, bytes: Uint8Array): { dayIso: string; count: number } | null {
   if (!/eve\.edf(?:\.gz)?$/i.test(candidate.baseName)) return null;
 
@@ -926,7 +1053,7 @@ export async function parseResMedFamily(context: FamilyParserContext, deps: Fami
   const arousalCountsByDay = new Map<string, number>();
   let processed = 0;
   for (const candidate of context.candidates) {
-    if (!/(?:str|eve)\.edf(?:\.gz)?$/i.test(candidate.baseName)) continue;
+    if (!/(?:str|eve|pld)\.edf(?:\.gz)?$/i.test(candidate.baseName)) continue;
     processed += 1;
     const pct =
       context.progressStart +
@@ -946,6 +1073,14 @@ export async function parseResMedFamily(context: FamilyParserContext, deps: Fami
         const records = parseResMedStrEdf(candidate, inflated, context.machine);
         if (records.length > 0) {
           context.records.push(...records);
+        }
+        continue;
+      }
+
+      if (/pld\.edf(?:\.gz)?$/i.test(candidate.baseName)) {
+        const record = parseResMedPldEdf(candidate, inflated);
+        if (record) {
+          context.records.push(record);
         }
         continue;
       }

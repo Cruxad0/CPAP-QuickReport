@@ -52,7 +52,7 @@ function createSyntheticResMedStrEdf(options: { leakUnit?: string; leakRawValues
   writeAsciiField(bytes, 8, 80, "QuickReport Fixture");
   writeAsciiField(bytes, 88, 80, "Fixture Patient");
   writeAsciiField(bytes, 168, 8, "15.04.26");
-  writeAsciiField(bytes, 176, 8, "00.00.00");
+  writeAsciiField(bytes, 176, 8, "12.00.00");
   writeAsciiField(bytes, 184, 8, String(headerBytes));
   writeAsciiField(bytes, 192, 44, "Synthetic ResMed STR");
   writeAsciiField(bytes, 236, 8, "1");
