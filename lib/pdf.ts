@@ -12,6 +12,7 @@ const BRANDING_HEADER_MIN_ASPECT_RATIO = 4;
 const BRANDING_HEADER_MAX_HEIGHT = 90;
 const BRANDING_LOGO_MAX_HEIGHT = 72;
 const FOOTER_BLOCK_HEIGHT = 64;
+const CPAP_THERAPY_MIN_FONT_SIZE = 8;
 const THERAPY_MIN_FONT_SIZE = 10;
 const THERAPY_MAX_FONT_SIZE = 12;
 const REPORT_METRIC_DECIMALS = 1;
@@ -348,14 +349,14 @@ function parseImageDataUrl(headerDataUrl: string | undefined): { mime: string; b
   };
 }
 
-function buildTherapyFontSizes(): number[] {
+function buildFontSizes(maxFontSize: number, minFontSize: number): number[] {
   const sizes: number[] = [];
-  for (let size = THERAPY_MAX_FONT_SIZE; size >= THERAPY_MIN_FONT_SIZE; size -= 0.5) {
+  for (let size = maxFontSize; size >= minFontSize; size -= 0.5) {
     sizes.push(Number(size.toFixed(1)));
   }
   return sizes;
 }
-const THERAPY_FONT_SIZES = buildTherapyFontSizes();
+const CPAP_THERAPY_FONT_SIZES = buildFontSizes(THERAPY_MAX_FONT_SIZE, CPAP_THERAPY_MIN_FONT_SIZE);
 
 async function tryEmbedHeaderImage(pdfDoc: any, headerDataUrl: string | undefined): Promise<any | undefined> {
   const parsed = parseImageDataUrl(headerDataUrl);
@@ -619,19 +620,20 @@ const TABLE_STYLE_CANDIDATES: CompactTableStyle[] = [
   }
 ];
 
-function therapyTableStyle(fontSize: number): CompactTableStyle {
-  const clampedFontSize = Math.max(THERAPY_MIN_FONT_SIZE, Math.min(THERAPY_MAX_FONT_SIZE, fontSize));
+function therapyTableStyle(fontSize: number, minFontSize = THERAPY_MIN_FONT_SIZE): CompactTableStyle {
+  const clampedFontSize = Math.max(minFontSize, Math.min(THERAPY_MAX_FONT_SIZE, fontSize));
+  const compact = clampedFontSize < THERAPY_MIN_FONT_SIZE;
   return {
-    titleSize: 11,
-    titleGap: 3.5,
-    headerHeight: Math.max(17.5, clampedFontSize + 7),
-    headerFontSize: 10,
+    titleSize: compact ? 10.5 : 11,
+    titleGap: compact ? 2.5 : 3.5,
+    headerHeight: Math.max(compact ? 14.5 : 17.5, clampedFontSize + (compact ? 5 : 7)),
+    headerFontSize: compact ? 9 : 10,
     bodyFontSize: clampedFontSize,
-    lineHeight: Math.max(12.4, clampedFontSize + 2),
-    insetX: 6,
-    insetY: clampedFontSize >= 11.5 ? 5.2 : 4.5,
+    lineHeight: Math.max(compact ? 9.4 : 12.4, clampedFontSize + (compact ? 1.2 : 2)),
+    insetX: compact ? 4.5 : 6,
+    insetY: compact ? 2 : clampedFontSize >= 11.5 ? 5.2 : 4.5,
     leftRatio: 0.41,
-    afterGap: 5
+    afterGap: compact ? 3 : 5
   };
 }
 
@@ -1504,35 +1506,43 @@ export async function buildPdfReport(report: QuickReportMetrics, headerDataUrl?:
   ];
   const machineRows = machineSettingRows(report);
   const therapyRows = buildTherapySummaryRows(report);
+  const reportMode = report.machine.mode?.trim() ?? "";
+  const isBiPapReport = isBiPapLikeMode(reportMode);
+  const therapyTitle = `Therapy Summary (Last ${report.daysInWindow} Days)`;
 
   const fullWidth = state.pageWidth - PAGE_MARGIN * 2;
   const columnGap = 10;
   const halfWidth = (fullWidth - columnGap) / 2;
   const availableHeight = state.y - (PAGE_MARGIN + FOOTER_BLOCK_HEIGHT);
-  const layoutChoice =
-    THERAPY_FONT_SIZES.flatMap((therapyFontSize) =>
-      TABLE_STYLE_CANDIDATES.map((topStyle) => ({
-        topStyle,
-        therapyStyle: therapyTableStyle(therapyFontSize)
-      }))
-    ).find(({ topStyle, therapyStyle }) => {
-      const topHeight = Math.max(
-        measureCompactTableHeight("Patient Details", patientRows, halfWidth, topStyle, fontRegular, fontBold),
-        measureCompactTableHeight("Machine Settings", machineRows, halfWidth, topStyle, fontRegular, fontBold)
-      );
-      const therapyHeight = measureCompactTableHeight(
-        `Therapy Summary (Last ${report.daysInWindow} Days)`,
-        therapyRows,
-        fullWidth,
-        therapyStyle,
-        fontRegular,
-        fontBold
-      );
-      return topHeight + therapyHeight <= availableHeight;
-    }) ?? {
-      topStyle: TABLE_STYLE_CANDIDATES[TABLE_STYLE_CANDIDATES.length - 1],
-      therapyStyle: therapyTableStyle(THERAPY_MAX_FONT_SIZE)
-    };
+  const onePageLayoutChoice = CPAP_THERAPY_FONT_SIZES.flatMap((therapyFontSize) =>
+    TABLE_STYLE_CANDIDATES.map((topStyle) => ({
+      topStyle,
+      therapyStyle: therapyTableStyle(therapyFontSize, CPAP_THERAPY_MIN_FONT_SIZE)
+    }))
+  ).find(({ topStyle, therapyStyle }) => {
+    const topHeight = Math.max(
+      measureCompactTableHeight("Patient Details", patientRows, halfWidth, topStyle, fontRegular, fontBold),
+      measureCompactTableHeight("Machine Settings", machineRows, halfWidth, topStyle, fontRegular, fontBold)
+    );
+    const therapyHeight = measureCompactTableHeight(
+      therapyTitle,
+      therapyRows,
+      fullWidth,
+      therapyStyle,
+      fontRegular,
+      fontBold
+    );
+    return topHeight + therapyHeight <= availableHeight;
+  }) ?? {
+    topStyle: TABLE_STYLE_CANDIDATES[TABLE_STYLE_CANDIDATES.length - 1],
+    therapyStyle: therapyTableStyle(CPAP_THERAPY_MIN_FONT_SIZE, CPAP_THERAPY_MIN_FONT_SIZE)
+  };
+  const layoutChoice = isBiPapReport
+    ? {
+        topStyle: TABLE_STYLE_CANDIDATES[0],
+        therapyStyle: therapyTableStyle(THERAPY_MAX_FONT_SIZE)
+      }
+    : onePageLayoutChoice;
 
   const topY = state.y;
   const patientBottom = drawCompactTableAt(
@@ -1563,25 +1573,55 @@ export async function buildPdfReport(report: QuickReportMetrics, headerDataUrl?:
   );
 
   state.y = Math.min(patientBottom, machineBottom);
-  state.y = drawCompactTableFlow(
-    pdfDoc,
-    state,
-    report.daysInWindow,
-    report.machine.mode,
-    PAGE_MARGIN,
-    fullWidth,
-    `Therapy Summary (Last ${report.daysInWindow} Days)`,
-    therapyRows,
-    layoutChoice.therapyStyle,
-    FOOTER_BLOCK_HEIGHT + 8,
-    headerImage,
-    fontRegular,
-    fontBold,
-    rgbFn,
-    theme
-  );
+  if (isBiPapReport) {
+    const secondPageStart = therapyRows.findIndex((row) => isGroupRow(row) && row.label === "Therapy Pressures");
+    const firstPageRows = secondPageStart > 0 ? therapyRows.slice(0, secondPageStart) : therapyRows;
+    const secondPageRows = secondPageStart > 0 ? therapyRows.slice(secondPageStart) : [];
 
-  ensureSpace(pdfDoc, state, FOOTER_BLOCK_HEIGHT + 8, report.daysInWindow, report.machine.mode, headerImage, fontBold, rgbFn, theme);
+    state.y = drawCompactTableAt(
+      state,
+      PAGE_MARGIN,
+      state.y,
+      fullWidth,
+      therapyTitle,
+      firstPageRows,
+      layoutChoice.therapyStyle,
+      fontRegular,
+      fontBold,
+      rgbFn,
+      theme
+    );
+
+    startNewPage(pdfDoc, state, report.daysInWindow, report.machine.mode, headerImage, fontBold, rgbFn, theme);
+    state.y = drawCompactTableAt(
+      state,
+      PAGE_MARGIN,
+      state.y,
+      fullWidth,
+      `${therapyTitle} (continued)`,
+      secondPageRows,
+      layoutChoice.therapyStyle,
+      fontRegular,
+      fontBold,
+      rgbFn,
+      theme
+    );
+  } else {
+    state.y = drawCompactTableAt(
+      state,
+      PAGE_MARGIN,
+      state.y,
+      fullWidth,
+      therapyTitle,
+      therapyRows,
+      layoutChoice.therapyStyle,
+      fontRegular,
+      fontBold,
+      rgbFn,
+      theme
+    );
+  }
+
   drawBottomFooterBlock(pdfDoc, state, report, headerImage, fontRegular, fontBold, rgbFn, theme);
 
   const bytes = await pdfDoc.save();

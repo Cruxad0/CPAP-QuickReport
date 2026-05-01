@@ -986,7 +986,8 @@ export function QuickReportApp() {
                     <span className="stale-data-detail">
                       {" - "}
                       <span className={staleDataAgeClass}>{staleDataAgeText}</span>
-                      <span className="stale-data-context"> This may indicate the device is not being used or the card is not current.</span>
+                      <br />
+                      <span className="stale-data-context">This may indicate the device is not being used or the card is not current.</span>
                     </span>
                   ) : null}
                 </li>
@@ -1048,7 +1049,8 @@ export function QuickReportApp() {
                       <span className="stale-data-detail">
                         {" - "}
                         <span className={staleDataAgeClass}>{staleDataAgeText}</span>
-                        <span className="stale-data-context"> This may indicate the device is not being used or the card is not current.</span>
+                        <br />
+                        <span className="stale-data-context">This may indicate the device is not being used or the card is not current.</span>
                       </span>
                     ) : null}
                   </li>

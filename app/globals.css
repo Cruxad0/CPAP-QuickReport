@@ -456,19 +456,19 @@ textarea {
 }
 
 .stale-data-age {
-  font-weight: 800;
+  font-weight: 900;
 }
 
 .stale-data-age-notice {
-  color: var(--notice);
+  color: #f2b600;
 }
 
 .stale-data-age-warning {
-  color: var(--warn);
+  color: #ff6a00;
 }
 
 .stale-data-age-critical {
-  color: var(--error);
+  color: #ff1f1f;
 }
 
 .notes li.mixed-data-warning {
@@ -481,6 +481,8 @@ textarea {
 }
 
 .stale-data-context {
+  display: inline-block;
+  margin-top: 0.1rem;
   color: var(--muted);
   font-weight: 600;
 }

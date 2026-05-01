@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { PDFDocument } from "pdf-lib";
 
 import {
   ahiMetricRows,
   bipapVentilationRows,
+  buildPdfReport,
   formatReportMetricValue,
   machineSettingRows,
   optionalEventMetricRows,
@@ -46,6 +48,13 @@ function reportWithMachine(machine: QuickReportMetrics["machine"]): QuickReportM
     machine,
     warnings: []
   };
+}
+
+async function pageCountForReport(report: QuickReportMetrics): Promise<number> {
+  const { blob } = await buildPdfReport(report);
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  const pdf = await PDFDocument.load(bytes);
+  return pdf.getPageCount();
 }
 
 test("report metric formatter rounds summary values to tenths", () => {
@@ -358,4 +367,49 @@ test("therapy summary shows min and max pressure rows for auto BiPAP settings", 
       ["Max Pressure", "11.0 cmH2O"]
     ]
   );
+});
+
+test("CPAP reports stay on one page", async () => {
+  const pages = await pageCountForReport(
+    reportWithMachine({
+      mode: "APAP",
+      pressureIsAuto: true,
+      pressureMin: "8 cmH2O",
+      pressureMax: "12 cmH2O",
+      pressureAvg: 9.24,
+      pressure95th: 11.76
+    })
+  );
+
+  assert.equal(pages, 1);
+});
+
+test("BiPAP reports use two pages", async () => {
+  const pages = await pageCountForReport(
+    reportWithMachine({
+      mode: "VAuto",
+      pressureIsAuto: true,
+      pressureMin: "7 cmH2O",
+      pressureMax: "11 cmH2O",
+      epapAvg: 7.1,
+      epap95th: 7.8,
+      ipapAvg: 10.6,
+      ipap95th: 11.2,
+      pressureAvg: 10.08,
+      pressure95th: 11.4,
+      respiratoryRate: "14 bpm",
+      tidalVolume: "500 mL",
+      tidalVolumeAvg: 0.46,
+      tidalVolumeMin: 0.31,
+      tidalVolumeMinMinutes: 12.24,
+      tidalVolumeMedian: 0.44,
+      tidalVolumeMax: 0.89,
+      tidalVolumeMaxMinutes: 1.96,
+      respiratoryRateMin: 8.24,
+      respiratoryRateAvg: 13.25,
+      respiratoryRate95th: 22.04
+    })
+  );
+
+  assert.equal(pages, 2);
 });
