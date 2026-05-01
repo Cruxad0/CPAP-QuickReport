@@ -477,8 +477,7 @@ textarea {
 }
 
 .stale-data-detail {
-  display: block;
-  margin-top: 0.12rem;
+  display: inline;
 }
 
 .stale-data-context {
