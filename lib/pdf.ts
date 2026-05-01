@@ -13,8 +13,9 @@ const BRANDING_HEADER_MAX_HEIGHT = 90;
 const BRANDING_LOGO_MAX_HEIGHT = 72;
 const FOOTER_BLOCK_HEIGHT = 64;
 const THERAPY_MIN_FONT_SIZE = 10;
-const THERAPY_MAX_FONT_SIZE = 11;
+const THERAPY_MAX_FONT_SIZE = 12;
 const REPORT_METRIC_DECIMALS = 1;
+const PRESSURE_SETTING_WARNING_TOLERANCE = 0.1;
 
 type PdfLibModule = {
   PDFDocument: {
@@ -623,12 +624,12 @@ function therapyTableStyle(fontSize: number): CompactTableStyle {
   return {
     titleSize: 11,
     titleGap: 3.5,
-    headerHeight: Math.max(16.5, clampedFontSize + 6.5),
+    headerHeight: Math.max(17.5, clampedFontSize + 7),
     headerFontSize: 10,
     bodyFontSize: clampedFontSize,
-    lineHeight: Math.max(11.2, clampedFontSize + 1.6),
-    insetX: 5.5,
-    insetY: 4,
+    lineHeight: Math.max(12.4, clampedFontSize + 2),
+    insetX: 6,
+    insetY: clampedFontSize >= 11.5 ? 5.2 : 4.5,
     leftRatio: 0.41,
     afterGap: 5
   };
@@ -691,6 +692,15 @@ function isMetricBelowSetting(value: number | null | undefined, setting: number 
     return false;
   }
   return Number(value.toFixed(REPORT_METRIC_DECIMALS)) < Number(setting.toFixed(REPORT_METRIC_DECIMALS));
+}
+
+function isPressureMetricBelowSetting(value: number | null | undefined, setting: number | null): boolean {
+  if (typeof value !== "number" || !Number.isFinite(value) || typeof setting !== "number" || !Number.isFinite(setting)) {
+    return false;
+  }
+  if (setting <= 0) return false;
+  const warningThreshold = setting * (1 - PRESSURE_SETTING_WARNING_TOLERANCE);
+  return Number(value.toFixed(REPORT_METRIC_DECIMALS)) < Number(warningThreshold.toFixed(REPORT_METRIC_DECIMALS));
 }
 
 function isTidalVolumeMetricBelowSetting(value: number | null | undefined, settingLiters: number | null): boolean {
@@ -847,29 +857,29 @@ export function therapyPressureRows(report: QuickReportMetrics): TableRow[] {
     const autoBilevelMinimumSetting = numericSettingValue(report.machine.pressureMin ?? report.machine.epap ?? derivedRange?.min);
     const ipapMinimumSetting = isAutoBiPap ? autoBilevelMinimumSetting : numericSettingValue(report.machine.ipap);
     const epapMinimumSetting = isAutoBiPap ? autoBilevelMinimumSetting : numericSettingValue(report.machine.epap);
-    rows.push(metricRow("95th IPAP", pressureMetricText(report.machine.ipap95th), isMetricBelowSetting(report.machine.ipap95th, ipapMinimumSetting)));
-    rows.push(metricRow("Avg IPAP", pressureMetricText(report.machine.ipapAvg), isMetricBelowSetting(report.machine.ipapAvg, ipapMinimumSetting)));
-    rows.push(metricRow("95th EPAP", pressureMetricText(report.machine.epap95th), isMetricBelowSetting(report.machine.epap95th, epapMinimumSetting)));
-    rows.push(metricRow("Avg EPAP", pressureMetricText(report.machine.epapAvg), isMetricBelowSetting(report.machine.epapAvg, epapMinimumSetting)));
+    rows.push(metricRow("95th IPAP", pressureMetricText(report.machine.ipap95th), isPressureMetricBelowSetting(report.machine.ipap95th, ipapMinimumSetting)));
+    rows.push(metricRow("Avg IPAP", pressureMetricText(report.machine.ipapAvg), isPressureMetricBelowSetting(report.machine.ipapAvg, ipapMinimumSetting)));
+    rows.push(metricRow("95th EPAP", pressureMetricText(report.machine.epap95th), isPressureMetricBelowSetting(report.machine.epap95th, epapMinimumSetting)));
+    rows.push(metricRow("Avg EPAP", pressureMetricText(report.machine.epapAvg), isPressureMetricBelowSetting(report.machine.epapAvg, epapMinimumSetting)));
     if (isAutoBiPap && (typeof report.machine.pressure95th === "number" || typeof report.machine.pressureAvg === "number")) {
       rows.push(
         metricRow(
           "95th Mask Pressure",
           pressureMetricText(report.machine.pressure95th),
-          isMetricBelowSetting(report.machine.pressure95th, minimumPressureSetting)
+          isPressureMetricBelowSetting(report.machine.pressure95th, minimumPressureSetting)
         )
       );
       rows.push(
         metricRow(
           "Avg Mask Pressure",
           pressureMetricText(report.machine.pressureAvg),
-          isMetricBelowSetting(report.machine.pressureAvg, minimumPressureSetting)
+          isPressureMetricBelowSetting(report.machine.pressureAvg, minimumPressureSetting)
         )
       );
     }
   } else {
-    rows.push(metricRow("95th Pressure", pressureMetricText(report.machine.pressure95th), isMetricBelowSetting(report.machine.pressure95th, minimumPressureSetting)));
-    rows.push(metricRow("Avg Pressure", pressureMetricText(report.machine.pressureAvg), isMetricBelowSetting(report.machine.pressureAvg, minimumPressureSetting)));
+    rows.push(metricRow("95th Pressure", pressureMetricText(report.machine.pressure95th), isPressureMetricBelowSetting(report.machine.pressure95th, minimumPressureSetting)));
+    rows.push(metricRow("Avg Pressure", pressureMetricText(report.machine.pressureAvg), isPressureMetricBelowSetting(report.machine.pressureAvg, minimumPressureSetting)));
   }
   if (!isBiPap || isAutoBiPap) {
     rows.push(["Min Pressure", pressureSettingText(minPressure)]);
@@ -1521,7 +1531,7 @@ export async function buildPdfReport(report: QuickReportMetrics, headerDataUrl?:
       return topHeight + therapyHeight <= availableHeight;
     }) ?? {
       topStyle: TABLE_STYLE_CANDIDATES[TABLE_STYLE_CANDIDATES.length - 1],
-      therapyStyle: therapyTableStyle(THERAPY_MIN_FONT_SIZE)
+      therapyStyle: therapyTableStyle(THERAPY_MAX_FONT_SIZE)
     };
 
   const topY = state.y;

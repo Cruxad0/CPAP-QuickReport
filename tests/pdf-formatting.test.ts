@@ -302,9 +302,31 @@ test("therapy summary does not derive min and max pressure rows from fixed BiPAP
     ),
     [
       ["95th IPAP", "11.2 cmH2O"],
-      ["Avg IPAP", "10.6 cmH2O", true],
+      ["Avg IPAP", "10.6 cmH2O"],
       ["95th EPAP", "7.8 cmH2O"],
       ["Avg EPAP", "7.1 cmH2O"]
+    ]
+  );
+});
+
+test("BiPAP pressure warnings allow ten percent variance below settings", () => {
+  assert.deepEqual(
+    therapyPressureRows(
+      reportWithMachine({
+        mode: "BiPAP",
+        ipap: "14 cmH2O",
+        epap: "8 cmH2O",
+        ipapAvg: 13.9,
+        ipap95th: 12.5,
+        epapAvg: 7.3,
+        epap95th: 7.1
+      })
+    ),
+    [
+      ["95th IPAP", "12.5 cmH2O", true],
+      ["Avg IPAP", "13.9 cmH2O"],
+      ["95th EPAP", "7.1 cmH2O", true],
+      ["Avg EPAP", "7.3 cmH2O"]
     ]
   );
 });
