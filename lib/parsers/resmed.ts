@@ -214,6 +214,16 @@ export function applyResMedCurrentSettingsJson(
   const minPressureSupport = asNumber(profile.MinPressureSupport) ?? asNumber(profile.MinPS);
   const maxPressureSupport = asNumber(profile.MaxPressureSupport) ?? asNumber(profile.MaxPS);
   const backupRate = asNumber(profile.BackupRate) ?? asNumber(profile.RespiratoryRate) ?? asNumber(profile.RR);
+  const targetTidalVolume =
+    asNumber(profile.TargetVt) ??
+    asNumber(profile.TargetVT) ??
+    asNumber(profile.TgtVt) ??
+    asNumber(profile.TgtVT) ??
+    asNumber(profile.SetVt) ??
+    asNumber(profile.SetVT) ??
+    asNumber(profile.TidalVolume) ??
+    asNumber(profile.TargetTidalVolume) ??
+    asNumber(profile.TidalVolumeTarget);
   const rampEnable = asNumber(profile.RampEnable) ?? asNumber(profile.RampEnabled);
   const rampTime = asNumber(profile.RampTime) ?? asNumber(profile.RampTimeMinutes);
   const rampPressure =
@@ -257,6 +267,8 @@ export function applyResMedCurrentSettingsJson(
     if (backupRate !== undefined && Number.isFinite(backupRate) && backupRate >= 0) {
       machine.respiratoryRate = `${Number(backupRate.toFixed(2)).toString()} bpm`;
     }
+    const targetTidalVolumeText = formatTidalVolumeValue(targetTidalVolume);
+    if (targetTidalVolumeText) machine.tidalVolume = targetTidalVolumeText;
   }
 
   applyResMedRampSettings(machine, rampEnable, rampTime, rampPressure);
@@ -544,6 +556,13 @@ export function mapResMedModeCode(modeCode: number | undefined, device: string |
 function formatPressureValue(value: number | undefined): string | undefined {
   if (value === undefined || !Number.isFinite(value) || value < 0 || value > 80) return undefined;
   return `${Number(value.toFixed(2)).toString()} cmH2O`;
+}
+
+function formatTidalVolumeValue(value: number | undefined): string | undefined {
+  if (value === undefined || !Number.isFinite(value) || value <= 0) return undefined;
+  const ml = value <= 5 ? value * 1000 : value;
+  if (!Number.isFinite(ml) || ml < 20 || ml > 5000) return undefined;
+  return `${Number(ml.toFixed(1)).toString()} mL`;
 }
 
 function isReportPressureMetric(value: number | undefined): value is number {

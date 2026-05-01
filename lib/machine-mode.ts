@@ -96,7 +96,7 @@ export function classifyTherapyMode(machine: QuickReportMetrics["machine"]): Can
   const explicitMode = resolveExplicitTherapyMode(machine.mode);
   if (explicitMode) return explicitMode;
 
-  if (machine.respiratoryRate || (machine.epap && machine.ipap)) {
+  if (machine.respiratoryRate || machine.tidalVolume || (machine.epap && machine.ipap)) {
     return "BiPAP";
   }
 

@@ -97,6 +97,7 @@ test("BiPAP ventilation rows show Vt and RR metrics when available", () => {
       reportWithMachine({
         mode: "VAuto",
         respiratoryRate: "14 bpm",
+        tidalVolume: "500 mL",
         tidalVolumeAvg: 0.46,
         tidalVolumeMin: 0.31,
         tidalVolumeMinMinutes: 12.24,
@@ -109,9 +110,9 @@ test("BiPAP ventilation rows show Vt and RR metrics when available", () => {
       })
     ),
     [
-      ["Min Vt (tidal volume)", "310.0 mL for 12.2 min"],
-      ["Median Vt (tidal volume)", "440.0 mL"],
-      ["Avg Vt (tidal volume)", "460.0 mL"],
+      ["Min Vt (tidal volume)", "310.0 mL for 12.2 min", true],
+      ["Median Vt (tidal volume)", "440.0 mL", true],
+      ["Avg Vt (tidal volume)", "460.0 mL", true],
       ["Max Vt (tidal volume)", "890.0 mL for 2.0 min"],
       ["Min RR", "8.2 bpm", true],
       ["Avg RR", "13.3 bpm", true],
@@ -137,6 +138,27 @@ test("BiPAP ventilation rows are hidden for non-BiPAP modes", () => {
       })
     ),
     []
+  );
+});
+
+test("machine settings show BiPAP Vt target when present", () => {
+  assert.deepEqual(
+    machineSettingRows(
+      reportWithMachine({
+        mode: "BiPAP",
+        ipap: "14 cmH2O",
+        epap: "8 cmH2O",
+        tidalVolume: "0.5 L"
+      })
+    ),
+    [
+      ["Device", "Data point not available"],
+      ["Mode", "BiPAP"],
+      ["IPAP", "14.0 cmH2O"],
+      ["EPAP", "8.0 cmH2O"],
+      ["Tidal volume (Vt)", "500.0 mL"],
+      ["Pressure relief", "Data point not available"]
+    ]
   );
 });
 

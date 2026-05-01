@@ -178,6 +178,22 @@ function isReportTidalVolumeMetric(value: number | undefined): value is number {
   return typeof value === "number" && Number.isFinite(value) && value > 0 && value <= 5;
 }
 
+function normalizeTidalVolumeMl(raw: number | undefined, unitHint = ""): number | undefined {
+  if (raw === undefined || !Number.isFinite(raw) || raw <= 0) return undefined;
+  const text = unitHint.toLowerCase();
+  const hasMlUnit = /\b(?:ml|milliliter|millilitre|milliliters|millilitres)\b/.test(text);
+  const hasLiterUnit = !hasMlUnit && /\b(?:l|liter|litre|liters|litres)\b/.test(text);
+  const ml = hasLiterUnit || (!hasMlUnit && raw <= 5) ? raw * 1000 : raw;
+  if (!Number.isFinite(ml) || ml < 20 || ml > 5000) return undefined;
+  return ml;
+}
+
+function tidalVolumeText(value: number | undefined, unitHint = ""): string | undefined {
+  const ml = normalizeTidalVolumeMl(value, unitHint);
+  if (ml === undefined) return undefined;
+  return `${Number(ml.toFixed(1)).toString()} mL`;
+}
+
 function pressureText(value: number | undefined): string | undefined {
   const n = normalizePressureNumber(value);
   if (n === undefined) return undefined;
@@ -614,6 +630,41 @@ function inferBilevelSettingsFromMap(configMap: Map<string, string>, machine: Qu
     return undefined;
   };
 
+  const readTidalVolume = (): string | undefined => {
+    const directKeys = [
+      "vt",
+      "vtset",
+      "setvt",
+      "targetvt",
+      "target_vt",
+      "vttarget",
+      "vt_target",
+      "tidalvolume",
+      "tidal_volume",
+      "settidalvolume",
+      "set_tidal_volume",
+      "targettidalvolume",
+      "target_tidal_volume",
+      "tidalvolumetarget",
+      "tidal_volume_target",
+      "avapsvt",
+      "avaps_vt",
+      "avapstargetvt",
+      "avaps_target_vt"
+    ];
+    for (const key of directKeys) {
+      const raw = kvLower.get(key);
+      const parsed = tidalVolumeText(safeNumber(raw), `${key} ${raw ?? ""}`);
+      if (parsed) return parsed;
+    }
+    for (const [key, value] of kvLower.entries()) {
+      if (!/(?:\bvt\b|tidal.*vol|vol.*tidal|avaps.*vol|avaps.*vt|target.*vol|set.*vol)/i.test(key)) continue;
+      const parsed = tidalVolumeText(safeNumber(value), `${key} ${value}`);
+      if (parsed) return parsed;
+    }
+    return undefined;
+  };
+
   const epapFixed = readPressure(["epap", "epapset", "set_epap", "epap_set"], [/\bepap\b/i]);
   const ipapFixed = readPressure(["ipap", "ipapset", "set_ipap", "ipap_set"], [/\bipap\b/i]);
   const epapMin = readPressure(["epapmin", "epap_min", "minepap", "min_epap"], [/\bepap.*(?:min|minimum)\b/i, /\b(?:min|minimum).*epap\b/i]);
@@ -621,11 +672,13 @@ function inferBilevelSettingsFromMap(configMap: Map<string, string>, machine: Qu
   const ipapMin = readPressure(["ipapmin", "ipap_min", "minipap", "min_ipap"], [/\bipap.*(?:min|minimum)\b/i, /\b(?:min|minimum).*ipap\b/i]);
   const ipapMax = readPressure(["ipapmax", "ipap_max", "maxipap", "max_ipap"], [/\bipap.*(?:max|maximum)\b/i, /\b(?:max|maximum).*ipap\b/i]);
   const rr = readRate();
+  const tidalVolume = readTidalVolume();
   const explicitMode = resolveExplicitTherapyMode(machine.mode);
   const hasBilevelPressureEvidence =
     (epapFixed !== undefined && ipapFixed !== undefined) ||
     ((epapMin !== undefined || epapMax !== undefined) && (ipapMin !== undefined || ipapMax !== undefined)) ||
-    rr !== undefined;
+    rr !== undefined ||
+    tidalVolume !== undefined;
 
   if (explicitMode === "CPAP" || explicitMode === "APAP") return;
   if (explicitMode !== "BiPAP" && !hasBilevelPressureEvidence) return;
@@ -660,6 +713,9 @@ function inferBilevelSettingsFromMap(configMap: Map<string, string>, machine: Qu
 
   if (!machine.respiratoryRate && rr !== undefined) {
     machine.respiratoryRate = `${Number(rr.toFixed(2)).toString()} bpm`;
+  }
+  if (!machine.tidalVolume && tidalVolume !== undefined) {
+    machine.tidalVolume = tidalVolume;
   }
 }
 
@@ -2159,6 +2215,7 @@ function sanitizeMachineSettingsForResolvedMode(
     machine.ipapAvg = undefined;
     machine.ipap95th = undefined;
     machine.respiratoryRate = undefined;
+    machine.tidalVolume = undefined;
     return;
   }
 
@@ -2171,6 +2228,7 @@ function sanitizeMachineSettingsForResolvedMode(
     machine.ipapAvg = undefined;
     machine.ipap95th = undefined;
     machine.respiratoryRate = undefined;
+    machine.tidalVolume = undefined;
     return;
   }
 
@@ -2193,6 +2251,7 @@ function normalizeMachineSettingsForModeResolution(machine: QuickReportMetrics["
     machine.ipapAvg = undefined;
     machine.ipap95th = undefined;
     machine.respiratoryRate = undefined;
+    machine.tidalVolume = undefined;
   } else if (explicitMode === "BiPAP") {
     const isAutoBiPap = isAutoBiPapLikeMode(machine.mode) || Boolean(machine.pressureMin || machine.pressureMax);
     machine.pressureIsAuto = isAutoBiPap;

@@ -671,11 +671,36 @@ function numericSettingValue(raw: string | null | undefined): number | null {
   return Number.isFinite(value) ? value : null;
 }
 
+function numericTidalVolumeSettingLiters(raw: string | null | undefined): number | null {
+  const text = raw?.trim();
+  if (!text) return null;
+  const match = text.match(/-?\d+(?:\.\d+)?/);
+  if (!match) return null;
+  const value = Number.parseFloat(match[0]);
+  if (!Number.isFinite(value) || value <= 0) return null;
+  const lower = text.toLowerCase();
+  if (/\b(?:ml|milliliter|millilitre|milliliters|millilitres)\b/.test(lower)) return value / 1000;
+  if (/\b(?:l|liter|litre|liters|litres)\b/.test(lower)) return value;
+  return value > 10 ? value / 1000 : value;
+}
+
 function isMetricBelowSetting(value: number | null | undefined, setting: number | null): boolean {
   if (typeof value !== "number" || !Number.isFinite(value) || typeof setting !== "number" || !Number.isFinite(setting)) {
     return false;
   }
   return Number(value.toFixed(REPORT_METRIC_DECIMALS)) < Number(setting.toFixed(REPORT_METRIC_DECIMALS));
+}
+
+function isTidalVolumeMetricBelowSetting(value: number | null | undefined, settingLiters: number | null): boolean {
+  if (
+    typeof value !== "number" ||
+    !Number.isFinite(value) ||
+    typeof settingLiters !== "number" ||
+    !Number.isFinite(settingLiters)
+  ) {
+    return false;
+  }
+  return Number((value * 1000).toFixed(REPORT_METRIC_DECIMALS)) < Number((settingLiters * 1000).toFixed(REPORT_METRIC_DECIMALS));
 }
 
 function metricRow(label: string, value: string, emphasize: boolean): TableRow {
@@ -701,6 +726,12 @@ function tidalVolumeMetricText(value: number | null | undefined, sustainedMinute
   return typeof sustainedMinutes === "number" && Number.isFinite(sustainedMinutes)
     ? `${text} for ${formatReportMetricValue(sustainedMinutes)} min`
     : text;
+}
+
+function normalizeTidalVolumeDisplay(raw: string | null | undefined): string {
+  const liters = numericTidalVolumeSettingLiters(raw);
+  if (liters === null) return textValue(raw);
+  return `${formatReportMetricValue(liters * 1000)} mL`;
 }
 
 function extractPressureRangeValues(raw: string | null | undefined): { min: string; max: string } | null {
@@ -744,11 +775,17 @@ export function machineSettingRows(report: QuickReportMetrics): TableRow[] {
     if (shouldDisplayRespiratoryRate(report.machine)) {
       rows.push(["Respiratory rate (RR)", normalizeRespiratoryRateDisplay(report.machine.respiratoryRate)]);
     }
+    if (report.machine.tidalVolume?.trim()) {
+      rows.push(["Tidal volume (Vt)", normalizeTidalVolumeDisplay(report.machine.tidalVolume)]);
+    }
   } else if (isBiPap) {
     rows.push(["IPAP", normalizePressureDisplay(report.machine.ipap)]);
     rows.push(["EPAP", normalizePressureDisplay(report.machine.epap)]);
     if (shouldDisplayRespiratoryRate(report.machine)) {
       rows.push(["Respiratory rate (RR)", normalizeRespiratoryRateDisplay(report.machine.respiratoryRate)]);
+    }
+    if (report.machine.tidalVolume?.trim()) {
+      rows.push(["Tidal volume (Vt)", normalizeTidalVolumeDisplay(report.machine.tidalVolume)]);
     }
   } else if (isAutoPap) {
     rows.push(["Min pressure", normalizePressureDisplay(report.machine.pressureMin ?? derivedRange?.min)]);
@@ -837,17 +874,42 @@ export function bipapVentilationRows(report: QuickReportMetrics): TableRow[] {
 
   const rows: TableRow[] = [];
   const respiratoryRateSetting = numericSettingValue(report.machine.respiratoryRate);
+  const tidalVolumeSetting = numericTidalVolumeSettingLiters(report.machine.tidalVolume);
   if (typeof report.machine.tidalVolumeMin === "number") {
-    rows.push(["Min Vt (tidal volume)", tidalVolumeMetricText(report.machine.tidalVolumeMin, report.machine.tidalVolumeMinMinutes)]);
+    rows.push(
+      metricRow(
+        "Min Vt (tidal volume)",
+        tidalVolumeMetricText(report.machine.tidalVolumeMin, report.machine.tidalVolumeMinMinutes),
+        isTidalVolumeMetricBelowSetting(report.machine.tidalVolumeMin, tidalVolumeSetting)
+      )
+    );
   }
   if (typeof report.machine.tidalVolumeMedian === "number") {
-    rows.push(["Median Vt (tidal volume)", tidalVolumeMetricText(report.machine.tidalVolumeMedian)]);
+    rows.push(
+      metricRow(
+        "Median Vt (tidal volume)",
+        tidalVolumeMetricText(report.machine.tidalVolumeMedian),
+        isTidalVolumeMetricBelowSetting(report.machine.tidalVolumeMedian, tidalVolumeSetting)
+      )
+    );
   }
   if (typeof report.machine.tidalVolumeAvg === "number") {
-    rows.push(["Avg Vt (tidal volume)", tidalVolumeMetricText(report.machine.tidalVolumeAvg)]);
+    rows.push(
+      metricRow(
+        "Avg Vt (tidal volume)",
+        tidalVolumeMetricText(report.machine.tidalVolumeAvg),
+        isTidalVolumeMetricBelowSetting(report.machine.tidalVolumeAvg, tidalVolumeSetting)
+      )
+    );
   }
   if (typeof report.machine.tidalVolumeMax === "number") {
-    rows.push(["Max Vt (tidal volume)", tidalVolumeMetricText(report.machine.tidalVolumeMax, report.machine.tidalVolumeMaxMinutes)]);
+    rows.push(
+      metricRow(
+        "Max Vt (tidal volume)",
+        tidalVolumeMetricText(report.machine.tidalVolumeMax, report.machine.tidalVolumeMaxMinutes),
+        isTidalVolumeMetricBelowSetting(report.machine.tidalVolumeMax, tidalVolumeSetting)
+      )
+    );
   }
   if (typeof report.machine.respiratoryRateMin === "number") {
     rows.push(metricRow("Min RR", respiratoryRateMetricText(report.machine.respiratoryRateMin), isMetricBelowSetting(report.machine.respiratoryRateMin, respiratoryRateSetting)));

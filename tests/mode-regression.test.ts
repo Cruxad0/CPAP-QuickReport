@@ -84,6 +84,13 @@ test("shared mode resolver handles representative family output shapes", () => {
       expected: "BiPAP"
     },
     {
+      family: "AVAPS target volume",
+      machine: machine({
+        tidalVolume: "500 mL"
+      }),
+      expected: "BiPAP"
+    },
+    {
       family: "IntelliPAP APAP",
       machine: machine({
         mode: "APAP",
@@ -271,7 +278,8 @@ test("ResMed CurrentSettings.json is treated as authoritative for active therapy
                 TherapyMode: "VAuto",
                 MinEPAP: 6,
                 MaxIPAP: 14,
-                PressureSupport: 4
+                PressureSupport: 4,
+                TargetVt: 0.56
               }
             }
           }
@@ -284,6 +292,7 @@ test("ResMed CurrentSettings.json is treated as authoritative for active therapy
         pressureMin: "6 cmH2O",
         pressureMax: "14 cmH2O",
         pressureRelief: "PS: 4 cmH2O",
+        tidalVolume: "560 mL",
         pressureIsAuto: true
       }
     }

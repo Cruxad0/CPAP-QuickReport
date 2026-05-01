@@ -71,6 +71,7 @@ export interface MachineSettings {
   respiratoryRateAvg?: number | null;
   respiratoryRateMin?: number | null;
   respiratoryRate95th?: number | null;
+  tidalVolume?: string;
   tidalVolumeAvg?: number | null;
   tidalVolumeMin?: number | null;
   tidalVolumeMinMinutes?: number | null;
