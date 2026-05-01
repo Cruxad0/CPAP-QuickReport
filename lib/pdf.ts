@@ -1024,6 +1024,15 @@ function buildTherapySummaryRows(report: QuickReportMetrics): TableRow[] {
   ];
 }
 
+function isAutoCpapPaginationMode(mode: string): boolean {
+  return /\bauto s30\b/i.test(mode);
+}
+
+function shouldUseTwoPageTherapyLayout(report: QuickReportMetrics): boolean {
+  const mode = report.machine.mode?.trim() ?? "";
+  return isBiPapLikeMode(mode) && !isAutoCpapPaginationMode(mode);
+}
+
 function measureCompactTableHeight(
   title: string,
   rows: TableRow[],
@@ -1506,8 +1515,7 @@ export async function buildPdfReport(report: QuickReportMetrics, headerDataUrl?:
   ];
   const machineRows = machineSettingRows(report);
   const therapyRows = buildTherapySummaryRows(report);
-  const reportMode = report.machine.mode?.trim() ?? "";
-  const isBiPapReport = isBiPapLikeMode(reportMode);
+  const isTwoPageTherapyReport = shouldUseTwoPageTherapyLayout(report);
   const therapyTitle = `Therapy Summary (Last ${report.daysInWindow} Days)`;
 
   const fullWidth = state.pageWidth - PAGE_MARGIN * 2;
@@ -1537,7 +1545,7 @@ export async function buildPdfReport(report: QuickReportMetrics, headerDataUrl?:
     topStyle: TABLE_STYLE_CANDIDATES[TABLE_STYLE_CANDIDATES.length - 1],
     therapyStyle: therapyTableStyle(CPAP_THERAPY_MIN_FONT_SIZE, CPAP_THERAPY_MIN_FONT_SIZE)
   };
-  const layoutChoice = isBiPapReport
+  const layoutChoice = isTwoPageTherapyReport
     ? {
         topStyle: TABLE_STYLE_CANDIDATES[0],
         therapyStyle: therapyTableStyle(THERAPY_MAX_FONT_SIZE)
@@ -1573,7 +1581,7 @@ export async function buildPdfReport(report: QuickReportMetrics, headerDataUrl?:
   );
 
   state.y = Math.min(patientBottom, machineBottom);
-  if (isBiPapReport) {
+  if (isTwoPageTherapyReport) {
     const secondPageStart = therapyRows.findIndex((row) => isGroupRow(row) && row.label === "Therapy Pressures");
     const firstPageRows = secondPageStart > 0 ? therapyRows.slice(0, secondPageStart) : therapyRows;
     const secondPageRows = secondPageStart > 0 ? therapyRows.slice(secondPageStart) : [];

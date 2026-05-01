@@ -384,6 +384,25 @@ test("CPAP reports stay on one page", async () => {
   assert.equal(pages, 1);
 });
 
+test("Auto S30 reports stay on one page", async () => {
+  const pages = await pageCountForReport(
+    reportWithMachine({
+      mode: "Auto S30",
+      pressureIsAuto: true,
+      pressureMin: "4 cmH2O",
+      pressureMax: "12 cmH2O",
+      epapAvg: 5.4,
+      epap95th: 7.5,
+      ipapAvg: 8.2,
+      ipap95th: 11.2,
+      pressureAvg: 5.1,
+      pressure95th: 8.9
+    })
+  );
+
+  assert.equal(pages, 1);
+});
+
 test("BiPAP reports use two pages", async () => {
   const pages = await pageCountForReport(
     reportWithMachine({
