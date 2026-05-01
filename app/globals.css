@@ -8,6 +8,7 @@
   --brand: #0d6d91;
   --brand-2: #0a8cb7;
   --ok: #157347;
+  --notice: #8a6500;
   --warn: #a54f00;
   --error: #a11c1c;
 }
@@ -455,8 +456,26 @@ textarea {
 }
 
 .notes li.stale-data-warning {
-  color: var(--error);
+  border-left: 4px solid currentColor;
+  border-radius: 6px;
+  margin-left: -0.55rem;
+  padding: 0.45rem 0.65rem;
   font-weight: 700;
+}
+
+.notes li.stale-data-age-notice {
+  color: var(--notice);
+  background: #fff8d6;
+}
+
+.notes li.stale-data-age-warning {
+  color: var(--warn);
+  background: #fff0df;
+}
+
+.notes li.stale-data-age-critical {
+  color: var(--error);
+  background: #fde7e7;
 }
 
 .notes li.mixed-data-warning {
