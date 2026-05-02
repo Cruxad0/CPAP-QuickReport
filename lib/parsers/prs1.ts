@@ -251,6 +251,13 @@ function normalizePrs1BinaryExtension(normalizedPath: string): string {
   return normalizedPath.split(".").pop()?.toLowerCase() ?? "";
 }
 
+function extractPrs1PathSessionIdHint(normalizedPath: string): number | null {
+  const match = /(?:^|\/)p\d+\/([0-9a-f]{8})\.(?:000|001|002|b01|b02)$/i.exec(normalizedPath);
+  if (!match) return null;
+  const sessionId = Number.parseInt(match[1], 16);
+  return Number.isFinite(sessionId) ? sessionId : null;
+}
+
 function isPrs1BinaryCandidate(candidate: FamilyParserCandidate): boolean {
   const ext = normalizePrs1BinaryExtension(candidate.normalizedPath);
   if (!PRS1_BINARY_EXTENSIONS.has(ext)) return false;
@@ -1410,6 +1417,20 @@ function trimPrs1SessionsToRecentWindow(sessions: Map<number, Prs1SessionAccumul
   }
 }
 
+function canTrustPrs1PathSessionHints(candidates: FamilyParserCandidate[], sessions: Map<number, Prs1SessionAccumulator>): boolean {
+  let hinted = 0;
+  let matched = 0;
+
+  for (const candidate of candidates) {
+    const hint = extractPrs1PathSessionIdHint(candidate.normalizedPath);
+    if (hint === null) continue;
+    hinted += 1;
+    if (sessions.has(hint)) matched += 1;
+  }
+
+  return hinted > 0 && matched > 0 && matched / hinted >= 0.8;
+}
+
 async function parsePrs1BinaryCandidateBatch(
   context: FamilyParserContext,
   deps: FamilyParserDeps,
@@ -1417,7 +1438,8 @@ async function parsePrs1BinaryCandidateBatch(
   sessions: Map<number, Prs1SessionAccumulator>,
   wrappedKeyCache: Map<string, Uint8Array | null>,
   progressState: Prs1ParseProgressState,
-  recentEventSessionIds: Set<number> | null
+  recentEventSessionIds: Set<number> | null,
+  trustPathSessionHints = false
 ) {
   const shouldReportProgress = typeof context.onProgress === "function";
 
@@ -1442,6 +1464,13 @@ async function parsePrs1BinaryCandidateBatch(
     }
 
     try {
+      if (recentEventSessionIds && trustPathSessionHints && isPrs1EventBinaryCandidate(candidate)) {
+        const hintedSessionId = extractPrs1PathSessionIdHint(candidate.normalizedPath);
+        if (hintedSessionId !== null && !recentEventSessionIds.has(hintedSessionId)) {
+          continue;
+        }
+      }
+
       let bytes = await candidate.file.readBytes();
       const ext = normalizePrs1BinaryExtension(candidate.normalizedPath);
       if (ext.startsWith("b")) {
@@ -1484,8 +1513,18 @@ async function parsePrs1BinaryCandidates(context: FamilyParserContext, deps: Fam
     await parsePrs1BinaryCandidateBatch(context, deps, summaryCandidates, sessions, wrappedKeyCache, progressState, null);
     const recentSessionIds = collectRecentPrs1SessionIds(sessions, context.lookbackDays);
     if (recentSessionIds) {
+      const trustPathSessionHints = canTrustPrs1PathSessionHints(summaryCandidates, sessions);
       trimPrs1SessionsToRecentWindow(sessions, recentSessionIds);
-      await parsePrs1BinaryCandidateBatch(context, deps, eventCandidates, sessions, wrappedKeyCache, progressState, recentSessionIds);
+      await parsePrs1BinaryCandidateBatch(
+        context,
+        deps,
+        eventCandidates,
+        sessions,
+        wrappedKeyCache,
+        progressState,
+        recentSessionIds,
+        trustPathSessionHints
+      );
     } else {
       sessions = new Map<number, Prs1SessionAccumulator>();
       await parsePrs1BinaryCandidateBatch(

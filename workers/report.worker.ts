@@ -7,6 +7,8 @@ import {
   createCachedSourceFilesFromFolder,
   createCachedSourceFilesFromZip,
   createSourceFileSummary,
+  extractDatedLeafDirectoryDate,
+  filterDatedFolderScanTargets,
   filterFolderEntriesToRecentWindow,
   filterSourceFilesToRecentWindow,
   shouldIgnorePathEarly
@@ -60,44 +62,70 @@ async function yieldInWorker(): Promise<void> {
 async function enumerateFolderHandle(
   requestId: number,
   rootHandle: WorkerDirectoryHandle,
-  _lookbackDays: number
+  lookbackDays: number
 ): Promise<DeferredFolderSourceEntry[]> {
   const deferredEntries: DeferredFolderSourceEntry[] = [];
-  const stack: Array<{ handle: WorkerDirectoryHandle; prefix: string }> = [{ handle: rootHandle, prefix: "" }];
+  const datedDirectories: Array<{ handle: WorkerDirectoryHandle; prefix: string; date: Date }> = [];
   let discovered = 0;
 
-  while (stack.length > 0) {
-    const current = stack.pop();
-    if (!current) continue;
+  async function scanStack(initialStack: Array<{ handle: WorkerDirectoryHandle; prefix: string }>, deferDatedDirectories: boolean) {
+    const stack = [...initialStack];
+    while (stack.length > 0) {
+      const current = stack.pop();
+      if (!current) continue;
 
-    for await (const childHandle of current.handle.values()) {
-      const childPath = current.prefix ? `${current.prefix}/${childHandle.name}` : childHandle.name;
-      if (shouldIgnorePathEarly(childPath)) continue;
+      for await (const childHandle of current.handle.values()) {
+        const childPath = current.prefix ? `${current.prefix}/${childHandle.name}` : childHandle.name;
+        if (shouldIgnorePathEarly(childPath)) continue;
 
-      if (childHandle.kind === "directory") {
-        stack.push({
-          handle: childHandle as WorkerDirectoryHandle,
-          prefix: childPath
-        });
-      } else {
-        deferredEntries.push({
-          kind: "handle",
-          name: childHandle.name,
-          size: 0,
-          relativePath: childPath,
-          handle: childHandle as FileSystemFileHandle
-        });
+        if (childHandle.kind === "directory") {
+          const datedFolderDate = deferDatedDirectories ? extractDatedLeafDirectoryDate(childPath) : null;
+          if (datedFolderDate) {
+            datedDirectories.push({
+              handle: childHandle as WorkerDirectoryHandle,
+              prefix: childPath,
+              date: datedFolderDate
+            });
+          } else {
+            stack.push({
+              handle: childHandle as WorkerDirectoryHandle,
+              prefix: childPath
+            });
+          }
+        } else {
+          deferredEntries.push({
+            kind: "handle",
+            name: childHandle.name,
+            size: 0,
+            relativePath: childPath,
+            handle: childHandle as FileSystemFileHandle
+          });
+        }
+
+        discovered += 1;
+        if (discovered % WORKER_DIRECTORY_ENUMERATION_BATCH_SIZE === 0) {
+          emitProgress(requestId, "scan", `Scanning SD-CARD structure... ${deferredEntries.length} files found`, 1);
+          await yieldInWorker();
+        }
       }
 
-      discovered += 1;
-      if (discovered % WORKER_DIRECTORY_ENUMERATION_BATCH_SIZE === 0) {
-        emitProgress(requestId, "scan", `Scanning SD-CARD structure... ${deferredEntries.length} files found`, 1);
-        await yieldInWorker();
-      }
+      await yieldInWorker();
     }
+  }
 
+  await scanStack([{ handle: rootHandle, prefix: "" }], true);
+
+  const recentDatedDirectories = filterDatedFolderScanTargets(datedDirectories, lookbackDays);
+  const skippedDatedDirectories = datedDirectories.length - recentDatedDirectories.length;
+  if (skippedDatedDirectories > 0) {
+    emitProgress(requestId, "scan", `Skipping ${skippedDatedDirectories} older dated folders before file indexing`, 1);
     await yieldInWorker();
   }
+
+  await scanStack(
+    recentDatedDirectories.map((directory) => ({ handle: directory.handle, prefix: directory.prefix })),
+    false
+  );
 
   emitProgress(requestId, "scan", `Scanning SD-CARD structure... ${deferredEntries.length} files found`, 1);
   return deferredEntries;

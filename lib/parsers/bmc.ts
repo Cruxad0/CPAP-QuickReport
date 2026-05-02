@@ -74,6 +74,16 @@ function toIsoDate(dt: Date): string {
   return dt.toISOString().slice(0, 10);
 }
 
+function addUtcDays(date: Date, days: number): Date {
+  const next = new Date(date);
+  next.setUTCDate(next.getUTCDate() + days);
+  return next;
+}
+
+function contextLookbackDays(lookbackDays: number): number {
+  return Number.isFinite(lookbackDays) && lookbackDays > 0 ? Math.trunc(lookbackDays) : 90;
+}
+
 function percentile(values: number[], p: number): number {
   if (values.length === 0) return 0;
   const sorted = [...values].sort((a, b) => a - b);
@@ -477,16 +487,40 @@ function parseBmcUsrRecords(bytes: Uint8Array): ParsedRecord[] {
   return records;
 }
 
+function collectRecentBmcDayIsoSet(records: ParsedRecord[], lookbackDays: number): Set<string> {
+  if (records.length === 0) return new Set();
+
+  const latest = records.reduce((acc, record) => {
+    const clinicalDay = createUtcDateNoon(record.date.getUTCFullYear(), record.date.getUTCMonth() + 1, record.date.getUTCDate());
+    return clinicalDay > acc ? clinicalDay : acc;
+  }, createUtcDateNoon(records[0].date.getUTCFullYear(), records[0].date.getUTCMonth() + 1, records[0].date.getUTCDate()));
+  const windowEnd = addUtcDays(latest, 1);
+  const windowStart = addUtcDays(windowEnd, -contextLookbackDays(lookbackDays));
+
+  const recentDays = new Set<string>();
+  for (const record of records) {
+    const clinicalDay = createUtcDateNoon(record.date.getUTCFullYear(), record.date.getUTCMonth() + 1, record.date.getUTCDate());
+    if (clinicalDay >= windowStart && clinicalDay < windowEnd) {
+      recentDays.add(toIsoDate(clinicalDay));
+    }
+  }
+  return recentDays;
+}
+
 export async function parseBmcFamily(context: FamilyParserContext, deps: FamilyParserDeps): Promise<void> {
   const validDayIsoSet = new Set<string>();
-  const waveformFiles: Array<{ path: string; bytes: Uint8Array }> = [];
+  const usrCandidates = context.candidates.filter((candidate) => candidate.normalizedPath.toLowerCase().endsWith(".usr"));
+  const idxCandidates = context.candidates.filter((candidate) => candidate.normalizedPath.toLowerCase().endsWith(".idx"));
+  const waveformCandidates = context.candidates.filter((candidate) => /\.\d{3}$/i.test(candidate.normalizedPath));
+  const primaryCandidates = [...usrCandidates, ...idxCandidates];
   let processed = 0;
+  const totalWork = primaryCandidates.length + waveformCandidates.length;
 
-  for (const candidate of context.candidates) {
+  for (const candidate of primaryCandidates) {
     processed += 1;
     const pct =
       context.progressStart +
-      Math.round((processed / Math.max(1, context.candidates.length)) * (context.progressEnd - context.progressStart));
+      Math.round((processed / Math.max(1, totalWork)) * (context.progressEnd - context.progressStart));
 
     deps.emit(context.onProgress, {
       phase: "parse",
@@ -507,8 +541,6 @@ export async function parseBmcFamily(context: FamilyParserContext, deps: FamilyP
         context.records.push(...parsedRecords);
       } else if (lowerPath.endsWith(".idx")) {
         inferBmcSettingsFromIdx(bytes, context.machine);
-      } else if (/\.\d{3}$/i.test(lowerPath)) {
-        waveformFiles.push({ path: lowerPath, bytes });
       }
     } catch {
       continue;
@@ -519,7 +551,40 @@ export async function parseBmcFamily(context: FamilyParserContext, deps: FamilyP
     }
   }
 
-  if (waveformFiles.length > 0 && validDayIsoSet.size > 0) {
+  const recentDayIsoSet = collectRecentBmcDayIsoSet(context.records, context.lookbackDays);
+  if (recentDayIsoSet.size > 0) {
+    validDayIsoSet.clear();
+    for (const dayIso of recentDayIsoSet) validDayIsoSet.add(dayIso);
+  }
+
+  if (waveformCandidates.length > 0 && validDayIsoSet.size > 0) {
+    const waveformFiles: Array<{ path: string; bytes: Uint8Array }> = [];
+    for (const candidate of waveformCandidates) {
+      processed += 1;
+      const pct =
+        context.progressStart +
+        Math.round((processed / Math.max(1, totalWork)) * (context.progressEnd - context.progressStart));
+
+      deps.emit(context.onProgress, {
+        phase: "parse",
+        detail: `Reading ${candidate.normalizedPath}`,
+        percent: Math.min(context.progressEnd, pct)
+      });
+
+      try {
+        waveformFiles.push({
+          path: candidate.normalizedPath.toLowerCase(),
+          bytes: await candidate.file.readBytes()
+        });
+      } catch {
+        continue;
+      }
+
+      if (processed % 4 === 0) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+    }
+
     waveformFiles.sort((a, b) => a.path.localeCompare(b.path, undefined, { numeric: true }));
     deps.emit(context.onProgress, {
       phase: "parse",

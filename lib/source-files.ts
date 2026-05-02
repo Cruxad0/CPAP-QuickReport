@@ -102,7 +102,7 @@ function toIsoDate(dt: Date): string {
 function extractDateFromPath(path: string): Date | null {
   const normalized = normalizePath(path);
 
-  const resvent = /(?:^|\/)therapy\/record\/(\d{4})(\d{2})\/(\d{2})(?:\/|$)/i.exec(normalized);
+  const resvent = /(?:^|\/)(?:therapy\/)?record\/(\d{4})(\d{2})\/(\d{2})(?:\/|$)/i.exec(normalized);
   if (resvent) {
     return createUtcDateNoon(Number(resvent[1]), Number(resvent[2]), Number(resvent[3]));
   }
@@ -117,6 +117,27 @@ function extractDateFromPath(path: string): Date | null {
   if (compact) {
     const dt = createUtcDateNoon(Number(compact[1]), Number(compact[2]), Number(compact[3]));
     if (dt) return dt;
+  }
+
+  return null;
+}
+
+export function extractDatedLeafDirectoryDate(path: string): Date | null {
+  const normalized = normalizePath(path).replace(/\/+$/, "");
+
+  const resvent = /(?:^|\/)(?:therapy\/)?record\/(\d{4})(\d{2})\/(\d{2})$/i.exec(normalized);
+  if (resvent) {
+    return createUtcDateNoon(Number(resvent[1]), Number(resvent[2]), Number(resvent[3]));
+  }
+
+  const separated = /(?:^|\/)((?:19|20)\d{2})[\/_-](\d{2})[\/_-](\d{2})$/.exec(normalized);
+  if (separated) {
+    return createUtcDateNoon(Number(separated[1]), Number(separated[2]), Number(separated[3]));
+  }
+
+  const compact = /(?:^|\/)((?:19|20)\d{2})(\d{2})(\d{2})$/.exec(normalized);
+  if (compact) {
+    return createUtcDateNoon(Number(compact[1]), Number(compact[2]), Number(compact[3]));
   }
 
   return null;
@@ -137,6 +158,16 @@ function resolveLatestDataWindowMs(latestDate: Date, lookbackDays: number): { st
   const anchoredWindowEndMs = latestDateMs + DAY_MS;
   const windowStartMs = anchoredWindowEndMs - lookbackDays * DAY_MS;
   return { startMs: windowStartMs, endMs: anchoredWindowEndMs };
+}
+
+export function filterDatedFolderScanTargets<T extends { date: Date }>(targets: T[], lookbackDays: number): T[] {
+  if (targets.length === 0) return targets;
+  const latestDate = targets.reduce((latest, target) => (target.date > latest ? target.date : latest), targets[0].date);
+  const { startMs, endMs } = resolveLatestDataWindowMs(latestDate, lookbackDays);
+  return targets.filter((target) => {
+    const time = target.date.getTime();
+    return time >= startMs && time < endMs;
+  });
 }
 
 function detectLikelyFamilyId(files: Array<{ path: string }>): string | null {
