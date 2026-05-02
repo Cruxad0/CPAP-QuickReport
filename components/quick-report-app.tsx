@@ -27,6 +27,29 @@ const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MIN_YEAR = 1900;
 const MAX_YEAR = 2100;
 const SOURCE_SELECTION_CANCEL_TIMEOUT_MS = 20000;
+const CARD_READER_PRODUCTS = [
+  {
+    title: "USB-C and USB-A Compact Reader",
+    description: "Pocket-sized reader for offices that switch between USB-C and USB-A devices.",
+    href: "https://amzn.to/4teCHDp",
+    imageSrc: "/card-readers/first-item.jpg",
+    imageAlt: "Compact USB-C and USB-A SD card reader"
+  },
+  {
+    title: "Acer USB-A 3.0 Card Reader",
+    description: "Reliable option for desktops, older laptops, and standard USB-A ports.",
+    href: "https://amzn.to/3QFf1dL",
+    imageSrc: "/card-readers/second-item.jpg",
+    imageAlt: "Acer USB-A 3.0 SD card reader"
+  },
+  {
+    title: "Acer USB-C Card Reader",
+    description: "Best fit for newer laptops, tablets, phones, and other USB-C devices.",
+    href: "https://amzn.to/4tP1IWP",
+    imageSrc: "/card-readers/third-item.jpg",
+    imageAlt: "Acer USB-C SD and microSD card reader"
+  }
+] as const;
 const LONG_DATE_FORMATTER = new Intl.DateTimeFormat("en-US", {
   month: "long",
   day: "numeric",
@@ -1125,6 +1148,49 @@ export function QuickReportApp() {
             )}
           </article>
         ) : null}
+
+        <article className="card col-12 affiliate-card">
+          <details className="affiliate-disclosure">
+            <summary>
+              <span className="affiliate-summary-copy">
+                <span className="affiliate-summary-title">Buy your Card reader here</span>
+                <span className="affiliate-summary-subtitle">Choose the connector that matches the computer used for SD-card imports.</span>
+              </span>
+              <span className="affiliate-summary-pill">3 options</span>
+            </summary>
+            <p className="affiliate-intro">
+              These readers are arranged by connector type so staff can quickly match the reader to the computer at hand.
+            </p>
+            <div className="card-reader-list">
+              {CARD_READER_PRODUCTS.map((product) => (
+                <a
+                  key={product.href}
+                  className="card-reader-item"
+                  href={product.href}
+                  target="_blank"
+                  rel="noopener noreferrer sponsored"
+                  aria-label={`Buy ${product.title} on Amazon`}
+                >
+                  <span className="card-reader-copy">
+                    <strong>{product.title}</strong>
+                    <span className="card-reader-description">{product.description}</span>
+                    <span className="card-reader-cta">View on Amazon</span>
+                  </span>
+                  <span className="card-reader-media" aria-hidden="true">
+                    <img
+                      className="card-reader-image"
+                      src={product.imageSrc}
+                      alt=""
+                      loading="lazy"
+                      decoding="async"
+                    />
+                  </span>
+                </a>
+              ))}
+            </div>
+            <p className="affiliate-note">Affiliate links may earn from qualifying purchases.</p>
+          </details>
+        </article>
 
         <article className="card col-12 legal-notice">
           <details className="legal-disclosure">
