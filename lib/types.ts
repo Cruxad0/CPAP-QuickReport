@@ -32,6 +32,9 @@ export interface ParsedRecord {
   leakMax?: number;
   leakMax30m?: number;
   leakMax60m?: number;
+  maxLeakMinutes?: number;
+  sustainedLeakMax?: number;
+  sustainedLeakMinutes?: number;
   pressureAvg?: number;
   pressure95th?: number;
   ipapAvg?: number;
@@ -113,6 +116,9 @@ export interface QuickReportMetrics {
   maxLeak: number | null;
   maxLeak30m: number | null;
   maxLeak60m: number | null;
+  maxLeakMinutes?: number | null;
+  sustainedLeakMax?: number | null;
+  sustainedLeakMinutes?: number | null;
   machine: MachineSettings;
   warnings: string[];
 }
@@ -163,6 +169,9 @@ export interface PreparedDayBucket {
   leakMax: number | null;
   leakMax30m: number | null;
   leakMax60m: number | null;
+  maxLeakMinutes?: number | null;
+  sustainedLeakMax?: number | null;
+  sustainedLeakMinutes?: number | null;
   pressureAvgSum: number;
   pressureAvgCount: number;
   pressure95Sum: number;

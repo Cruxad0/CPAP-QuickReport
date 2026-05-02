@@ -18,6 +18,7 @@ const BMC_WAVEFORM_PACKET_SIZE = 0x100;
 const BMC_WAVEFORM_30M_SECONDS = 30 * 60;
 const BMC_WAVEFORM_60M_SECONDS = 60 * 60;
 const BMC_WAVEFORM_RESET_GAP_MS = 2000;
+const LARGE_LEAK_THRESHOLD_LPM = 30;
 
 type BmcWaveformDayState = {
   date: Date;
@@ -26,6 +27,12 @@ type BmcWaveformDayState = {
   leakMax: number | null;
   leakMax30m: number | null;
   leakMax60m: number | null;
+  currentLargeLeakSeconds: number;
+  currentLargeLeakMax: number | null;
+  longestLargeLeakSeconds: number;
+  longestLargeLeakMax: number | null;
+  maxLeakEpisodeValue: number | null;
+  maxLeakEpisodeSeconds: number;
   pressureSum: number;
   pressureCount: number;
   pressureSeries: number[];
@@ -290,6 +297,12 @@ function createBmcWaveformDayState(dayIso: string): BmcWaveformDayState {
     leakMax: null,
     leakMax30m: null,
     leakMax60m: null,
+    currentLargeLeakSeconds: 0,
+    currentLargeLeakMax: null,
+    longestLargeLeakSeconds: 0,
+    longestLargeLeakMax: null,
+    maxLeakEpisodeValue: null,
+    maxLeakEpisodeSeconds: 0,
     pressureSum: 0,
     pressureCount: 0,
     pressureSeries: [],
@@ -300,8 +313,32 @@ function createBmcWaveformDayState(dayIso: string): BmcWaveformDayState {
 }
 
 function resetBmcLeakWindows(state: BmcWaveformDayState) {
+  finishBmcLargeLeakEpisode(state);
   resetRollingAverageState(state.window30m);
   resetRollingAverageState(state.window60m);
+}
+
+function finishBmcLargeLeakEpisode(state: BmcWaveformDayState) {
+  if (state.currentLargeLeakSeconds <= 0 || state.currentLargeLeakMax === null) return;
+  if (
+    state.currentLargeLeakSeconds > state.longestLargeLeakSeconds ||
+    (state.currentLargeLeakSeconds === state.longestLargeLeakSeconds &&
+      (state.longestLargeLeakMax === null || state.currentLargeLeakMax > state.longestLargeLeakMax))
+  ) {
+    state.longestLargeLeakSeconds = state.currentLargeLeakSeconds;
+    state.longestLargeLeakMax = state.currentLargeLeakMax;
+  }
+  if (
+    state.maxLeakEpisodeValue === null ||
+    state.currentLargeLeakMax > state.maxLeakEpisodeValue ||
+    (state.currentLargeLeakMax === state.maxLeakEpisodeValue &&
+      state.currentLargeLeakSeconds > state.maxLeakEpisodeSeconds)
+  ) {
+    state.maxLeakEpisodeValue = state.currentLargeLeakMax;
+    state.maxLeakEpisodeSeconds = state.currentLargeLeakSeconds;
+  }
+  state.currentLargeLeakSeconds = 0;
+  state.currentLargeLeakMax = null;
 }
 
 function pushBmcLeakWindow(state: BmcWaveformDayState, leak: number) {
@@ -377,6 +414,12 @@ function parseBmcWaveformRecords(
         state.leakSum += leak;
         state.leakCount += 1;
         state.leakMax = state.leakMax === null ? leak : Math.max(state.leakMax, leak);
+        if (leak > LARGE_LEAK_THRESHOLD_LPM) {
+          state.currentLargeLeakSeconds += 1;
+          state.currentLargeLeakMax = state.currentLargeLeakMax === null ? leak : Math.max(state.currentLargeLeakMax, leak);
+        } else {
+          finishBmcLargeLeakEpisode(state);
+        }
         pushBmcLeakWindow(state, leak);
       } else {
         resetBmcLeakWindows(state);
@@ -395,12 +438,16 @@ function parseBmcWaveformRecords(
 
   const records: ParsedRecord[] = [];
   for (const state of states.values()) {
+    finishBmcLargeLeakEpisode(state);
     records.push({
       date: state.date,
       leak: state.leakCount > 0 ? state.leakSum / state.leakCount : undefined,
       leakMax: state.leakMax ?? undefined,
       leakMax30m: state.leakMax30m ?? undefined,
       leakMax60m: state.leakMax60m ?? undefined,
+      maxLeakMinutes: state.maxLeakEpisodeSeconds > 0 ? state.maxLeakEpisodeSeconds / 60 : undefined,
+      sustainedLeakMax: state.longestLargeLeakMax ?? undefined,
+      sustainedLeakMinutes: state.longestLargeLeakSeconds > 0 ? state.longestLargeLeakSeconds / 60 : undefined,
       pressureAvg: state.pressureCount > 0 ? state.pressureSum / state.pressureCount : undefined,
       pressure95th: state.pressureSeries.length > 0 ? percentile(state.pressureSeries, 95) : undefined
     });

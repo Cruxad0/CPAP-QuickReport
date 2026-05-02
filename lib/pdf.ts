@@ -983,9 +983,19 @@ export function optionalEventMetricRows(report: QuickReportMetrics): TableRow[] 
   return rows;
 }
 
-function leakRow(label: string, value: number | null): TableRow {
-  if (value === null || !Number.isFinite(value)) return [label, NO_DATA_FALLBACK];
-  return [label, `${formatReportMetricValue(value)} L/min`, value > 30];
+function leakMetricText(value: number | null | undefined, minutes?: number | null): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return NO_DATA_FALLBACK;
+  const valueText = `${formatReportMetricValue(value)} L/min`;
+  if (typeof minutes === "number" && Number.isFinite(minutes) && minutes > 0) {
+    const minutesText = minutes < 0.1 ? "<0.1" : formatReportMetricValue(minutes);
+    return `${valueText} for ${minutesText} min`;
+  }
+  return valueText;
+}
+
+function leakRow(label: string, value: number | null | undefined, minutes?: number | null): TableRow {
+  if (typeof value !== "number" || !Number.isFinite(value)) return [label, NO_DATA_FALLBACK];
+  return metricRow(label, leakMetricText(value, minutes), value > 30);
 }
 
 function primaryLeakLabel(report: QuickReportMetrics): string {
@@ -995,6 +1005,15 @@ function primaryLeakLabel(report: QuickReportMetrics): string {
 
 function sectionRows(label: string, rows: TableRow[]): TableRow[] {
   return rows.length > 0 ? [groupRow(label), ...rows] : [];
+}
+
+export function leakMetricRows(report: QuickReportMetrics): TableRow[] {
+  return [
+    leakRow(primaryLeakLabel(report), report.avgLeak),
+    leakRow("95th Leak", report.leak95th),
+    leakRow("Longest Sustained Leak", report.sustainedLeakMax ?? report.maxLeak60m, report.sustainedLeakMinutes),
+    leakRow("Max Leak", report.maxLeak, report.maxLeakMinutes)
+  ];
 }
 
 function buildTherapySummaryRows(report: QuickReportMetrics): TableRow[] {
@@ -1015,12 +1034,7 @@ function buildTherapySummaryRows(report: QuickReportMetrics): TableRow[] {
     ["95th Residual apneas", formatReportMetricValue(report.residualApneas95th)],
     ...optionalEventMetricRows(report)
   ];
-  const leakRows: TableRow[] = [
-    leakRow(primaryLeakLabel(report), report.avgLeak),
-    leakRow("95th Leak", report.leak95th),
-    leakRow("30 min Sustained Leak", report.maxLeak30m),
-    leakRow("60 min Sustained Leak", report.maxLeak60m)
-  ];
+  const leakRows = leakMetricRows(report);
 
   return [
     ...sectionRows("Usage Summary", usageRows),

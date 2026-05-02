@@ -1,6 +1,9 @@
 import type { FamilyParserContext, FamilyParserDeps } from "@/lib/parsers/text-family-types";
 import type { ParsedRecord } from "@/lib/types";
 
+const LARGE_LEAK_THRESHOLD_LPM = 30;
+const SLEEPSTYLE_LEAK_SAMPLE_MINUTES = 2;
+
 type SleepStyleAggregate = {
   date: Date;
   usageHours?: number;
@@ -29,6 +32,45 @@ function maxRollingAverage(values: number[], samples: number): number | undefine
     }
   }
   return Number.isFinite(maxAverage) ? maxAverage : undefined;
+}
+
+function summarizeLargeLeakEpisodes(values: number[], sampleMinutes: number) {
+  let currentMinutes = 0;
+  let currentMax: number | null = null;
+  let longestMinutes = 0;
+  let longestMax: number | null = null;
+  let maxLeakValue: number | null = null;
+  let maxLeakMinutes = 0;
+
+  const finishEpisode = () => {
+    if (currentMinutes <= 0 || currentMax === null) return;
+    if (currentMinutes > longestMinutes || (currentMinutes === longestMinutes && (longestMax === null || currentMax > longestMax))) {
+      longestMinutes = currentMinutes;
+      longestMax = currentMax;
+    }
+    if (maxLeakValue === null || currentMax > maxLeakValue || (currentMax === maxLeakValue && currentMinutes > maxLeakMinutes)) {
+      maxLeakValue = currentMax;
+      maxLeakMinutes = currentMinutes;
+    }
+    currentMinutes = 0;
+    currentMax = null;
+  };
+
+  for (const value of values) {
+    if (Number.isFinite(value) && value > LARGE_LEAK_THRESHOLD_LPM) {
+      currentMinutes += sampleMinutes;
+      currentMax = currentMax === null ? value : Math.max(currentMax, value);
+    } else {
+      finishEpisode();
+    }
+  }
+  finishEpisode();
+
+  return {
+    maxLeakMinutes: maxLeakMinutes > 0 ? maxLeakMinutes : undefined,
+    sustainedLeakMax: longestMax ?? undefined,
+    sustainedLeakMinutes: longestMinutes > 0 ? longestMinutes : undefined
+  };
 }
 
 function decodeAscii(bytes: Uint8Array): string {
@@ -215,6 +257,7 @@ function finalizeRecords(aggregates: Map<number, SleepStyleAggregate>): ParsedRe
     const leak = aggregate.leakCount > 0 ? aggregate.leakSum / aggregate.leakCount : undefined;
     const leakMax30m = maxRollingAverage(aggregate.leakSeries, 15);
     const leakMax60m = maxRollingAverage(aggregate.leakSeries, 30);
+    const largeLeakSummary = summarizeLargeLeakEpisodes(aggregate.leakSeries, SLEEPSTYLE_LEAK_SAMPLE_MINUTES);
     const ahi =
       usageHours && usageHours > 0
         ? (aggregate.obstructiveApneas + aggregate.centralApneas + aggregate.hypopneas) / usageHours
@@ -230,6 +273,9 @@ function finalizeRecords(aggregates: Map<number, SleepStyleAggregate>): ParsedRe
       leakMax: aggregate.leakMax ?? undefined,
       leakMax30m,
       leakMax60m,
+      maxLeakMinutes: largeLeakSummary.maxLeakMinutes,
+      sustainedLeakMax: largeLeakSummary.sustainedLeakMax,
+      sustainedLeakMinutes: largeLeakSummary.sustainedLeakMinutes,
       pressureAvg,
       pressure95th: aggregate.pressure95th
     });

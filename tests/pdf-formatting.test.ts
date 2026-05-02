@@ -7,6 +7,7 @@ import {
   bipapVentilationRows,
   buildPdfReport,
   formatReportMetricValue,
+  leakMetricRows,
   machineSettingRows,
   optionalEventMetricRows,
   shouldDisplayRespiratoryRate,
@@ -96,6 +97,28 @@ test("AHI rows are highlighted when values are above 5", () => {
     [
       ["Avg AHI", "7.7", true],
       ["95th AHI", "12.4", true]
+    ]
+  );
+});
+
+test("leak rows show sustained and max leak durations when available", () => {
+  assert.deepEqual(
+    leakMetricRows({
+      ...reportWithMachine({ mode: "APAP" }),
+      selectedLoader: "Resvent / Hoffrichter",
+      avgLeak: 18.6,
+      leak95th: 77.6,
+      maxLeak: 120,
+      maxLeakMinutes: 42.25,
+      maxLeak60m: 96,
+      sustainedLeakMax: 88.4,
+      sustainedLeakMinutes: 63.5
+    }),
+    [
+      ["Median Leak", "18.6 L/min"],
+      ["95th Leak", "77.6 L/min", true],
+      ["Longest Sustained Leak", "88.4 L/min for 63.5 min", true],
+      ["Max Leak", "120.0 L/min for 42.3 min", true]
     ]
   );
 });
