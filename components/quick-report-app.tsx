@@ -29,11 +29,11 @@ const MAX_YEAR = 2100;
 const SOURCE_SELECTION_CANCEL_TIMEOUT_MS = 20000;
 const CARD_READER_PRODUCTS = [
   {
-    title: "USB-C and USB-A Compact Reader",
+    title: "Acer Dual USB-C and USB-A Card Reader",
     description: "Pocket-sized reader for offices that switch between USB-C and USB-A devices.",
     href: "https://amzn.to/4teCHDp",
     imageSrc: "/card-readers/first-item.jpg",
-    imageAlt: "Compact USB-C and USB-A SD card reader"
+    imageAlt: "Acer dual USB-C and USB-A SD card reader"
   },
   {
     title: "Acer USB-A 3.0 Card Reader",
