@@ -555,12 +555,6 @@ textarea {
   font-weight: 900;
 }
 
-.affiliate-summary-subtitle {
-  color: #536f83;
-  font-size: 0.82rem;
-  line-height: 1.3;
-}
-
 .affiliate-summary-pill {
   justify-self: end;
   border: 1px solid #b8ddcf;

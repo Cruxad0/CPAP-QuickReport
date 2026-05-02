@@ -1154,7 +1154,6 @@ export function QuickReportApp() {
             <summary>
               <span className="affiliate-summary-copy">
                 <span className="affiliate-summary-title">Buy your Card reader here</span>
-                <span className="affiliate-summary-subtitle">Choose the connector that matches the computer used for SD-card imports.</span>
               </span>
               <span className="affiliate-summary-pill">3 options</span>
             </summary>
@@ -1188,7 +1187,9 @@ export function QuickReportApp() {
                 </a>
               ))}
             </div>
-            <p className="affiliate-note">Affiliate links may earn from qualifying purchases.</p>
+            <p className="affiliate-note">
+              Each product link is an affiliate link. Purchases do not change your price; a small portion supports our team and helps keep this website up and running.
+            </p>
           </details>
         </article>
 
