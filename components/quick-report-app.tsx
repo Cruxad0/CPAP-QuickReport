@@ -138,6 +138,10 @@ function isMixedDataWarning(warning: string): boolean {
   return /^(?:Mixed device data detected|Multiple device layouts detected)\./.test(warning);
 }
 
+function isTherapyChangeWarning(warning: string): boolean {
+  return /^Therapy settings changed within\b/.test(warning);
+}
+
 function toUsDate(year: number, month: number, day: number): string {
   return `${String(month).padStart(2, "0")}/${String(day).padStart(2, "0")}/${String(year).padStart(4, "0")}`;
 }
@@ -359,6 +363,10 @@ export function QuickReportApp() {
     () => loadedSourceWarnings.find(isMixedDataWarning) ?? null,
     [loadedSourceWarnings]
   );
+  const loadedTherapyChangeWarning = useMemo(
+    () => loadedSourceWarnings.find(isTherapyChangeWarning) ?? null,
+    [loadedSourceWarnings]
+  );
   const generatedReportDays = useMemo(
     () => REPORT_RANGE_OPTIONS.filter((days) => Boolean(generatedReports[days])),
     [generatedReports]
@@ -366,6 +374,8 @@ export function QuickReportApp() {
   const resolvedActiveReportDays = generatedReports[activeReportDays] ? activeReportDays : (generatedReportDays[0] ?? null);
   const activeReport = resolvedActiveReportDays ? generatedReports[resolvedActiveReportDays] ?? null : null;
   const activeMetrics = activeReport?.metrics ?? null;
+  const activeTherapyChangeWarning = activeMetrics?.warnings.find(isTherapyChangeWarning) ?? null;
+  const displayedTherapyChangeWarning = activeTherapyChangeWarning ?? loadedTherapyChangeWarning;
   const hasGeneratedReports = generatedReportDays.length > 0;
 
   const dateOfBirthIso = useMemo(() => normalizeDobInput(dateOfBirthInput), [dateOfBirthInput]);
@@ -1059,12 +1069,14 @@ export function QuickReportApp() {
 
         {status === "ready" || status === "error" ? (
           <article className="card col-12">
+            <h3>Status</h3>
             {status === "ready" && activeMetrics ? (
               <ul className="notes">
                 <li>Report is ready. Review the preview, then export the PDF.</li>
                 <li>
                   Selected loader and Date range ({resolvedActiveReportDays ?? activeReportDays} days): {activeMetrics.selectedLoader} | {activeMetrics.dateRangeStart} to {activeMetrics.dateRangeEnd}
                 </li>
+                {displayedTherapyChangeWarning ? <li className="therapy-change-warning">{displayedTherapyChangeWarning}</li> : null}
                 {loadedSourceLatestClinicalDayLabel ? (
                   <li>
                     Last date with data on card: {loadedSourceLatestClinicalDayLabel}

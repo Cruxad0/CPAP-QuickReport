@@ -256,3 +256,41 @@ test("Resvent latest STAT VentMode overrides stale TCTRL mode selection", async 
     )
   );
 });
+
+test("Resvent recent STAT VentMode changes warn and keep reports on the latest therapy period", async () => {
+  const files: SourceFile[] = [
+    createResventTextFile("THERAPY/CONFIG/SYSCFG", ["models=iBreeze 20A", "sn=GB-2B500568"].join("\n")),
+    createResventTextFile("THERAPY/CONFIG/TCTRL", "VentMode=3\n"),
+    createResventTextFile("THERAPY/CONFIG/N_CPAP", ["Press=600"].join("\n")),
+    createResventTextFile("THERAPY/CONFIG/N_APAP", ["PMin=600", "PMax=1500"].join("\n")),
+    createResventTextFile(
+      "THERAPY/RECORD/202603/22/STAT",
+      ["VentMode=1", "secUsed=28800", "cntAI=2", "cntHI=1"].join("\n")
+    ),
+    createResventTextFile(
+      "THERAPY/RECORD/202603/23/STAT",
+      ["VentMode=3", "secUsed=28800", "cntAI=1", "cntHI=1"].join("\n")
+    )
+  ];
+
+  const prepared = await prepareQuickReportSource({
+    sourceKind: "folder",
+    files,
+    lookbackDays: 90
+  });
+  const metrics = buildQuickReportMetricsFromPreparedSource(prepared, {
+    patientName: "Fixture Patient",
+    dateOfBirthIso: "1970-01-01",
+    physicianName: "",
+    lookbackDays: 90,
+    windowEndClinicalDayIso: nextClinicalDayIso(prepared.latestClinicalDayIso)
+  });
+
+  assert.equal(prepared.machine.mode, "APAP");
+  assert.ok(prepared.warnings.some((warning) => warning.includes("Therapy settings changed within the imported 90-day history")));
+  assert.equal(metrics.dateRangeStart, "March 23, 2026");
+  assert.equal(metrics.dateRangeEnd, "March 23, 2026");
+  assert.equal(metrics.daysInWindow, 1);
+  assert.equal(metrics.daysWithData, 1);
+  assert.ok(metrics.warnings.some((warning) => warning.includes("Therapy settings changed within the 90-day report window")));
+});

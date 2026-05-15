@@ -1,6 +1,7 @@
 import { resolveExplicitTherapyMode } from "@/lib/machine-mode";
 import { runTextFamilyParser } from "@/lib/parsers/text-family-runner";
 import type { FamilyParserCandidate, FamilyParserContext, FamilyParserDeps } from "@/lib/parsers/text-family-types";
+import { buildTherapySettingsSnapshot } from "@/lib/therapy-settings";
 import { parseUtcOffsetMinutes } from "@/lib/timezone";
 import type { ParsedRecord, QuickReportMetrics } from "@/lib/types";
 
@@ -735,6 +736,73 @@ function parseResMedStrEdf(
     const ipap95th = readResMedValue(bytes, edf, ipap95Aliases, recordIndex);
     const epapAvg = readResMedValue(bytes, edf, epap50Aliases, recordIndex);
     const epap95th = readResMedValue(bytes, edf, epap95Aliases, recordIndex);
+    const modeCode = readSignalValue(bytes, edf, modeSignal, recordIndex);
+    const mappedMode = mapResMedModeCode(modeCode, machine.device);
+    const setPressure = readResMedValue(bytes, edf, setPressureAliases, recordIndex);
+    const minPressure = readResMedValue(bytes, edf, minPressureAliases, recordIndex);
+    const maxPressure = readResMedValue(bytes, edf, maxPressureAliases, recordIndex);
+    const epap = readResMedValue(bytes, edf, epapAliases, recordIndex);
+    const fixedBilevelEpap = readResMedValue(bytes, edf, fixedBilevelEpapAliases, recordIndex);
+    const minEpap = readResMedValue(bytes, edf, minEpapAliases, recordIndex);
+    const maxEpap = readResMedValue(bytes, edf, maxEpapAliases, recordIndex);
+    const ipap = readResMedValue(bytes, edf, ipapAliases, recordIndex);
+    const fixedBilevelIpap = readResMedValue(bytes, edf, fixedBilevelIpapAliases, recordIndex);
+    const minIpap = readResMedValue(bytes, edf, minIpapAliases, recordIndex);
+    const maxIpap = readResMedValue(bytes, edf, maxIpapAliases, recordIndex);
+    const ps = readResMedValue(bytes, edf, psAliases, recordIndex);
+    const backupRate = readResMedValue(bytes, edf, backupRateAliases, recordIndex);
+    const eprClinEnableRaw = readResMedValue(bytes, edf, eprClinEnableAliases, recordIndex);
+    const eprEnableRaw = readResMedValue(bytes, edf, eprEnableAliases, recordIndex);
+    const eprLevel = readResMedValue(bytes, edf, eprLevelAliases, recordIndex);
+    const rampEnable = readResMedValue(bytes, edf, rampEnableAliases, recordIndex);
+    const rampTime = readResMedValue(bytes, edf, rampTimeAliases, recordIndex);
+    const cpapStartPressure = readResMedValue(bytes, edf, cpapStartPressureAliases, recordIndex);
+    const bilevelStartPressure = readResMedValue(bytes, edf, bilevelStartPressureAliases, recordIndex);
+    const vautoStartPressure = readResMedValue(bytes, edf, vautoStartPressureAliases, recordIndex);
+    const inferredSignalMode = inferResMedModeFromSignals({
+      setPressure,
+      minPressure,
+      maxPressure,
+      epap,
+      minEpap,
+      maxEpap,
+      ipap,
+      minIpap,
+      maxIpap,
+      ps
+    });
+    const recordResolvedMode = mappedMode ?? inferredSignalMode;
+    const recordUsesVAuto =
+      recordResolvedMode === "BiPAP" &&
+      (shouldLabelResMedVAuto(machine.device) ||
+        vautoStartPressure !== undefined ||
+        minEpap !== undefined ||
+        maxIpap !== undefined);
+    const recordEpap = recordUsesVAuto ? epap : epap ?? fixedBilevelEpap;
+    const recordIpap = recordUsesVAuto ? ipap : ipap ?? fixedBilevelIpap;
+    const recordEpapText = formatPressureValue(recordEpap);
+    const recordMinEpapText = formatPressureValue(minEpap);
+    const recordMaxEpapText = formatPressureValue(maxEpap);
+    const recordIpapText = formatPressureValue(recordIpap);
+    const recordMinIpapText = formatPressureValue(minIpap);
+    const recordMaxIpapText = formatPressureValue(maxIpap);
+    const recordPressureSupportText = formatPressureValue(ps);
+    const therapySettings = buildTherapySettingsSnapshot({
+      mode: recordResolvedMode ? (recordUsesVAuto ? "VAuto" : recordResolvedMode) : undefined,
+      pressure: recordResolvedMode === "CPAP" ? formatPressureValue(setPressure) : undefined,
+      pressureMin: recordResolvedMode === "APAP" ? formatPressureValue(minPressure) : recordUsesVAuto ? recordMinEpapText ?? recordMinIpapText : undefined,
+      pressureMax: recordResolvedMode === "APAP" ? formatPressureValue(maxPressure) : recordUsesVAuto ? recordMaxIpapText ?? recordMaxEpapText : undefined,
+      epap:
+        recordResolvedMode === "BiPAP"
+          ? recordEpapText ?? (recordMinEpapText && recordMaxEpapText ? `${recordMinEpapText}-${recordMaxEpapText}` : recordMinEpapText ?? recordMaxEpapText)
+          : undefined,
+      ipap:
+        recordResolvedMode === "BiPAP"
+          ? recordIpapText ?? (recordMinIpapText && recordMaxIpapText ? `${recordMinIpapText}-${recordMaxIpapText}` : recordMinIpapText ?? recordMaxIpapText)
+          : undefined,
+      respiratoryRate: backupRate !== undefined && Number.isFinite(backupRate) && backupRate >= 0 ? `${Number(backupRate.toFixed(2)).toString()} bpm` : undefined,
+      pressureRelief: recordPressureSupportText ? `PS: ${recordPressureSupportText}` : undefined
+    });
 
     const hasSignal =
       (usageHours !== undefined && usageHours >= 0 && usageHours <= 24) ||
@@ -768,49 +836,14 @@ function parseResMedStrEdf(
       ipapAvg: isReportPressureMetric(ipapAvg) ? ipapAvg : undefined,
       ipap95th: isReportPressureMetric(ipap95th) ? ipap95th : undefined,
       epapAvg: isReportPressureMetric(epapAvg) ? epapAvg : undefined,
-      epap95th: isReportPressureMetric(epap95th) ? epap95th : undefined
+      epap95th: isReportPressureMetric(epap95th) ? epap95th : undefined,
+      therapySettingsSignature: therapySettings?.signature,
+      therapySettingsLabel: therapySettings?.label
     });
 
     if (!latestRecordDate || date > latestRecordDate) {
       latestRecordDate = date;
-      const modeCode = readSignalValue(bytes, edf, modeSignal, recordIndex);
-      const mappedMode = mapResMedModeCode(modeCode, machine.device);
       if (mappedMode) machine.mode = mappedMode;
-
-      const setPressure = readResMedValue(bytes, edf, setPressureAliases, recordIndex);
-      const minPressure = readResMedValue(bytes, edf, minPressureAliases, recordIndex);
-      const maxPressure = readResMedValue(bytes, edf, maxPressureAliases, recordIndex);
-      const epap = readResMedValue(bytes, edf, epapAliases, recordIndex);
-      const fixedBilevelEpap = readResMedValue(bytes, edf, fixedBilevelEpapAliases, recordIndex);
-      const minEpap = readResMedValue(bytes, edf, minEpapAliases, recordIndex);
-      const maxEpap = readResMedValue(bytes, edf, maxEpapAliases, recordIndex);
-      const ipap = readResMedValue(bytes, edf, ipapAliases, recordIndex);
-      const fixedBilevelIpap = readResMedValue(bytes, edf, fixedBilevelIpapAliases, recordIndex);
-      const minIpap = readResMedValue(bytes, edf, minIpapAliases, recordIndex);
-      const maxIpap = readResMedValue(bytes, edf, maxIpapAliases, recordIndex);
-      const ps = readResMedValue(bytes, edf, psAliases, recordIndex);
-      const backupRate = readResMedValue(bytes, edf, backupRateAliases, recordIndex);
-      const eprClinEnableRaw = readResMedValue(bytes, edf, eprClinEnableAliases, recordIndex);
-      const eprEnableRaw = readResMedValue(bytes, edf, eprEnableAliases, recordIndex);
-      const eprLevel = readResMedValue(bytes, edf, eprLevelAliases, recordIndex);
-      const rampEnable = readResMedValue(bytes, edf, rampEnableAliases, recordIndex);
-      const rampTime = readResMedValue(bytes, edf, rampTimeAliases, recordIndex);
-      const cpapStartPressure = readResMedValue(bytes, edf, cpapStartPressureAliases, recordIndex);
-      const bilevelStartPressure = readResMedValue(bytes, edf, bilevelStartPressureAliases, recordIndex);
-      const vautoStartPressure = readResMedValue(bytes, edf, vautoStartPressureAliases, recordIndex);
-
-      const inferredSignalMode = inferResMedModeFromSignals({
-        setPressure,
-        minPressure,
-        maxPressure,
-        epap,
-        minEpap,
-        maxEpap,
-        ipap,
-        minIpap,
-        maxIpap,
-        ps
-      });
 
       const existingMode = resolveExplicitTherapyMode(machine.mode);
       const resolvedMode = mappedMode ?? existingMode ?? inferredSignalMode;

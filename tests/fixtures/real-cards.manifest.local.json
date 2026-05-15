@@ -12,8 +12,8 @@
         "deviceIncludes": "iBreeze 20A",
         "pressureMin": "8.5 cmH2O",
         "pressureMax": "11 cmH2O",
-        "minDaysWithData": 89,
-        "minDaysWithUsage": 89
+        "minDaysWithData": 18,
+        "minDaysWithUsage": 18
       }
     },
     {

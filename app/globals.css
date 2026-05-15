@@ -471,7 +471,8 @@ textarea {
   color: #ff1f1f;
 }
 
-.notes li.mixed-data-warning {
+.notes li.mixed-data-warning,
+.notes li.therapy-change-warning {
   color: var(--warn);
   font-weight: 700;
 }

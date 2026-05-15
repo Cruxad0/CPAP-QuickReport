@@ -1,4 +1,5 @@
 import type { FamilyParserContext, FamilyParserDeps } from "@/lib/parsers/text-family-types";
+import { buildTherapySettingsSnapshot } from "@/lib/therapy-settings";
 import type { ParsedRecord } from "@/lib/types";
 
 type IntelliPapAggregate = {
@@ -12,6 +13,8 @@ type IntelliPapAggregate = {
   leakMax?: number;
   pressureAvg?: number;
   pressure95th?: number;
+  therapySettingsSignature?: string;
+  therapySettingsLabel?: string;
 };
 
 type Dv5Session = {
@@ -252,8 +255,15 @@ function parseDv6Summaries(bytes: Uint8Array, machine: FamilyParserContext["mach
 
     const pressureSetMin = bytes[pos + 48] / 10;
     const pressureSetMax = bytes[pos + 49] / 10;
+    const therapyMode = Math.abs(pressureSetMax - pressureSetMin) > 0.01 ? "APAP" : "CPAP";
+    const therapySettings = buildTherapySettingsSnapshot({
+      mode: therapyMode,
+      pressure: therapyMode === "CPAP" ? formatPressure(pressureSetMin) : undefined,
+      pressureMin: therapyMode === "APAP" ? formatPressure(pressureSetMin) : undefined,
+      pressureMax: therapyMode === "APAP" ? formatPressure(pressureSetMax) : undefined
+    });
     if (!machine.mode) {
-      if (Math.abs(pressureSetMax - pressureSetMin) > 0.01) {
+      if (therapyMode === "APAP") {
         machine.mode = "APAP";
         machine.pressureIsAuto = true;
         machine.pressureMin = formatPressure(pressureSetMin);
@@ -276,7 +286,9 @@ function parseDv6Summaries(bytes: Uint8Array, machine: FamilyParserContext["mach
       leak: bytes[pos + 21] / 10,
       leakMax: bytes[pos + 22] / 10,
       pressureAvg: bytes[pos + 14] / 10,
-      pressure95th: bytes[pos + 18] / 10
+      pressure95th: bytes[pos + 18] / 10,
+      therapySettingsSignature: therapySettings?.signature,
+      therapySettingsLabel: therapySettings?.label
     });
 
     void end;

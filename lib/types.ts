@@ -53,6 +53,8 @@ export interface ParsedRecord {
   respiratoryRateSampleCount?: number;
   respiratoryRateBins?: Record<string, number>;
   respiratoryRateMin?: number;
+  therapySettingsSignature?: string;
+  therapySettingsLabel?: string;
 }
 
 export interface MachineSettings {
@@ -194,6 +196,8 @@ export interface PreparedDayBucket {
   respiratoryRateCount: number;
   respiratoryRateMin: number | null;
   respiratoryRateBins: Record<string, number>;
+  therapySettingsSignature?: string | null;
+  therapySettingsLabel?: string | null;
 }
 
 export interface PreparedQuickReportSource {

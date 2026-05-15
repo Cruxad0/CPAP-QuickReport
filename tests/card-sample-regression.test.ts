@@ -73,31 +73,35 @@ maybeResventTest("Resvent sample card preserves APAP config and metrics", async 
   assert.equal(prepared.machine.pressureMax, "11 cmH2O");
   assert.equal(prepared.machine.pressureRelief, "IPR: On 1");
   assert.equal(prepared.latestClinicalDayIso, "2026-04-08");
-  assert.equal(metrics.daysWithData, 90);
-  assert.equal(metrics.daysWithUsage, 90);
-  assert.equal(metrics.compliantDays, 90);
-  assertApprox(metrics.avgUsageHours, 8.3844, 0.02, "avg usage");
-  assertApprox(metrics.avgAhi, 2.2263, 0.02, "avg AHI");
+  assert.equal(metrics.dateRangeStart, "March 22, 2026");
+  assert.equal(metrics.daysWithData, 18);
+  assert.equal(metrics.daysWithUsage, 18);
+  assert.equal(metrics.compliantDays, 18);
+  assertApprox(metrics.avgUsageHours, 8.7034, 0.02, "avg usage");
+  assertApprox(metrics.avgAhi, 2.0682, 0.02, "avg AHI");
   assertApprox(metrics.avgLeak, 0, 0.02, "median leak");
   assertApprox(metrics.maxLeak30m, 7.3977, 0.05, "30 min leak");
   assertApprox(metrics.maxLeak60m, 117.4, 0.05, "60 min leak");
+  assert.ok(metrics.warnings.some((warning) => warning.includes("Therapy settings changed within the 90-day report window")));
 });
 
 maybeResventTest("Resvent 60-day report tracks the machine summary conventions", async () => {
   const { metrics } = await loadFixture(RESVENT_ROOT, 60);
-  assert.equal(metrics.daysWithData, 60);
-  assert.equal(metrics.daysWithUsage, 60);
-  assert.equal(metrics.compliantDays, 60);
-  assertApprox(metrics.avgUsageHours, 8.5070, 0.02, "avg usage");
-  assertApprox(metrics.avgAhi, 2.2217, 0.02, "avg AHI");
-  assertApprox(metrics.avgResidualApneas, 1.8671, 0.02, "avg residual apneas");
+  assert.equal(metrics.dateRangeStart, "March 22, 2026");
+  assert.equal(metrics.daysWithData, 18);
+  assert.equal(metrics.daysWithUsage, 18);
+  assert.equal(metrics.compliantDays, 18);
+  assertApprox(metrics.avgUsageHours, 8.7034, 0.02, "avg usage");
+  assertApprox(metrics.avgAhi, 2.0682, 0.02, "avg AHI");
+  assertApprox(metrics.avgResidualApneas, 1.6979, 0.02, "avg residual apneas");
   assertApprox(metrics.avgCentralApneas, 0, 0.001, "avg central apneas");
-  assertApprox(metrics.avgReraIndex, 0.3977, 0.02, "avg RERA");
+  assertApprox(metrics.avgReraIndex, 0.4532, 0.02, "avg RERA");
   assertApprox(metrics.avgLeak, 0, 0.02, "median leak");
-  assertApprox(metrics.machine.pressureAvg ?? null, 7.7233, 0.02, "avg pressure");
-  assertApprox(metrics.machine.pressure95th ?? null, 8.9933, 0.02, "95th pressure");
+  assertApprox(metrics.machine.pressureAvg ?? null, 8.0111, 0.02, "avg pressure");
+  assertApprox(metrics.machine.pressure95th ?? null, 9.6778, 0.02, "95th pressure");
   assertApprox(metrics.maxLeak30m, 7.3977, 0.05, "30 min leak");
   assertApprox(metrics.maxLeak60m, 117.4, 0.05, "60 min leak");
+  assert.ok(metrics.warnings.some((warning) => warning.includes("Therapy settings changed within the 60-day report window")));
 });
 
 maybeResventTherapyTest("Resvent THERAPY subfolder import matches root-folder import", async () => {

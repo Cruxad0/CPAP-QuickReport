@@ -1,5 +1,6 @@
 import { runTextFamilyParser } from "@/lib/parsers/text-family-runner";
 import type { FamilyParserCandidate, FamilyParserContext, FamilyParserDeps } from "@/lib/parsers/text-family-types";
+import { buildTherapySettingsSnapshot } from "@/lib/therapy-settings";
 import type { ParsedRecord, QuickReportMetrics } from "@/lib/types";
 
 type CanonicalMode = "CPAP" | "APAP" | "BiPAP";
@@ -1336,6 +1337,20 @@ function toParsedRecord(session: Prs1SessionAccumulator): ParsedRecord | null {
   const leak = session.leakCount > 0 ? session.leakSum / session.leakCount : undefined;
   const pressureAvg = session.pressureAvgCount > 0 ? session.pressureAvgSum / session.pressureAvgCount : undefined;
   const pressure95th = session.pressure95th !== undefined ? session.pressure95th / 10 : undefined;
+  const pressureRelief = session.pressureReliefMode
+    ? typeof session.pressureReliefLevel === "number"
+      ? `${session.pressureReliefMode}: ${session.pressureReliefLevel}`
+      : session.pressureReliefMode
+    : undefined;
+  const therapySettings = buildTherapySettingsSnapshot({
+    mode: session.mode,
+    pressure: session.mode === "CPAP" ? formatPressure(session.pressure) : undefined,
+    pressureMin: session.mode === "APAP" ? formatPressure(session.pressureMin) : undefined,
+    pressureMax: session.mode === "APAP" ? formatPressure(session.pressureMax) : undefined,
+    epap: session.mode === "BiPAP" ? formatPressure(session.epap) ?? formatPressureRange(session.epapMin, session.epapMax) : undefined,
+    ipap: session.mode === "BiPAP" ? formatPressure(session.ipap) ?? formatPressureRange(session.ipapMin, session.ipapMax) : undefined,
+    pressureRelief
+  });
 
   const hasSignal =
     usageHours !== undefined ||
@@ -1359,7 +1374,9 @@ function toParsedRecord(session: Prs1SessionAccumulator): ParsedRecord | null {
     leak,
     leakMax: session.leakMax ?? undefined,
     pressureAvg,
-    pressure95th
+    pressure95th,
+    therapySettingsSignature: therapySettings?.signature,
+    therapySettingsLabel: therapySettings?.label
   };
 }
 

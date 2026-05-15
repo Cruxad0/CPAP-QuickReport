@@ -31,6 +31,7 @@ import type { FamilyParserDeps } from "@/lib/parsers/text-family-types";
 import { createCalendarDateNoonAtUtcOffset, extractExplicitUtcOffsetMinutes } from "@/lib/timezone";
 import { parseVremFamily } from "@/lib/parsers/vrem";
 import { parseWeinmannFamily } from "@/lib/parsers/weinmann";
+import { buildTherapySettingsSnapshot } from "@/lib/therapy-settings";
 import {
   BuildQuickReportMetricsFromPreparedRequest,
   ParseRequest,
@@ -371,6 +372,120 @@ function formatDateHuman(isoDate: string): string {
     day: "numeric",
     timeZone: "UTC"
   });
+}
+
+type TherapySettingsRun = {
+  signature: string;
+  label: string;
+  startIso: string;
+  endIso: string;
+};
+
+function applyRecordTherapySettings(bucket: DayBucket, record: ParsedRecord) {
+  const signature = record.therapySettingsSignature?.trim();
+  if (!signature) return;
+  const label = record.therapySettingsLabel?.trim() || "Therapy settings";
+
+  if (!bucket.therapySettingsSignature) {
+    bucket.therapySettingsSignature = signature;
+    bucket.therapySettingsLabel = label;
+    return;
+  }
+
+  if (bucket.therapySettingsSignature === signature) return;
+
+  const existingLabels = (bucket.therapySettingsLabel ?? "Therapy settings").split(" + ");
+  if (!existingLabels.includes(label)) existingLabels.push(label);
+  bucket.therapySettingsSignature = `mixed:${[bucket.therapySettingsSignature, signature].sort().join("|")}`;
+  bucket.therapySettingsLabel = existingLabels.join(" + ");
+}
+
+function therapySettingsEntries(dayMap: Map<string, DayBucket>): Array<{ day: string; signature: string; label: string }> {
+  return [...dayMap.entries()]
+    .map(([day, bucket]) => {
+      const signature = bucket.therapySettingsSignature?.trim();
+      if (!signature) return null;
+      return {
+        day,
+        signature,
+        label: bucket.therapySettingsLabel?.trim() || "Therapy settings"
+      };
+    })
+    .filter((entry): entry is { day: string; signature: string; label: string } => entry !== null)
+    .sort((a, b) => a.day.localeCompare(b.day));
+}
+
+function buildTherapySettingsRuns(entries: Array<{ day: string; signature: string; label: string }>): TherapySettingsRun[] {
+  const runs: TherapySettingsRun[] = [];
+  for (const entry of entries) {
+    const last = runs.at(-1);
+    if (last && last.signature === entry.signature) {
+      last.endIso = entry.day;
+      continue;
+    }
+    runs.push({
+      signature: entry.signature,
+      label: entry.label,
+      startIso: entry.day,
+      endIso: entry.day
+    });
+  }
+  return runs;
+}
+
+function summarizeTherapySettingsRuns(runs: TherapySettingsRun[], maxRuns = 4): string {
+  const visibleRuns = runs.slice(-maxRuns);
+  const prefix = runs.length > visibleRuns.length ? `... ${runs.length - visibleRuns.length} earlier setting period(s); ` : "";
+  return (
+    prefix +
+    visibleRuns
+      .map((run) => {
+        const start = formatDateHuman(run.startIso);
+        const end = formatDateHuman(run.endIso);
+        return run.startIso === run.endIso ? `${run.label} on ${start}` : `${run.label} from ${start} to ${end}`;
+      })
+      .join("; ")
+  );
+}
+
+function buildImportedTherapyChangeWarning(dayMap: Map<string, DayBucket>, lookbackDays: number): string | null {
+  const entries = therapySettingsEntries(dayMap);
+  const distinctSignatures = new Set(entries.map((entry) => entry.signature));
+  if (distinctSignatures.size <= 1) return null;
+
+  const summary = summarizeTherapySettingsRuns(buildTherapySettingsRuns(entries));
+  return `Therapy settings changed within the imported ${lookbackDays}-day history (${summary}). Generated reports will use the most recent contiguous setting period for each date range to avoid mixing therapy settings.`;
+}
+
+function applyTherapySettingsWindowGuard(
+  dayMap: Map<string, DayBucket>,
+  warnings: string[],
+  lookbackDays: number
+): { dayMap: Map<string, DayBucket>; effectiveWindowStartIso: string | null } {
+  const entries = therapySettingsEntries(dayMap);
+  const distinctSignatures = new Set(entries.map((entry) => entry.signature));
+  if (entries.length === 0 || distinctSignatures.size <= 1) {
+    return { dayMap, effectiveWindowStartIso: null };
+  }
+
+  const runs = buildTherapySettingsRuns(entries);
+  const latestRun = runs.at(-1);
+  if (!latestRun) return { dayMap, effectiveWindowStartIso: null };
+
+  const filteredDayMap = new Map([...dayMap.entries()].filter(([day]) => day >= latestRun.startIso));
+  if (filteredDayMap.size === dayMap.size || filteredDayMap.size === 0) {
+    return { dayMap, effectiveWindowStartIso: null };
+  }
+
+  const summary = summarizeTherapySettingsRuns(runs);
+  warnings.push(
+    `Therapy settings changed within the ${lookbackDays}-day report window (${summary}). Calculations were limited to ${latestRun.label} from ${formatDateHuman(latestRun.startIso)} forward to avoid mixing therapy settings.`
+  );
+
+  return {
+    dayMap: filteredDayMap,
+    effectiveWindowStartIso: latestRun.startIso
+  };
 }
 
 function normalizePath(path: string): string {
@@ -1310,6 +1425,8 @@ function parseResventStatText(text: string, fallbackDate: Date): ParsedRecord | 
     }
   }
 
+  const therapySettings = buildTherapySettingsSnapshotFromKeyValueMap(kv);
+
   const hasSignal =
     (usageHours !== undefined && usageHours >= 0 && usageHours <= 24) ||
     (ahi !== undefined && ahi >= 0 && ahi < 200) ||
@@ -1342,7 +1459,9 @@ function parseResventStatText(text: string, fallbackDate: Date): ParsedRecord | 
     ipapAvg: isReportPressureMetric(ipapAvg) ? ipapAvg : undefined,
     ipap95th: isReportPressureMetric(ipap95th) ? ipap95th : undefined,
     epapAvg: isReportPressureMetric(epapAvg) ? epapAvg : undefined,
-    epap95th: isReportPressureMetric(epap95th) ? epap95th : undefined
+    epap95th: isReportPressureMetric(epap95th) ? epap95th : undefined,
+    therapySettingsSignature: therapySettings?.signature,
+    therapySettingsLabel: therapySettings?.label
   };
 }
 
@@ -1375,6 +1494,79 @@ function extractResventVentModeFromBytes(bytes: Uint8Array): string | null {
     if (ventMode) return ventMode;
   }
   return null;
+}
+
+function firstNumberFromSetting(input: unknown): number | undefined {
+  const direct = safeNumber(input);
+  if (direct !== undefined) return direct;
+  if (typeof input !== "string") return undefined;
+  const match = input.match(/-?\d+(?:\.\d+)?/);
+  return match ? safeNumber(match[0]) : undefined;
+}
+
+function pressureSettingTextFromRaw(raw: string | undefined): string | undefined {
+  const trimmed = raw?.trim();
+  if (!trimmed) return undefined;
+  if (/\d+(?:\.\d+)?\s*-\s*\d+(?:\.\d+)?/.test(trimmed)) return trimmed;
+  return pressureText(firstNumberFromSetting(trimmed)) ?? trimmed;
+}
+
+function buildTherapySettingsSnapshotFromKeyValueMap(kv: Map<string, string>) {
+  const normalized = new Map<string, string>();
+  for (const [key, value] of kv.entries()) {
+    normalized.set(key.toLowerCase().replace(/[\s_-]+/g, ""), value);
+  }
+
+  const readRaw = (keys: string[]): string | undefined => {
+    for (const key of keys) {
+      const direct = kv.get(key);
+      if (direct !== undefined) return direct;
+      const compact = normalized.get(key.toLowerCase().replace(/[\s_-]+/g, ""));
+      if (compact !== undefined) return compact;
+    }
+    return undefined;
+  };
+
+  const readPressure = (keys: string[]): string | undefined => pressureSettingTextFromRaw(readRaw(keys));
+  const readNumericText = (keys: string[], unit: string): string | undefined => {
+    const n = firstNumberFromSetting(readRaw(keys));
+    if (n === undefined || !Number.isFinite(n)) return undefined;
+    return `${Number(n.toFixed(2)).toString()} ${unit}`;
+  };
+  const readTidalVolume = (keys: string[]): string | undefined => {
+    const raw = readRaw(keys);
+    return tidalVolumeText(firstNumberFromSetting(raw), raw);
+  };
+
+  const ventModeRaw = readRaw(["VentMode", "vent mode", "ventMode"]);
+  const modeRaw = readRaw(["therapyMode", "therapy mode", "mode", "papMode", "pap mode"]);
+  const mode = ventModeRaw ? RESVENT_MODE_FROM_VENT_MODE.get(ventModeRaw) ?? modeRaw ?? `VentMode ${ventModeRaw}` : modeRaw;
+
+  const epapFixed = readPressure(["EPAP", "epapSet", "setEPAP", "set_epap"]);
+  const epapMin = readPressure(["EPAPMin", "EPAP minimum", "EPAPMinPressure"]);
+  const epapMax = readPressure(["EPAPMax", "EPAP maximum", "EPAPMaxPressure"]);
+  const ipapFixed = readPressure(["IPAP", "ipapSet", "setIPAP", "set_ipap"]);
+  const ipapMin = readPressure(["IPAPMin", "IPAP minimum", "IPAPMinPressure"]);
+  const ipapMax = readPressure(["IPAPMax", "IPAP maximum", "IPAPMaxPressure"]);
+
+  const join = (min: string | undefined, max: string | undefined): string | undefined => {
+    if (min && max) return `${min}-${max}`;
+    return min ?? max;
+  };
+  const pressureSupport = readPressure(["PS", "pressureSupport", "pressure support"]);
+  const pressureRelief = readRaw(["EPR", "Flex", "pressureRelief", "pressure relief", "IPR"]);
+
+  return buildTherapySettingsSnapshot({
+    mode,
+    pressure: readPressure(["Press", "pressure", "setPressure", "set pressure", "CPAPPressure", "CPAP pressure"]),
+    pressureMin: readPressure(["PMin", "pressureMin", "minPressure", "minimumPressure", "setMinPressure", "autoMin"]),
+    pressureMax: readPressure(["PMax", "pressureMax", "maxPressure", "maximumPressure", "setMaxPressure", "autoMax"]),
+    epap: epapFixed ?? join(epapMin, epapMax),
+    ipap: ipapFixed ?? join(ipapMin, ipapMax),
+    respiratoryRate: readNumericText(["RR", "rrSet", "respiratoryRate", "backupRate", "backup rate"], "bpm"),
+    tidalVolume: readTidalVolume(["VT", "vtSet", "targetVT", "targetVt", "tidalVolume", "targetTidalVolume"]),
+    pressureRelief: pressureSupport ? `PS ${pressureSupport}` : pressureRelief
+  });
 }
 
 function parseGenericDailyKeyValueRecord(text: string, fallbackDate: Date): ParsedRecord | null {
@@ -1497,6 +1689,7 @@ function parseGenericDailyKeyValueRecord(text: string, fallbackDate: Date): Pars
     if (leak === undefined) leak = n;
   }
 
+  const therapySettings = buildTherapySettingsSnapshotFromKeyValueMap(kv);
   const day = createUtcDateNoon(fallbackDate.getUTCFullYear(), fallbackDate.getUTCMonth() + 1, fallbackDate.getUTCDate());
   const hasSignal =
     (usageHours !== undefined && usageHours >= 0 && usageHours <= 24) ||
@@ -1530,7 +1723,9 @@ function parseGenericDailyKeyValueRecord(text: string, fallbackDate: Date): Pars
     ipapAvg: isReportPressureMetric(ipapAvg) ? ipapAvg : undefined,
     ipap95th: isReportPressureMetric(ipap95th) ? ipap95th : undefined,
     epapAvg: isReportPressureMetric(epapAvg) ? epapAvg : undefined,
-    epap95th: isReportPressureMetric(epap95th) ? epap95th : undefined
+    epap95th: isReportPressureMetric(epap95th) ? epap95th : undefined,
+    therapySettingsSignature: therapySettings?.signature,
+    therapySettingsLabel: therapySettings?.label
   };
 }
 
@@ -1550,6 +1745,18 @@ function tryParseDelimited(text: string): ParsedRecord[] {
 
   const delimiter = lines[0].includes("\t") ? "\t" : ",";
   const headers = lines[0].split(delimiter).map((h) => h.trim().toLowerCase());
+  const compactHeader = (header: string) => header.toLowerCase().replace(/[\s_\-/%().]+/g, "");
+  const isTherapySettingHeader = (header: string): boolean => {
+    const compact = compactHeader(header);
+    return (
+      /^(?:therapy|pap|vent)?mode$/.test(compact) ||
+      compact === "ventmode" ||
+      /^(?:press|pressure|setpressure|cpappressure)$/.test(compact) ||
+      /^(?:pmin|pmax|pressuremin|pressuremax|minpressure|maxpressure|minimumpressure|maximumpressure|setminpressure|setmaxpressure|automin|automax)$/.test(compact) ||
+      /^(?:epap|ipap|epapset|ipapset|setepap|setipap|ipapmin|ipapmax|epapmin|epapmax|ipapminpressure|ipapmaxpressure|epapminpressure|epapmaxpressure)$/.test(compact) ||
+      /^(?:rr|rrset|respiratoryrate|backuprate|vt|vtset|targetvt|tidalvolume|targettidalvolume|epr|flex|pressurerelief|ipr|ps|pressuresupport)$/.test(compact)
+    );
+  };
 
   const dateIdx = headers.findIndex((h) => /date|day/.test(h));
   const usageIdx = headers.findIndex((h) => /usage|hours|therapy/.test(h));
@@ -1573,6 +1780,14 @@ function tryParseDelimited(text: string): ParsedRecord[] {
     const row = lines[i].split(delimiter);
     const date = parseDateFromString(row[dateIdx] ?? "");
     if (!date) continue;
+    const therapyKv = new Map<string, string>();
+    for (let col = 0; col < headers.length; col += 1) {
+      const header = headers[col];
+      const value = row[col]?.trim();
+      if (!header || !value || !isTherapySettingHeader(header)) continue;
+      therapyKv.set(header, value);
+    }
+    const therapySettings = therapyKv.size > 0 ? buildTherapySettingsSnapshotFromKeyValueMap(therapyKv) : null;
 
     out.push({
       date,
@@ -1588,7 +1803,9 @@ function tryParseDelimited(text: string): ParsedRecord[] {
       ipapAvg: ipapAvgIdx >= 0 ? normalizePressureNumber(safeNumber(row[ipapAvgIdx])) : undefined,
       ipap95th: ipap95Idx >= 0 ? normalizePressureNumber(safeNumber(row[ipap95Idx])) : undefined,
       epapAvg: epapAvgIdx >= 0 ? normalizePressureNumber(safeNumber(row[epapAvgIdx])) : undefined,
-      epap95th: epap95Idx >= 0 ? normalizePressureNumber(safeNumber(row[epap95Idx])) : undefined
+      epap95th: epap95Idx >= 0 ? normalizePressureNumber(safeNumber(row[epap95Idx])) : undefined,
+      therapySettingsSignature: therapySettings?.signature,
+      therapySettingsLabel: therapySettings?.label
     });
   }
 
@@ -1707,7 +1924,8 @@ function recordSignature(record: ParsedRecord): string {
   const rr95 = typeof record.respiratoryRate95th === "number" ? record.respiratoryRate95th.toFixed(3) : "";
   const rrCount = typeof record.respiratoryRateSampleCount === "number" ? record.respiratoryRateSampleCount.toString() : "";
   const rrMin = typeof record.respiratoryRateMin === "number" ? record.respiratoryRateMin.toFixed(3) : "";
-  return `${toIsoDate(record.date)}|${u}|${a}|${r}|${c}|${re}|${l}|${l95}|${lmax}|${lmax30m}|${lmax60m}|${lmaxMin}|${sustainedLeakMax}|${sustainedLeakMinutes}|${pa}|${p95}|${ia}|${i95}|${ea}|${e95}|${vt}|${vtMin}|${vtMedian}|${vtMax}|${vtCount}|${rr}|${rr95}|${rrCount}|${rrMin}`;
+  const therapySettings = record.therapySettingsSignature ?? "";
+  return `${toIsoDate(record.date)}|${u}|${a}|${r}|${c}|${re}|${l}|${l95}|${lmax}|${lmax30m}|${lmax60m}|${lmaxMin}|${sustainedLeakMax}|${sustainedLeakMinutes}|${pa}|${p95}|${ia}|${i95}|${ea}|${e95}|${vt}|${vtMin}|${vtMedian}|${vtMax}|${vtCount}|${rr}|${rr95}|${rrCount}|${rrMin}|${therapySettings}`;
 }
 
 function dedupeParsedRecords(records: ParsedRecord[]): ParsedRecord[] {
@@ -2041,7 +2259,9 @@ function createEmptyDayBucket(): DayBucket {
     respiratoryRateSum: 0,
     respiratoryRateCount: 0,
     respiratoryRateMin: null,
-    respiratoryRateBins: {}
+    respiratoryRateBins: {},
+    therapySettingsSignature: null,
+    therapySettingsLabel: null
   };
 }
 
@@ -2101,6 +2321,8 @@ function buildDayBucketsFromRecordsAndLeaks(
     const key = toClinicalIsoDate(record.date);
     const bucket = dayMap.get(key) ?? createEmptyDayBucket();
     let usageForAhiWeight: number | undefined;
+
+    applyRecordTherapySettings(bucket, record);
 
     if (typeof record.usageHours === "number" && record.usageHours >= 0 && record.usageHours <= 24) {
       bucket.usageSum += record.usageHours;
@@ -3033,6 +3255,9 @@ async function prepareQuickReportSourceInternal(request: PrepareQuickReportSourc
     throw new Error(`Data import succeeded but no records were found in the most recent ${normalizedLookbackDays}-day date range.`);
   }
 
+  const importedTherapyChangeWarning = buildImportedTherapyChangeWarning(dayMap, normalizedLookbackDays);
+  if (importedTherapyChangeWarning) warnings.push(importedTherapyChangeWarning);
+
   if (selectedLoader) {
     const top = loaderRanking.slice(0, 4).map((m) => `${m.label} (${m.score})`).join(", ");
     warnings.unshift(`Selected loader: ${selectedFamily.label}. Candidate scores: ${top}.`);
@@ -3117,6 +3342,12 @@ export function buildQuickReportMetricsFromPreparedSource(
         `Latest available therapy data ended on ${formatDateHuman(prepared.latestClinicalDayIso)}; calculations were anchored to the latest available clinical day instead of today.`
       );
     }
+  }
+
+  const therapySettingsWindowGuard = applyTherapySettingsWindowGuard(dayMap, warnings, normalizedLookbackDays);
+  if (therapySettingsWindowGuard.effectiveWindowStartIso) {
+    dayMap = therapySettingsWindowGuard.dayMap;
+    effectiveWindowStartIso = therapySettingsWindowGuard.effectiveWindowStartIso;
   }
 
   const summaryAggregationPolicy = getReportSummaryAggregationPolicy(prepared.selectedLoader);

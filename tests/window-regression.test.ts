@@ -52,6 +52,35 @@ function bucket(usageHours: number): PreparedDayBucket {
   };
 }
 
+function bucketWithTherapy(usageHours: number, signature: string, label: string): PreparedDayBucket {
+  return {
+    ...bucket(usageHours),
+    therapySettingsSignature: signature,
+    therapySettingsLabel: label
+  };
+}
+
+function addIsoDays(isoDay: string, days: number): string {
+  const date = new Date(`${isoDay}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function therapyBuckets(
+  startIso: string,
+  count: number,
+  splitIndex: number,
+  earlier: { signature: string; label: string },
+  latest: { signature: string; label: string }
+): Record<string, PreparedDayBucket> {
+  return Object.fromEntries(
+    Array.from({ length: count }, (_, idx) => {
+      const settings = idx < splitIndex ? earlier : latest;
+      return [addIsoDays(startIso, idx), bucketWithTherapy(7, settings.signature, settings.label)];
+    })
+  );
+}
+
 function runLocalAnchorFixture(
   nowIso: string,
   tz: string,
@@ -256,6 +285,202 @@ test("displayed range contracts instead of implying a skipped current day when o
   assert.equal(metrics.daysInWindow, 6);
   assert.equal(metrics.daysWithData, 6);
   assert.equal(metrics.daysWithUsage, 6);
+});
+
+test("90-day CPAP reports contract to the latest APAP setting period after a therapy change", () => {
+  const prepared: PreparedQuickReportSource = {
+    selectedLoader: "Fixture Loader",
+    machine: {
+      mode: "APAP",
+      pressureIsAuto: true,
+      pressureMin: "6 cmH2O",
+      pressureMax: "15 cmH2O"
+    },
+    warnings: [],
+    latestClinicalDayIso: "2026-03-23",
+    maxLookbackDays: 90,
+    dayBuckets: therapyBuckets(
+      "2025-12-24",
+      90,
+      60,
+      { signature: "mode:cpap|pressure:6 cmh2o", label: "CPAP 6 cmH2O" },
+      { signature: "mode:apap|pressureMax:15 cmh2o|pressureMin:6 cmh2o", label: "APAP 6-15 cmH2O" }
+    )
+  };
+
+  const metrics = buildQuickReportMetricsFromPreparedSource(prepared, {
+    patientName: "Fixture Patient",
+    dateOfBirthIso: "1970-01-01",
+    physicianName: "",
+    lookbackDays: 90,
+    windowEndClinicalDayIso: "2026-03-24"
+  });
+
+  assert.equal(metrics.dateRangeStart, "February 22, 2026");
+  assert.equal(metrics.dateRangeEnd, "March 23, 2026");
+  assert.equal(metrics.daysInWindow, 30);
+  assert.equal(metrics.daysWithData, 30);
+  assert.equal(metrics.daysWithUsage, 30);
+  assert.ok(metrics.warnings.some((warning) => warning.includes("Therapy settings changed within the 90-day report window")));
+  assert.ok(metrics.warnings.some((warning) => warning.includes("APAP 6-15 cmH2O from February 22, 2026 forward")));
+});
+
+test("90-day fixed CPAP reports contract after a pressure-only therapy change", () => {
+  const prepared: PreparedQuickReportSource = {
+    selectedLoader: "Fixture Loader",
+    machine: {
+      mode: "CPAP",
+      pressure: "Fixed 8 cmH2O"
+    },
+    warnings: [],
+    latestClinicalDayIso: "2026-03-23",
+    maxLookbackDays: 90,
+    dayBuckets: therapyBuckets(
+      "2025-12-24",
+      90,
+      72,
+      { signature: "mode:cpap|pressure:6 cmh2o", label: "CPAP 6 cmH2O" },
+      { signature: "mode:cpap|pressure:8 cmh2o", label: "CPAP 8 cmH2O" }
+    )
+  };
+
+  const metrics = buildQuickReportMetricsFromPreparedSource(prepared, {
+    patientName: "Fixture Patient",
+    dateOfBirthIso: "1970-01-01",
+    physicianName: "",
+    lookbackDays: 90,
+    windowEndClinicalDayIso: "2026-03-24"
+  });
+
+  assert.equal(metrics.dateRangeStart, "March 6, 2026");
+  assert.equal(metrics.dateRangeEnd, "March 23, 2026");
+  assert.equal(metrics.daysInWindow, 18);
+  assert.equal(metrics.daysWithData, 18);
+  assert.equal(metrics.daysWithUsage, 18);
+  assert.ok(metrics.warnings.some((warning) => warning.includes("Therapy settings changed within the 90-day report window")));
+  assert.ok(metrics.warnings.some((warning) => warning.includes("CPAP 8 cmH2O from March 6, 2026 forward")));
+});
+
+test("90-day APAP reports contract after an auto-pressure range change", () => {
+  const prepared: PreparedQuickReportSource = {
+    selectedLoader: "Fixture Loader",
+    machine: {
+      mode: "APAP",
+      pressureIsAuto: true,
+      pressureMin: "6 cmH2O",
+      pressureMax: "15 cmH2O"
+    },
+    warnings: [],
+    latestClinicalDayIso: "2026-03-23",
+    maxLookbackDays: 90,
+    dayBuckets: therapyBuckets(
+      "2025-12-24",
+      90,
+      45,
+      { signature: "mode:apap|pressureMax:10 cmh2o|pressureMin:6 cmh2o", label: "APAP 6-10 cmH2O" },
+      { signature: "mode:apap|pressureMax:15 cmh2o|pressureMin:6 cmh2o", label: "APAP 6-15 cmH2O" }
+    )
+  };
+
+  const metrics = buildQuickReportMetricsFromPreparedSource(prepared, {
+    patientName: "Fixture Patient",
+    dateOfBirthIso: "1970-01-01",
+    physicianName: "",
+    lookbackDays: 90,
+    windowEndClinicalDayIso: "2026-03-24"
+  });
+
+  assert.equal(metrics.dateRangeStart, "February 7, 2026");
+  assert.equal(metrics.dateRangeEnd, "March 23, 2026");
+  assert.equal(metrics.daysInWindow, 45);
+  assert.equal(metrics.daysWithData, 45);
+  assert.equal(metrics.daysWithUsage, 45);
+  assert.ok(metrics.warnings.some((warning) => warning.includes("Therapy settings changed within the 90-day report window")));
+  assert.ok(metrics.warnings.some((warning) => warning.includes("APAP 6-15 cmH2O from February 7, 2026 forward")));
+});
+
+test("90-day BiPAP reports contract to the latest bilevel setting period after a therapy change", () => {
+  const prepared: PreparedQuickReportSource = {
+    selectedLoader: "Fixture Loader",
+    machine: {
+      mode: "BiPAP",
+      epap: "10 cmH2O",
+      ipap: "14 cmH2O"
+    },
+    warnings: [],
+    latestClinicalDayIso: "2026-03-23",
+    maxLookbackDays: 90,
+    dayBuckets: therapyBuckets(
+      "2025-12-24",
+      90,
+      50,
+      { signature: "epap:8 cmh2o|ipap:12 cmh2o|mode:bipap", label: "BiPAP EPAP 8 cmH2O / IPAP 12 cmH2O" },
+      { signature: "epap:10 cmh2o|ipap:14 cmh2o|mode:bipap", label: "BiPAP EPAP 10 cmH2O / IPAP 14 cmH2O" }
+    )
+  };
+
+  const metrics = buildQuickReportMetricsFromPreparedSource(prepared, {
+    patientName: "Fixture Patient",
+    dateOfBirthIso: "1970-01-01",
+    physicianName: "",
+    lookbackDays: 90,
+    windowEndClinicalDayIso: "2026-03-24"
+  });
+
+  assert.equal(metrics.dateRangeStart, "February 12, 2026");
+  assert.equal(metrics.dateRangeEnd, "March 23, 2026");
+  assert.equal(metrics.daysInWindow, 40);
+  assert.equal(metrics.daysWithData, 40);
+  assert.equal(metrics.daysWithUsage, 40);
+  assert.ok(metrics.warnings.some((warning) => warning.includes("Therapy settings changed within the 90-day report window")));
+  assert.ok(metrics.warnings.some((warning) => warning.includes("BiPAP EPAP 10 cmH2O / IPAP 14 cmH2O from February 12, 2026 forward")));
+});
+
+test("90-day auto BiPAP reports contract after bilevel range changes", () => {
+  const prepared: PreparedQuickReportSource = {
+    selectedLoader: "Fixture Loader",
+    machine: {
+      mode: "Auto BiPAP",
+      epap: "7 cmH2O-11 cmH2O",
+      ipap: "11 cmH2O-19 cmH2O"
+    },
+    warnings: [],
+    latestClinicalDayIso: "2026-03-23",
+    maxLookbackDays: 90,
+    dayBuckets: therapyBuckets(
+      "2025-12-24",
+      90,
+      75,
+      {
+        signature: "epap:6 cmh2o-10 cmh2o|ipap:10 cmh2o-18 cmh2o|mode:auto bipap",
+        label: "Auto BiPAP EPAP 6 cmH2O-10 cmH2O / IPAP 10 cmH2O-18 cmH2O"
+      },
+      {
+        signature: "epap:7 cmh2o-11 cmh2o|ipap:11 cmh2o-19 cmh2o|mode:auto bipap",
+        label: "Auto BiPAP EPAP 7 cmH2O-11 cmH2O / IPAP 11 cmH2O-19 cmH2O"
+      }
+    )
+  };
+
+  const metrics = buildQuickReportMetricsFromPreparedSource(prepared, {
+    patientName: "Fixture Patient",
+    dateOfBirthIso: "1970-01-01",
+    physicianName: "",
+    lookbackDays: 90,
+    windowEndClinicalDayIso: "2026-03-24"
+  });
+
+  assert.equal(metrics.dateRangeStart, "March 9, 2026");
+  assert.equal(metrics.dateRangeEnd, "March 23, 2026");
+  assert.equal(metrics.daysInWindow, 15);
+  assert.equal(metrics.daysWithData, 15);
+  assert.equal(metrics.daysWithUsage, 15);
+  assert.ok(metrics.warnings.some((warning) => warning.includes("Therapy settings changed within the 90-day report window")));
+  assert.ok(
+    metrics.warnings.some((warning) =>
+      warning.includes("Auto BiPAP EPAP 7 cmH2O-11 cmH2O / IPAP 11 cmH2O-19 cmH2O from March 9, 2026 forward")
+    )
+  );
 });
 
 test("default report window stays on the user's local calendar day across spring DST transition", () => {
