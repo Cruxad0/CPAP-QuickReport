@@ -4,6 +4,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { buildQuickReportMetricsFromPreparedSource, prepareQuickReportSource } from "../lib/parser";
+import { leakMetricRows } from "../lib/pdf";
 import { createSourceFilesFromDirectory } from "./helpers/fs-source-files";
 
 function nextClinicalDayIso(isoDay: string): string {
@@ -215,6 +216,15 @@ maybeLocalDreamstationTest("local DreamStation sample reports selected-window pr
   assertApprox(metrics.leak95th, 36.2002, 0.1, "95th leak");
   assertApprox(metrics.maxLeak30m, 88.2707, 0.1, "30 min leak");
   assertApprox(metrics.maxLeak60m, 88.2707, 0.1, "60 min leak");
+  assertApprox(metrics.maxLeakMinutes ?? null, 1.9810, 0.01, "max leak minutes");
+  assertApprox(metrics.sustainedLeakMax ?? null, 71.2707, 0.1, "sustained leak max");
+  assertApprox(metrics.sustainedLeakMinutes ?? null, 240.7715, 0.1, "sustained leak minutes");
+  assert.deepEqual(leakMetricRows(metrics), [
+    ["Avg Leak", "28.4 L/min"],
+    ["95th Leak", "36.2 L/min", true],
+    ["Longest Sustained Leak", "71.3 L/min for 240.8 min", true],
+    ["Max Leak", "88.3 L/min for 2.0 min", true]
+  ]);
 });
 
 maybeLocalMixedDreamstationTest("DreamStation folder follows LAST.TXT to the active Philips therapy root", async () => {
@@ -418,4 +428,13 @@ maybeLocalAirCurve10StTest("local ResMed AirCurve 10 ST sample reports fixed bil
   assertApprox(metrics.leak95th, 49.12, 0.02, "95th leak");
   assertApprox(metrics.maxLeak30m, 120, 0.02, "30 min leak");
   assertApprox(metrics.maxLeak60m, 120, 0.02, "60 min leak");
+  assertApprox(metrics.maxLeakMinutes ?? null, 34.3667, 0.02, "max leak minutes");
+  assertApprox(metrics.sustainedLeakMax ?? null, 70.8, 0.02, "sustained leak max");
+  assertApprox(metrics.sustainedLeakMinutes ?? null, 68.7, 0.02, "sustained leak minutes");
+  assert.deepEqual(leakMetricRows(metrics), [
+    ["Avg Leak", "0.7 L/min"],
+    ["95th Leak", "49.1 L/min", true],
+    ["Longest Sustained Leak", "70.8 L/min for 68.7 min", true],
+    ["Max Leak", "120.0 L/min for 34.4 min", true]
+  ]);
 });

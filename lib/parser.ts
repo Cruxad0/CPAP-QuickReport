@@ -184,6 +184,10 @@ function isReportTidalVolumeMetric(value: number | undefined): value is number {
   return typeof value === "number" && Number.isFinite(value) && value > 0 && value <= 5;
 }
 
+function sameLeakMetricValue(a: number, b: number): boolean {
+  return Math.abs(a - b) < 0.001;
+}
+
 function normalizeTidalVolumeMl(raw: number | undefined, unitHint = ""): number | undefined {
   if (raw === undefined || !Number.isFinite(raw) || raw <= 0) return undefined;
   const text = unitHint.toLowerCase();
@@ -1906,6 +1910,7 @@ function recordSignature(record: ParsedRecord): string {
   const lmax = typeof record.leakMax === "number" ? record.leakMax.toFixed(3) : "";
   const lmax30m = typeof record.leakMax30m === "number" ? record.leakMax30m.toFixed(3) : "";
   const lmax60m = typeof record.leakMax60m === "number" ? record.leakMax60m.toFixed(3) : "";
+  const lmaxDurationValue = typeof record.maxLeakDurationValue === "number" ? record.maxLeakDurationValue.toFixed(3) : "";
   const lmaxMin = typeof record.maxLeakMinutes === "number" ? record.maxLeakMinutes.toFixed(3) : "";
   const sustainedLeakMax = typeof record.sustainedLeakMax === "number" ? record.sustainedLeakMax.toFixed(3) : "";
   const sustainedLeakMinutes = typeof record.sustainedLeakMinutes === "number" ? record.sustainedLeakMinutes.toFixed(3) : "";
@@ -1925,7 +1930,7 @@ function recordSignature(record: ParsedRecord): string {
   const rrCount = typeof record.respiratoryRateSampleCount === "number" ? record.respiratoryRateSampleCount.toString() : "";
   const rrMin = typeof record.respiratoryRateMin === "number" ? record.respiratoryRateMin.toFixed(3) : "";
   const therapySettings = record.therapySettingsSignature ?? "";
-  return `${toIsoDate(record.date)}|${u}|${a}|${r}|${c}|${re}|${l}|${l95}|${lmax}|${lmax30m}|${lmax60m}|${lmaxMin}|${sustainedLeakMax}|${sustainedLeakMinutes}|${pa}|${p95}|${ia}|${i95}|${ea}|${e95}|${vt}|${vtMin}|${vtMedian}|${vtMax}|${vtCount}|${rr}|${rr95}|${rrCount}|${rrMin}|${therapySettings}`;
+  return `${toIsoDate(record.date)}|${u}|${a}|${r}|${c}|${re}|${l}|${l95}|${lmax}|${lmax30m}|${lmax60m}|${lmaxDurationValue}|${lmaxMin}|${sustainedLeakMax}|${sustainedLeakMinutes}|${pa}|${p95}|${ia}|${i95}|${ea}|${e95}|${vt}|${vtMin}|${vtMedian}|${vtMax}|${vtCount}|${rr}|${rr95}|${rrCount}|${rrMin}|${therapySettings}`;
 }
 
 function dedupeParsedRecords(records: ParsedRecord[]): ParsedRecord[] {
@@ -2316,6 +2321,7 @@ function buildDayBucketsFromRecordsAndLeaks(
   hasResventStructure: boolean
 ): Map<string, DayBucket> {
   const dayMap = new Map<string, DayBucket>();
+  const maxLeakDurationsByDay = new Map<string, Array<{ leak: number; minutes: number }>>();
 
   for (const record of dedupedRecords) {
     const key = toClinicalIsoDate(record.date);
@@ -2486,6 +2492,20 @@ function buildDayBucketsFromRecordsAndLeaks(
       bucket.sustainedLeakMinutes = record.sustainedLeakMinutes;
     }
 
+    if (
+      typeof record.maxLeakDurationValue === "number" &&
+      typeof record.maxLeakMinutes === "number" &&
+      Number.isFinite(record.maxLeakDurationValue) &&
+      Number.isFinite(record.maxLeakMinutes) &&
+      record.maxLeakDurationValue >= 0 &&
+      record.maxLeakDurationValue < 500 &&
+      record.maxLeakMinutes >= 0
+    ) {
+      const durations = maxLeakDurationsByDay.get(key) ?? [];
+      durations.push({ leak: record.maxLeakDurationValue, minutes: record.maxLeakMinutes });
+      maxLeakDurationsByDay.set(key, durations);
+    }
+
     dayMap.set(key, bucket);
   }
 
@@ -2525,6 +2545,17 @@ function buildDayBucketsFromRecordsAndLeaks(
       bucket.sustainedLeakMinutes = stats.sustainedLeakMinutes;
     }
     dayMap.set(day, bucket);
+  }
+
+  for (const [day, durations] of maxLeakDurationsByDay.entries()) {
+    const bucket = dayMap.get(day);
+    if (!bucket || bucket.leakMax === null) continue;
+    const matchingDuration = durations
+      .filter((entry) => sameLeakMetricValue(entry.leak, bucket.leakMax as number))
+      .sort((a, b) => b.minutes - a.minutes)[0];
+    if (matchingDuration && (bucket.maxLeakMinutes == null || matchingDuration.minutes > bucket.maxLeakMinutes)) {
+      bucket.maxLeakMinutes = matchingDuration.minutes;
+    }
   }
 
   return dayMap;
@@ -3565,14 +3596,31 @@ export function buildQuickReportMetricsFromPreparedSource(
   const maxLeak30m = leakMax30mValues.length > 0 ? Math.max(...leakMax30mValues) : rawMaxLeak;
   const maxLeak60m = leakMax60mValues.length > 0 ? Math.max(...leakMax60mValues) : rawMaxLeak;
   const maxLeak = rawMaxLeak;
-  const maxLeakMinutes =
+  const observedMaxLeakMinutes =
     maxLeak === null
       ? null
       : (maxLeakMinuteCandidates
-          .filter((entry) => entry.leak === maxLeak)
+          .filter((entry) => sameLeakMetricValue(entry.leak, maxLeak))
           .sort((a, b) => b.minutes - a.minutes)[0]?.minutes ?? null);
-  const sustainedLeakCandidate =
+  const maxLeakWindowMinutes =
+    maxLeak !== null && maxLeak60m !== null && leakMax60mValues.length > 0 && sameLeakMetricValue(maxLeak, maxLeak60m)
+      ? 60
+      : maxLeak !== null && maxLeak30m !== null && leakMax30mValues.length > 0 && sameLeakMetricValue(maxLeak, maxLeak30m)
+        ? 30
+        : null;
+  const maxLeakMinutes = observedMaxLeakMinutes ?? maxLeakWindowMinutes;
+  const observedSustainedLeakCandidate =
     sustainedLeakCandidates.sort((a, b) => b.minutes - a.minutes || b.leak - a.leak)[0] ?? null;
+  const sustainedLeakWindowCandidate =
+    maxLeak60m !== null && leakMax60mValues.length > 0
+      ? { leak: maxLeak60m, minutes: 60 }
+      : maxLeak30m !== null && leakMax30mValues.length > 0
+        ? { leak: maxLeak30m, minutes: 30 }
+        : null;
+  const sustainedLeakCandidate =
+    [observedSustainedLeakCandidate, sustainedLeakWindowCandidate]
+      .filter((entry): entry is { leak: number; minutes: number } => entry !== null)
+      .sort((a, b) => b.minutes - a.minutes || b.leak - a.leak)[0] ?? null;
   const sustainedLeakMax = sustainedLeakCandidate?.leak ?? null;
   const sustainedLeakMinutes = sustainedLeakCandidate?.minutes ?? null;
   const avgPressure =

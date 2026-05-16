@@ -32,6 +32,7 @@ export interface ParsedRecord {
   leakMax?: number;
   leakMax30m?: number;
   leakMax60m?: number;
+  maxLeakDurationValue?: number;
   maxLeakMinutes?: number;
   sustainedLeakMax?: number;
   sustainedLeakMinutes?: number;

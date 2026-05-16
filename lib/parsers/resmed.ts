@@ -73,6 +73,8 @@ type EdfInfo = {
 };
 
 type ResMedLeakSignalStats = {
+  maxLeakValue?: number;
+  maxLeakMinutes?: number;
   sustainedLeakMax?: number;
   sustainedLeakMinutes?: number;
 };
@@ -706,6 +708,8 @@ function summarizeResMedLeakSignal(bytes: Uint8Array, edf: EdfInfo, signal: EdfS
   let currentLargeLeakMax: number | null = null;
   let longestLargeLeakSeconds = 0;
   let longestLargeLeakMax: number | null = null;
+  let maxLeakEpisodeValue: number | null = null;
+  let maxLeakEpisodeSeconds = 0;
 
   const finishLargeLeakEpisode = () => {
     if (currentLargeLeakSeconds <= 0 || currentLargeLeakMax === null) return;
@@ -716,6 +720,14 @@ function summarizeResMedLeakSignal(bytes: Uint8Array, edf: EdfInfo, signal: EdfS
     ) {
       longestLargeLeakSeconds = currentLargeLeakSeconds;
       longestLargeLeakMax = currentLargeLeakMax;
+    }
+    if (
+      maxLeakEpisodeValue === null ||
+      currentLargeLeakMax > maxLeakEpisodeValue ||
+      (currentLargeLeakMax === maxLeakEpisodeValue && currentLargeLeakSeconds > maxLeakEpisodeSeconds)
+    ) {
+      maxLeakEpisodeValue = currentLargeLeakMax;
+      maxLeakEpisodeSeconds = currentLargeLeakSeconds;
     }
     currentLargeLeakSeconds = 0;
     currentLargeLeakMax = null;
@@ -744,6 +756,8 @@ function summarizeResMedLeakSignal(bytes: Uint8Array, edf: EdfInfo, signal: EdfS
   if (count === 0) return null;
 
   return {
+    maxLeakValue: maxLeakEpisodeValue ?? undefined,
+    maxLeakMinutes: maxLeakEpisodeSeconds > 0 ? maxLeakEpisodeSeconds / 60 : undefined,
     sustainedLeakMax: longestLargeLeakMax ?? undefined,
     sustainedLeakMinutes: longestLargeLeakSeconds > 0 ? longestLargeLeakSeconds / 60 : undefined
   };
@@ -1044,6 +1058,8 @@ function parseResMedPldEdf(candidate: FamilyParserCandidate, bytes: Uint8Array):
 
   return {
     date: new Date(edf.startDate),
+    maxLeakDurationValue: leakStats?.maxLeakValue,
+    maxLeakMinutes: leakStats?.maxLeakMinutes,
     sustainedLeakMax: leakStats?.sustainedLeakMax,
     sustainedLeakMinutes: leakStats?.sustainedLeakMinutes,
     tidalVolumeAvg: tidalVolumeStats?.avg,
