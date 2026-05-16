@@ -72,6 +72,13 @@ type EdfInfo = {
   bytesPerRecord: number;
 };
 
+type ResMedLeakSignalStats = {
+  sustainedLeakMax?: number;
+  sustainedLeakMinutes?: number;
+};
+
+const RESMED_LARGE_LEAK_THRESHOLD_LPM = 30;
+
 function normalizeWhitespace(value: string): string {
   return value.replace(/[_\s]+/g, " ").trim();
 }
@@ -609,10 +616,15 @@ function applyResMedRampSettings(
   }
 }
 
-function normalizeResMedLeakValue(value: number | undefined, signal: EdfSignal | null): number | undefined {
+function normalizeResMedLeakValue(
+  value: number | undefined,
+  signal: EdfSignal | null,
+  assumeLitersPerSecond = false
+): number | undefined {
   if (value === undefined || !Number.isFinite(value)) return undefined;
-  const unit = signal?.physicalDimension.replace(/\s+/g, "").toLowerCase();
-  return unit === "l/s" || unit === "lps" ? value * 60 : value;
+  const unit = signal?.physicalDimension.replace(/[\s.]+/g, "").toLowerCase() ?? "";
+  if (/^(?:l\/m|l\/min|lpm|l\/minute|l\/minutes)$/.test(unit)) return value;
+  return /^(?:l\/s|lps|l\/sec|l\/second|l\/seconds)$/.test(unit) || assumeLitersPerSecond ? value * 60 : value;
 }
 
 export function inferResMedModeFromSignals(values: {
@@ -662,6 +674,79 @@ async function maybeGunzip(bytes: Uint8Array): Promise<Uint8Array> {
   } catch {
     return bytes;
   }
+}
+
+function findResMedPldLeakSignal(edf: EdfInfo): EdfSignal | null {
+  const explicit = findSignal(edf, [
+    "Leak",
+    "Leak.2s",
+    "Leak 2s",
+    "LeakRate.2s",
+    "Leak Rate",
+    "Leck",
+    "Fuites",
+    "Fuite",
+    "Fuga",
+    "Lekk"
+  ]);
+  if (explicit) return explicit;
+  return edf.signals.find((signal) => /\bleak\b/i.test(signal.label)) ?? null;
+}
+
+function summarizeResMedLeakSignal(bytes: Uint8Array, edf: EdfInfo, signal: EdfSignal | null): ResMedLeakSignalStats | null {
+  if (!signal) return null;
+
+  const sampleSeconds =
+    Number.isFinite(edf.recordDurationSeconds) && edf.recordDurationSeconds > 0 && signal.samplesPerRecord > 0
+      ? edf.recordDurationSeconds / signal.samplesPerRecord
+      : 0;
+
+  let count = 0;
+  let currentLargeLeakSeconds = 0;
+  let currentLargeLeakMax: number | null = null;
+  let longestLargeLeakSeconds = 0;
+  let longestLargeLeakMax: number | null = null;
+
+  const finishLargeLeakEpisode = () => {
+    if (currentLargeLeakSeconds <= 0 || currentLargeLeakMax === null) return;
+    if (
+      currentLargeLeakSeconds > longestLargeLeakSeconds ||
+      (currentLargeLeakSeconds === longestLargeLeakSeconds &&
+        (longestLargeLeakMax === null || currentLargeLeakMax > longestLargeLeakMax))
+    ) {
+      longestLargeLeakSeconds = currentLargeLeakSeconds;
+      longestLargeLeakMax = currentLargeLeakMax;
+    }
+    currentLargeLeakSeconds = 0;
+    currentLargeLeakMax = null;
+  };
+
+  for (let recordIndex = 0; recordIndex < edf.numRecords; recordIndex += 1) {
+    for (let sampleIndex = 0; sampleIndex < signal.samplesPerRecord; sampleIndex += 1) {
+      const value = normalizeResMedLeakValue(readSignalValue(bytes, edf, signal, recordIndex, sampleIndex), signal, true);
+      if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value >= 500) {
+        finishLargeLeakEpisode();
+        continue;
+      }
+
+      count += 1;
+
+      if (sampleSeconds > 0 && value > RESMED_LARGE_LEAK_THRESHOLD_LPM) {
+        currentLargeLeakSeconds += sampleSeconds;
+        currentLargeLeakMax = currentLargeLeakMax === null ? value : Math.max(currentLargeLeakMax, value);
+      } else {
+        finishLargeLeakEpisode();
+      }
+    }
+  }
+
+  finishLargeLeakEpisode();
+  if (count === 0) return null;
+
+  return {
+    sustainedLeakMax: longestLargeLeakMax ?? undefined,
+    sustainedLeakMinutes: longestLargeLeakSeconds > 0 ? longestLargeLeakSeconds / 60 : undefined
+  };
 }
 
 function parseResMedStrEdf(
@@ -947,6 +1032,7 @@ function parseResMedPldEdf(candidate: FamilyParserCandidate, bytes: Uint8Array):
   const edf = parseResMedEdf(bytes);
   if (!edf) return null;
 
+  const leakStats = summarizeResMedLeakSignal(bytes, edf, findResMedPldLeakSignal(edf));
   const respiratoryRateStats = summarizeSignal(bytes, edf, findSignal(edf, ["RespRate.2s", "Resp Rate.2s", "RR.2s"]), (value) =>
     value > 0 && value <= 120
   );
@@ -954,10 +1040,12 @@ function parseResMedPldEdf(candidate: FamilyParserCandidate, bytes: Uint8Array):
     value > 0 && value <= 5
   );
 
-  if (!respiratoryRateStats && !tidalVolumeStats) return null;
+  if (!leakStats && !respiratoryRateStats && !tidalVolumeStats) return null;
 
   return {
     date: new Date(edf.startDate),
+    sustainedLeakMax: leakStats?.sustainedLeakMax,
+    sustainedLeakMinutes: leakStats?.sustainedLeakMinutes,
     tidalVolumeAvg: tidalVolumeStats?.avg,
     tidalVolumeMin: tidalVolumeStats?.min,
     tidalVolumeMedian: tidalVolumeStats?.median,

@@ -140,6 +140,71 @@ function createSyntheticResMedEveEdf(arousalCount: number): Uint8Array {
   return bytes;
 }
 
+function createSyntheticResMedPldEdf(leakValuesLitersPerSecond: number[]): Uint8Array {
+  const signals = [
+    {
+      label: "Leak.2s",
+      min: 0,
+      max: 2,
+      dmin: 0,
+      dmax: 2000,
+      samples: leakValuesLitersPerSecond.length,
+      values: leakValuesLitersPerSecond.map((value) => Math.round(value * 1000)),
+      unit: "L/s"
+    }
+  ];
+
+  const numSignals = signals.length;
+  const headerBytes = 256 + numSignals * 256;
+  const samplesPerRecord = signals.reduce((sum, signal) => sum + signal.samples, 0);
+  const bytesPerRecord = samplesPerRecord * 2;
+  const totalBytes = headerBytes + bytesPerRecord;
+  const bytes = new Uint8Array(totalBytes);
+  const view = new DataView(bytes.buffer);
+
+  writeAsciiField(bytes, 0, 8, "0");
+  writeAsciiField(bytes, 8, 80, "QuickReport Fixture");
+  writeAsciiField(bytes, 88, 80, "Fixture Patient");
+  writeAsciiField(bytes, 168, 8, "15.04.26");
+  writeAsciiField(bytes, 176, 8, "00.00.00");
+  writeAsciiField(bytes, 184, 8, String(headerBytes));
+  writeAsciiField(bytes, 192, 44, "Synthetic ResMed PLD");
+  writeAsciiField(bytes, 236, 8, "1");
+  writeAsciiField(bytes, 244, 8, String(leakValuesLitersPerSecond.length * 2));
+  writeAsciiField(bytes, 252, 4, String(numSignals));
+
+  const labelsStart = 256;
+  const transducerStart = labelsStart + numSignals * 16;
+  const physDimStart = transducerStart + numSignals * 80;
+  const physMinStart = physDimStart + numSignals * 8;
+  const physMaxStart = physMinStart + numSignals * 8;
+  const digMinStart = physMaxStart + numSignals * 8;
+  const digMaxStart = digMinStart + numSignals * 8;
+  const prefilterStart = digMaxStart + numSignals * 8;
+  const samplesStart = prefilterStart + numSignals * 80;
+
+  let sampleOffset = 0;
+  for (let i = 0; i < signals.length; i += 1) {
+    const signal = signals[i];
+    writeAsciiField(bytes, labelsStart + i * 16, 16, signal.label);
+    writeAsciiField(bytes, transducerStart + i * 80, 80, "");
+    writeAsciiField(bytes, physDimStart + i * 8, 8, signal.unit);
+    writeAsciiField(bytes, physMinStart + i * 8, 8, String(signal.min));
+    writeAsciiField(bytes, physMaxStart + i * 8, 8, String(signal.max));
+    writeAsciiField(bytes, digMinStart + i * 8, 8, String(signal.dmin));
+    writeAsciiField(bytes, digMaxStart + i * 8, 8, String(signal.dmax));
+    writeAsciiField(bytes, prefilterStart + i * 80, 80, "");
+    writeAsciiField(bytes, samplesStart + i * 8, 8, String(signal.samples));
+
+    for (const value of signal.values) {
+      view.setInt16(headerBytes + sampleOffset * 2, value, true);
+      sampleOffset += 1;
+    }
+  }
+
+  return bytes;
+}
+
 test("ResMed preparation retains root STR/settings metadata when DATALOG EDF volume is high", async () => {
   const files: SourceFile[] = [];
 
@@ -217,4 +282,35 @@ test("ResMed STR leak signals in L/s are converted to report L/min", async () =>
   assert.ok(Math.abs((metrics.avgLeak ?? 0) - 18) < 0.0001);
   assert.ok(Math.abs((metrics.leak95th ?? 0) - 36) < 0.0001);
   assert.ok(Math.abs((metrics.maxLeak ?? 0) - 54) < 0.0001);
+});
+
+test("ResMed PLD leak waveform populates leak duration fields", async () => {
+  const files: SourceFile[] = [
+    createSourceFile("Identification.tgt", new TextEncoder().encode("#PNA AirSense_10_AutoSet\n")),
+    createSourceFile("STR.edf", createSyntheticResMedStrEdf()),
+    createSourceFile(
+      "DATALOG/20260415/20260415_000000_PLD.edf",
+      createSyntheticResMedPldEdf([0.2, 0.6, 0.7, 0.1, 0.8, 0.9, 0.2])
+    )
+  ];
+
+  const prepared = await prepareQuickReportSource({
+    sourceKind: "folder",
+    files,
+    lookbackDays: 90
+  });
+  const metrics = buildQuickReportMetricsFromPreparedSource(prepared, {
+    patientName: "Fixture Patient",
+    dateOfBirthIso: "1970-01-01",
+    physicianName: "",
+    lookbackDays: 7,
+    windowEndClinicalDayIso: "2026-04-16"
+  });
+
+  assert.equal(metrics.avgLeak, 3);
+  assert.equal(metrics.leak95th, 9);
+  assert.equal(metrics.maxLeak, 12);
+  assert.equal(metrics.maxLeakMinutes, null);
+  assert.ok(Math.abs((metrics.sustainedLeakMax ?? 0) - 54) < 0.0001);
+  assert.ok(Math.abs((metrics.sustainedLeakMinutes ?? 0) - 4 / 60) < 0.0001);
 });

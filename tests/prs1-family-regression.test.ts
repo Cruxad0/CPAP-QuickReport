@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { buildQuickReportMetricsFromPreparedSource, prepareQuickReportSource } from "../lib/parser";
 import { rankParserFamilies, selectLoaderMatchByDatedRecency } from "../lib/parsers/families";
 import { selectPrs1MachineRootId } from "../lib/parsers/prs1";
 import { shouldIgnorePathEarly } from "../lib/source-files";
+import type { SourceFile } from "../lib/types";
 
 test("DreamStation-style P-SERIES structure ranks Philips PRS1 ahead of BMC/Luna", () => {
   const files = [
@@ -88,6 +90,57 @@ function createCandidate(path: string, text = "") {
   };
 }
 
+function createSourceFile(path: string, bytes: Uint8Array, text?: string): SourceFile {
+  return {
+    name: path.split("/").pop() ?? path,
+    path,
+    size: bytes.byteLength,
+    readText: async () => text ?? new TextDecoder("utf-8", { fatal: false }).decode(bytes),
+    readBytes: async () => bytes
+  };
+}
+
+function writeLe16(target: Uint8Array, offset: number, value: number) {
+  target[offset] = value & 0xff;
+  target[offset + 1] = (value >> 8) & 0xff;
+}
+
+function writeLe32(target: Uint8Array, offset: number, value: number) {
+  target[offset] = value & 0xff;
+  target[offset + 1] = (value >> 8) & 0xff;
+  target[offset + 2] = (value >> 16) & 0xff;
+  target[offset + 3] = (value >> 24) & 0xff;
+}
+
+function prs1SummaryPayloadWithLeaks(leaks: number[], sampleSeconds: number): Uint8Array {
+  const recordBytes: number[] = [];
+  for (const leak of leaks) {
+    recordBytes.push(2, 0, 0, 0, 0, 0, 0, 0);
+
+    const offRecord = new Uint8Array(37);
+    offRecord[0] = 3;
+    writeLe16(offRecord, 1, sampleSeconds);
+    offRecord[1 + 0x22] = leak;
+    recordBytes.push(...offRecord);
+  }
+  return new Uint8Array(recordBytes);
+}
+
+function prs1Chunk(data: Uint8Array, timestamp: number): Uint8Array {
+  const blockSize = data.byteLength + 18;
+  const bytes = new Uint8Array(blockSize);
+  bytes[0] = 2;
+  writeLe16(bytes, 1, blockSize);
+  bytes[3] = 0;
+  bytes[4] = 0;
+  bytes[5] = 4;
+  bytes[6] = 0;
+  writeLe32(bytes, 7, 0x12345678);
+  writeLe32(bytes, 11, timestamp);
+  bytes.set(data, 16);
+  return bytes;
+}
+
 test("PRS1 root selection falls back when LAST.TXT points to an incomplete root", async () => {
   const candidates = [
     createCandidate("P-SERIES/LAST.TXT", "OLDROOT"),
@@ -117,4 +170,45 @@ test("PRS1 root selection still respects LAST.TXT when it points to a valid smal
 
   const selected = await selectPrs1MachineRootId(candidates);
   assert.equal(selected, "ACTIVEROOT");
+});
+
+test("PRS1 leak samples populate leak duration fields for CPAP, APAP, and BiPAP modes", async () => {
+  const sessionDate = Date.UTC(2026, 3, 15, 12, 0, 0) / 1000;
+  const modeCases: Array<{ mode: "CPAP" | "APAP" | "BiPAP"; model: string }> = [
+    { mode: "CPAP", model: "450P" },
+    { mode: "APAP", model: "550P" },
+    { mode: "BiPAP", model: "750P" }
+  ];
+
+  for (const { mode, model } of modeCases) {
+    const propertiesText = [`ModelNumber=${model}`, `Mode=${mode}`].join("\n");
+    const files: SourceFile[] = [
+      createSourceFile(
+        "P-SERIES/PRSROOT/P0/12345678.000",
+        prs1Chunk(prs1SummaryPayloadWithLeaks([40, 45], 600), sessionDate)
+      ),
+      createSourceFile("P-SERIES/PRSROOT/properties.txt", new TextEncoder().encode(propertiesText), propertiesText)
+    ];
+
+    const prepared = await prepareQuickReportSource({
+      sourceKind: "folder",
+      files,
+      lookbackDays: 90
+    });
+    const metrics = buildQuickReportMetricsFromPreparedSource(prepared, {
+      patientName: "Fixture Patient",
+      dateOfBirthIso: "1970-01-01",
+      physicianName: "",
+      lookbackDays: 7,
+      windowEndClinicalDayIso: "2026-04-16"
+    });
+
+    assert.equal(prepared.selectedLoader, "Philips Respironics System One / DreamStation");
+    assert.equal(prepared.machine.mode, mode);
+    assert.equal(metrics.avgLeak, 42.5);
+    assert.equal(metrics.maxLeak, 45);
+    assert.ok(Math.abs((metrics.maxLeakMinutes ?? 0) - 20) < 0.0001);
+    assert.equal(metrics.sustainedLeakMax, 45);
+    assert.ok(Math.abs((metrics.sustainedLeakMinutes ?? 0) - 20) < 0.0001);
+  }
 });
