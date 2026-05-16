@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { enumerateDeferredFolderEntries, pickDirectoryHandle, supportsDirectoryPicker } from "@/lib/directory-picker";
 import { ReportWorkerClient } from "@/lib/report-worker-client";
 import { REPORT_RANGE_OPTIONS, type ReportRangeDays } from "@/lib/report-orchestrator";
@@ -393,8 +394,14 @@ export function QuickReportApp() {
     !isDobMissing &&
     sourceFileCount > 0 &&
     status !== "working";
-  const isDataSourceLoading = status === "working" || isSourceLoading;
-  const dataSourceOverlayText = isSourceLoading ? "Loading data. Please wait..." : "Generating report. Please wait...";
+  const isDataSourceLoading = status === "working" || isSourceLoading || pendingSourceSelection !== null;
+  const dataSourceOverlayText = isSourceLoading
+    ? "Loading data. Please wait..."
+    : pendingSourceSelection
+      ? pendingSourceSelection === "folder"
+        ? "Opening folder picker..."
+        : "Opening file picker..."
+      : "Generating report. Please wait...";
 
   const beginSourceSelection = (kind: "folder" | "zip") => {
     const activeInput = kind === "folder" ? folderInputRef.current : zipInputRef.current;
@@ -403,22 +410,48 @@ export function QuickReportApp() {
       activeInput.value = "";
     }
 
-    setPendingSourceSelection(kind);
+    const openingMessage = kind === "folder" ? "Opening SD-CARD folder..." : "Opening ZIP file...";
+    const previousStatusMessage = statusMessage;
+    const clearPendingSelection = () => {
+      setPendingSourceSelection((current) => (current === kind ? null : current));
+      setIsSourceLoading(false);
+      setStatusMessage((current) => (current === openingMessage ? previousStatusMessage : current));
+    };
+
+    flushSync(() => {
+      setPendingSourceSelection(kind);
+      setIsSourceLoading(true);
+      setStatusMessage(openingMessage);
+    });
+
     const attemptId = sourceSelectionAttemptRef.current + 1;
     sourceSelectionAttemptRef.current = attemptId;
+    const onInputCancel = () => {
+      if (sourceSelectionAttemptRef.current !== attemptId) return;
+      sourceSelectionAttemptRef.current += 1;
+      clearPendingSelection();
+    };
+    activeInput?.addEventListener("cancel", onInputCancel, { once: true });
 
     const onFocusBack = () => {
       const startedAt = Date.now();
       const waitForSelection = () => {
-        if (sourceSelectionAttemptRef.current !== attemptId) return;
+        if (sourceSelectionAttemptRef.current !== attemptId) {
+          activeInput?.removeEventListener("cancel", onInputCancel);
+          return;
+        }
         const input = kind === "folder" ? folderInputRef.current : zipInputRef.current;
         const hasChosenFiles = (input?.files?.length ?? 0) > 0;
-        if (hasChosenFiles) return;
+        if (hasChosenFiles) {
+          activeInput?.removeEventListener("cancel", onInputCancel);
+          return;
+        }
 
         // Use a longer timeout so large SD-card selections do not briefly clear
         // the pending selection state before onChange starts.
         if (Date.now() - startedAt >= SOURCE_SELECTION_CANCEL_TIMEOUT_MS) {
-          setPendingSourceSelection((current) => (current === kind ? null : current));
+          activeInput?.removeEventListener("cancel", onInputCancel);
+          clearPendingSelection();
           return;
         }
         window.setTimeout(waitForSelection, 120);

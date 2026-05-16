@@ -173,6 +173,9 @@ export function filterDatedFolderScanTargets<T extends { date: Date }>(targets: 
 function detectLikelyFamilyId(files: Array<{ path: string }>): string | null {
   const normalizedFiles = files.map((file) => ({ normalizedPath: normalizePath(file.path) }));
   if (hasBmcBundleStructure(normalizedFiles)) return "bmc";
+  if (normalizedFiles.some((file) => /(?:^|\/)(?:therapy\/)?(?:record|config)\//i.test(file.normalizedPath))) {
+    return "resvent";
+  }
   const ranking = rankParserFamilies(normalizedFiles);
   return ranking[0]?.id ?? null;
 }
@@ -327,6 +330,7 @@ export function filterSourceFilesToRecentWindow(files: SourceFile[], lookbackDay
     .map((entry) => entry.file);
 
   const outputFiles = kept.length > 0 ? kept : relevantFiles;
+  const outputFileSet = new Set(outputFiles);
   const latestDateIso = toIsoDate(latestDatedFile.date);
 
   return {
@@ -335,7 +339,7 @@ export function filterSourceFilesToRecentWindow(files: SourceFile[], lookbackDay
     filteredOutCount:
       files.length - outputFiles.length,
     filteredOutBytes:
-      files.reduce((sum, file) => (outputFiles.includes(file) ? sum : sum + file.size), 0),
+      files.reduce((sum, file) => (outputFileSet.has(file) ? sum : sum + file.size), 0),
     latestDateIso,
     hadDatedFiles: true
   };
@@ -412,13 +416,14 @@ export function filterFolderEntriesToRecentWindow<T extends { relativePath: stri
     .map((item) => item.entry);
 
   const outputEntries = kept.length > 0 ? kept : relevantEntries;
+  const outputEntrySet = new Set(outputEntries);
   const latestDateIso = toIsoDate(latestDatedEntry.date);
 
   return {
     entries: outputEntries,
     originalCount: entries.length,
     filteredOutCount: entries.length - outputEntries.length,
-    filteredOutBytes: entries.reduce((sum, entry) => (outputEntries.includes(entry) ? sum : sum + entry.size), 0),
+    filteredOutBytes: entries.reduce((sum, entry) => (outputEntrySet.has(entry) ? sum : sum + entry.size), 0),
     latestDateIso,
     hadDatedFiles: true
   };

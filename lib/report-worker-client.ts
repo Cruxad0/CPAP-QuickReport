@@ -43,6 +43,7 @@ type PendingRequest =
     };
 
 export class ReportWorkerClient {
+  private static readonly FILE_LIST_SCAN_CHUNK_SIZE = 512;
   private static readonly FOLDER_ENTRY_SCAN_CHUNK_SIZE = 32;
   private static readonly FOLDER_TRANSFER_CHUNK_SIZE = 12;
   private static readonly FOLDER_TRANSFER_YIELD_EVERY = 1;
@@ -70,25 +71,21 @@ export class ReportWorkerClient {
     files: FileList | readonly File[],
     options: { importLookbackDays: number; parseLookbackDays: number; onProgress?: (progress: ParseProgress) => void }
   ): Promise<LoadSourceResult> {
-    const deferredEntries: DeferredFolderSourceEntry[] = [];
-    for (let i = 0; i < files.length; i += 1) {
-      const file = files[i];
-      if (!file) continue;
-      deferredEntries.push({
-        kind: "file",
-        name: file.name,
-        size: file.size,
-        relativePath: file.webkitRelativePath || file.name,
-        file
-      });
-    }
-
-    return await this.loadFolderEntries(deferredEntries, options);
+    const recentEntries = await this.buildRecentFileListEntries(files, options);
+    return await this.loadFolderEntriesInternal(recentEntries, options, true);
   }
 
   async loadFolderEntries(
     entries: readonly DeferredFolderSourceEntry[],
     options: { importLookbackDays: number; parseLookbackDays: number; onProgress?: (progress: ParseProgress) => void }
+  ): Promise<LoadSourceResult> {
+    return await this.loadFolderEntriesInternal(entries, options, false);
+  }
+
+  private async loadFolderEntriesInternal(
+    entries: readonly DeferredFolderSourceEntry[],
+    options: { importLookbackDays: number; parseLookbackDays: number; onProgress?: (progress: ParseProgress) => void },
+    entriesAlreadyFiltered: boolean
   ): Promise<LoadSourceResult> {
     const requestId = this.nextRequestId++;
     const promise = new Promise<LoadSourceResult>((resolve, reject) => {
@@ -100,7 +97,7 @@ export class ReportWorkerClient {
       });
     });
 
-    void this.postFolderLoadInChunks(requestId, entries, options).catch((error) => {
+    void this.postFolderLoadInChunks(requestId, entries, options, entriesAlreadyFiltered).catch((error) => {
       const pending = this.pending.get(requestId);
       if (!pending || pending.type !== "load-folder") return;
       this.pending.delete(requestId);
@@ -147,9 +144,10 @@ export class ReportWorkerClient {
   private async postFolderLoadInChunks(
     requestId: number,
     entries: readonly DeferredFolderSourceEntry[],
-    options: { importLookbackDays: number; parseLookbackDays: number; onProgress?: (progress: ParseProgress) => void }
+    options: { importLookbackDays: number; parseLookbackDays: number; onProgress?: (progress: ParseProgress) => void },
+    entriesAlreadyFiltered = false
   ) {
-    const recentEntries = await this.buildRecentFolderEntries(entries, options);
+    const recentEntries = entriesAlreadyFiltered ? entries : await this.buildRecentFolderEntries(entries, options);
     const transferableEntries = this.canTransferFolderEntries(recentEntries)
       ? recentEntries
       : await this.materializeFolderEntries(recentEntries, options.onProgress);
@@ -194,6 +192,63 @@ export class ReportWorkerClient {
       type: "load-folder-finish"
     };
     this.worker.postMessage(finishRequest);
+  }
+
+  private async buildRecentFileListEntries(
+    files: FileList | readonly File[],
+    options: { importLookbackDays: number; onProgress?: (progress: ParseProgress) => void }
+  ): Promise<DeferredFolderSourceEntry[]> {
+    const metadataEntries: FolderSourceMetaEntry[] = [];
+
+    for (let start = 0; start < files.length; start += ReportWorkerClient.FILE_LIST_SCAN_CHUNK_SIZE) {
+      const end = Math.min(start + ReportWorkerClient.FILE_LIST_SCAN_CHUNK_SIZE, files.length);
+      for (let i = start; i < end; i += 1) {
+        const file = files[i];
+        if (!file) continue;
+        metadataEntries.push({
+          index: i,
+          name: file.name,
+          size: file.size,
+          relativePath: file.webkitRelativePath || file.name
+        });
+      }
+
+      if (options.onProgress) {
+        options.onProgress({
+          phase: "scan",
+          detail: `Inspecting browser file list before recent-day filter... ${end}/${files.length}`,
+          percent: Math.min(2, Math.max(1, Math.round((end / Math.max(1, files.length)) * 2)))
+        });
+      }
+
+      await this.yieldToBrowser();
+    }
+
+    const filtered = filterFolderEntriesToRecentWindow(metadataEntries, options.importLookbackDays);
+    if (options.onProgress) {
+      options.onProgress({
+        phase: "scan",
+        detail:
+          filtered.filteredOutCount > 0
+            ? `Keeping recent ${options.importLookbackDays}-day files... ${filtered.entries.length}/${filtered.originalCount}`
+            : `Preparing recent SD-CARD files... ${filtered.entries.length}`,
+        percent: 2
+      });
+    }
+
+    return filtered.entries
+      .map<DeferredFolderSourceEntry | null>((entry) => {
+        const file = files[entry.index];
+        if (!file) return null;
+        return {
+          kind: "file",
+          name: file.name,
+          size: file.size,
+          relativePath: file.webkitRelativePath || file.name,
+          file
+        } satisfies DeferredFolderSourceEntry;
+      })
+      .filter((entry): entry is DeferredFolderSourceEntry => Boolean(entry));
   }
 
   private async buildRecentFolderEntries(
