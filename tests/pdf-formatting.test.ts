@@ -194,6 +194,26 @@ test("machine settings show BiPAP Vt target when present", () => {
   );
 });
 
+test("machine settings label auto BiPAP pressure bounds as EPAP and IPAP settings", () => {
+  assert.deepEqual(
+    machineSettingRows(
+      reportWithMachine({
+        mode: "VAuto",
+        pressureIsAuto: true,
+        pressureMin: "7 cmH2O",
+        pressureMax: "11 cmH2O"
+      })
+    ),
+    [
+      ["Device", "Data point not available"],
+      ["Mode", "VAuto"],
+      ["Min EPAP", "7.0 cmH2O"],
+      ["Max IPAP", "11.0 cmH2O"],
+      ["Pressure relief", "Data point not available"]
+    ]
+  );
+});
+
 test("respiratory rate row is only shown when a respiratory-rate value exists", () => {
   assert.equal(
     shouldDisplayRespiratoryRate({
@@ -363,7 +383,7 @@ test("BiPAP pressure warnings allow ten percent variance below settings", () => 
   );
 });
 
-test("therapy summary shows min and max pressure rows for auto BiPAP settings", () => {
+test("therapy summary shows min EPAP and max IPAP rows for auto BiPAP settings without mask pressure rows", () => {
   assert.deepEqual(
     therapyPressureRows(
       reportWithMachine({
@@ -384,10 +404,54 @@ test("therapy summary shows min and max pressure rows for auto BiPAP settings", 
       ["Avg IPAP", "10.6 cmH2O"],
       ["95th EPAP", "7.8 cmH2O"],
       ["Avg EPAP", "7.1 cmH2O"],
-      ["95th Mask Pressure", "11.4 cmH2O"],
-      ["Avg Mask Pressure", "10.1 cmH2O"],
-      ["Min Pressure", "7.0 cmH2O"],
-      ["Max Pressure", "11.0 cmH2O"]
+      ["Min EPAP", "7.0 cmH2O"],
+      ["Max IPAP", "11.0 cmH2O"]
+    ]
+  );
+});
+
+test("therapy summary shows mirrored auto BiPAP IPAP and EPAP metric rows when the card provides them", () => {
+  assert.deepEqual(
+    therapyPressureRows(
+      reportWithMachine({
+        mode: "VAuto",
+        pressureIsAuto: true,
+        pressureMin: "7 cmH2O",
+        pressureMax: "11 cmH2O",
+        epapAvg: 9.7015,
+        epap95th: 10.92,
+        ipapAvg: 9.7015,
+        ipap95th: 10.92,
+        pressureAvg: 9.6831,
+        pressure95th: 10.92
+      })
+    ),
+    [
+      ["95th IPAP", "10.9 cmH2O"],
+      ["Avg IPAP", "9.7 cmH2O"],
+      ["95th EPAP", "10.9 cmH2O"],
+      ["Avg EPAP", "9.7 cmH2O"],
+      ["Min EPAP", "7.0 cmH2O"],
+      ["Max IPAP", "11.0 cmH2O"]
+    ]
+  );
+});
+
+test("therapy summary does not show unavailable BiPAP metric rows when only mask pressure exists", () => {
+  assert.deepEqual(
+    therapyPressureRows(
+      reportWithMachine({
+        mode: "VAuto",
+        pressureIsAuto: true,
+        pressureMin: "7 cmH2O",
+        pressureMax: "11 cmH2O",
+        pressureAvg: 10.08,
+        pressure95th: 11.4
+      })
+    ),
+    [
+      ["Min EPAP", "7.0 cmH2O"],
+      ["Max IPAP", "11.0 cmH2O"]
     ]
   );
 });

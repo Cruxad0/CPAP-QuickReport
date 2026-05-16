@@ -799,8 +799,8 @@ export function machineSettingRows(report: QuickReportMetrics): TableRow[] {
   const derivedRange = extractPressureRangeValues(report.machine.pressure);
 
   if (isBiPap && isAutoBiPap) {
-    rows.push(["Min pressure", normalizePressureDisplay(report.machine.pressureMin ?? derivedRange?.min)]);
-    rows.push(["Max pressure", normalizePressureDisplay(report.machine.pressureMax ?? derivedRange?.max)]);
+    rows.push(["Min EPAP", normalizePressureDisplay(report.machine.pressureMin ?? derivedRange?.min)]);
+    rows.push(["Max IPAP", normalizePressureDisplay(report.machine.pressureMax ?? derivedRange?.max)]);
     if (shouldDisplayRespiratoryRate(report.machine)) {
       rows.push(["Respiratory rate (RR)", normalizeRespiratoryRateDisplay(report.machine.respiratoryRate)]);
     }
@@ -867,33 +867,25 @@ export function therapyPressureRows(report: QuickReportMetrics): TableRow[] {
     const autoBilevelMinimumSetting = numericSettingValue(report.machine.pressureMin ?? report.machine.epap ?? derivedRange?.min);
     const ipapMinimumSetting = isAutoBiPap ? autoBilevelMinimumSetting : numericSettingValue(report.machine.ipap);
     const epapMinimumSetting = isAutoBiPap ? autoBilevelMinimumSetting : numericSettingValue(report.machine.epap);
-    rows.push(metricRow("95th IPAP", pressureMetricText(report.machine.ipap95th), isPressureMetricBelowSetting(report.machine.ipap95th, ipapMinimumSetting)));
-    rows.push(metricRow("Avg IPAP", pressureMetricText(report.machine.ipapAvg), isPressureMetricBelowSetting(report.machine.ipapAvg, ipapMinimumSetting)));
-    rows.push(metricRow("95th EPAP", pressureMetricText(report.machine.epap95th), isPressureMetricBelowSetting(report.machine.epap95th, epapMinimumSetting)));
-    rows.push(metricRow("Avg EPAP", pressureMetricText(report.machine.epapAvg), isPressureMetricBelowSetting(report.machine.epapAvg, epapMinimumSetting)));
-    if (isAutoBiPap && (typeof report.machine.pressure95th === "number" || typeof report.machine.pressureAvg === "number")) {
-      rows.push(
-        metricRow(
-          "95th Mask Pressure",
-          pressureMetricText(report.machine.pressure95th),
-          isPressureMetricBelowSetting(report.machine.pressure95th, minimumPressureSetting)
-        )
-      );
-      rows.push(
-        metricRow(
-          "Avg Mask Pressure",
-          pressureMetricText(report.machine.pressureAvg),
-          isPressureMetricBelowSetting(report.machine.pressureAvg, minimumPressureSetting)
-        )
-      );
+    if (typeof report.machine.ipap95th === "number") {
+      rows.push(metricRow("95th IPAP", pressureMetricText(report.machine.ipap95th), isPressureMetricBelowSetting(report.machine.ipap95th, ipapMinimumSetting)));
+    }
+    if (typeof report.machine.ipapAvg === "number") {
+      rows.push(metricRow("Avg IPAP", pressureMetricText(report.machine.ipapAvg), isPressureMetricBelowSetting(report.machine.ipapAvg, ipapMinimumSetting)));
+    }
+    if (typeof report.machine.epap95th === "number") {
+      rows.push(metricRow("95th EPAP", pressureMetricText(report.machine.epap95th), isPressureMetricBelowSetting(report.machine.epap95th, epapMinimumSetting)));
+    }
+    if (typeof report.machine.epapAvg === "number") {
+      rows.push(metricRow("Avg EPAP", pressureMetricText(report.machine.epapAvg), isPressureMetricBelowSetting(report.machine.epapAvg, epapMinimumSetting)));
     }
   } else {
     rows.push(metricRow("95th Pressure", pressureMetricText(report.machine.pressure95th), isPressureMetricBelowSetting(report.machine.pressure95th, minimumPressureSetting)));
     rows.push(metricRow("Avg Pressure", pressureMetricText(report.machine.pressureAvg), isPressureMetricBelowSetting(report.machine.pressureAvg, minimumPressureSetting)));
   }
   if (!isBiPap || isAutoBiPap) {
-    rows.push(["Min Pressure", pressureSettingText(minPressure)]);
-    rows.push(["Max Pressure", pressureSettingText(maxPressure)]);
+    rows.push([isBiPap ? "Min EPAP" : "Min Pressure", pressureSettingText(minPressure)]);
+    rows.push([isBiPap ? "Max IPAP" : "Max Pressure", pressureSettingText(maxPressure)]);
   }
   return rows;
 }
