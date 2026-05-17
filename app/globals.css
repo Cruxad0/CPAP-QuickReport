@@ -568,13 +568,6 @@ textarea {
   white-space: nowrap;
 }
 
-.affiliate-intro {
-  margin: 0.78rem 0 0;
-  color: #49677b;
-  font-size: 0.84rem;
-  line-height: 1.35;
-}
-
 .card-reader-list {
   display: grid;
   gap: 0.82rem;

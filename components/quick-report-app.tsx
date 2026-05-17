@@ -1202,9 +1202,6 @@ export function QuickReportApp() {
               </span>
               <span className="affiliate-summary-pill">3 options</span>
             </summary>
-            <p className="affiliate-intro">
-              These readers are arranged by connector type so staff can quickly match the reader to the computer at hand.
-            </p>
             <div className="card-reader-list">
               {CARD_READER_PRODUCTS.map((product) => (
                 <a
