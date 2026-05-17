@@ -147,8 +147,28 @@ test("BiPAP ventilation rows show Vt and RR metrics when available", () => {
       ["Avg Vt (tidal volume)", "460.0 mL", true],
       ["Max Vt (tidal volume)", "890.0 mL for 2.0 min"],
       ["Min RR", "8.2 bpm", true],
-      ["Avg RR", "13.3 bpm", true],
+      ["Avg RR", "13.3 bpm"],
       ["95th RR", "22.0 bpm"]
+    ]
+  );
+});
+
+test("BiPAP ST ventilation rows compare RR metrics to the backup rate", () => {
+  assert.deepEqual(
+    bipapVentilationRows(
+      reportWithMachine({
+        device: "AirCurve 10 ST",
+        mode: "BiPAP",
+        respiratoryRate: "15 bpm",
+        respiratoryRateMin: 14.24,
+        respiratoryRateAvg: 15.04,
+        respiratoryRate95th: 19.76
+      })
+    ),
+    [
+      ["Min RR", "14.2 bpm", true],
+      ["Avg RR", "15.0 bpm"],
+      ["95th RR", "19.8 bpm"]
     ]
   );
 });

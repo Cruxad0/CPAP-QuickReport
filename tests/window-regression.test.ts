@@ -212,6 +212,42 @@ test("explicit clinical end day label is included in noon-to-noon report windows
   assert.equal(metrics.avgUsageHours, 7);
 });
 
+test("auto BiPAP summary max leak gets a fallback duration when it matches the 60-minute leak value", () => {
+  const leakBucket = {
+    ...bucket(7),
+    leakMax: 54
+  };
+  const prepared: PreparedQuickReportSource = {
+    selectedLoader: "Fixture Loader",
+    machine: {
+      mode: "VAuto",
+      pressureIsAuto: true,
+      epap: "7 cmH2O",
+      ipap: "11 cmH2O",
+      pressureMin: "7 cmH2O",
+      pressureMax: "11 cmH2O"
+    },
+    warnings: [],
+    latestClinicalDayIso: "2026-03-25",
+    maxLookbackDays: 90,
+    dayBuckets: {
+      "2026-03-25": leakBucket
+    }
+  };
+
+  const metrics = buildQuickReportMetricsFromPreparedSource(prepared, {
+    patientName: "Fixture Patient",
+    dateOfBirthIso: "1970-01-01",
+    physicianName: "",
+    lookbackDays: 1,
+    windowEndClinicalDayIso: "2026-03-26"
+  });
+
+  assert.equal(metrics.maxLeak, 54);
+  assert.equal(metrics.maxLeak60m, 54);
+  assert.equal(metrics.maxLeakMinutes, 60);
+});
+
 test("latest completed noon-to-noon day does not look skipped in displayed range", () => {
   const prepared: PreparedQuickReportSource = {
     selectedLoader: "Fixture Loader",

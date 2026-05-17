@@ -23,6 +23,7 @@ const THERAPY_MIN_FONT_SIZE = 10;
 const THERAPY_MAX_FONT_SIZE = 12;
 const REPORT_METRIC_DECIMALS = 1;
 const PRESSURE_SETTING_WARNING_TOLERANCE = 0.1;
+const RESPIRATORY_RATE_GENERAL_WARNING_THRESHOLD = 10;
 
 type PdfLibModule = {
   PDFDocument: {
@@ -702,6 +703,29 @@ function isMetricBelowSetting(value: number | null | undefined, setting: number 
   return Number(value.toFixed(REPORT_METRIC_DECIMALS)) < Number(setting.toFixed(REPORT_METRIC_DECIMALS));
 }
 
+function normalizeModeText(value: string | undefined): string {
+  return (value ?? "")
+    .toLowerCase()
+    .replace(/[\/_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isBipapStMode(machine: QuickReportMetrics["machine"]): boolean {
+  const text = normalizeModeText(`${machine.mode ?? ""} ${machine.device ?? ""}`);
+  if (!text) return false;
+  return /\b(?:s t|st|st a|st30|ast30|30sta)\b/.test(text);
+}
+
+function isRespiratoryRateBelowWarningThreshold(value: number | null | undefined, machine: QuickReportMetrics["machine"]): boolean {
+  if (typeof value !== "number" || !Number.isFinite(value)) return false;
+
+  if (isMetricBelowSetting(value, RESPIRATORY_RATE_GENERAL_WARNING_THRESHOLD)) return true;
+
+  const setting = isBipapStMode(machine) ? numericSettingValue(machine.respiratoryRate) : null;
+  return isMetricBelowSetting(value, setting);
+}
+
 function isPressureMetricBelowSetting(value: number | null | undefined, setting: number | null): boolean {
   if (typeof value !== "number" || !Number.isFinite(value) || typeof setting !== "number" || !Number.isFinite(setting)) {
     return false;
@@ -894,7 +918,6 @@ export function bipapVentilationRows(report: QuickReportMetrics): TableRow[] {
   if (classifyTherapyMode(report.machine) !== "BiPAP") return [];
 
   const rows: TableRow[] = [];
-  const respiratoryRateSetting = numericSettingValue(report.machine.respiratoryRate);
   const tidalVolumeSetting = numericTidalVolumeSettingLiters(report.machine.tidalVolume);
   if (typeof report.machine.tidalVolumeMin === "number") {
     rows.push(
@@ -933,13 +956,31 @@ export function bipapVentilationRows(report: QuickReportMetrics): TableRow[] {
     );
   }
   if (typeof report.machine.respiratoryRateMin === "number") {
-    rows.push(metricRow("Min RR", respiratoryRateMetricText(report.machine.respiratoryRateMin), isMetricBelowSetting(report.machine.respiratoryRateMin, respiratoryRateSetting)));
+    rows.push(
+      metricRow(
+        "Min RR",
+        respiratoryRateMetricText(report.machine.respiratoryRateMin),
+        isRespiratoryRateBelowWarningThreshold(report.machine.respiratoryRateMin, report.machine)
+      )
+    );
   }
   if (typeof report.machine.respiratoryRateAvg === "number") {
-    rows.push(metricRow("Avg RR", respiratoryRateMetricText(report.machine.respiratoryRateAvg), isMetricBelowSetting(report.machine.respiratoryRateAvg, respiratoryRateSetting)));
+    rows.push(
+      metricRow(
+        "Avg RR",
+        respiratoryRateMetricText(report.machine.respiratoryRateAvg),
+        isRespiratoryRateBelowWarningThreshold(report.machine.respiratoryRateAvg, report.machine)
+      )
+    );
   }
   if (typeof report.machine.respiratoryRate95th === "number") {
-    rows.push(metricRow("95th RR", respiratoryRateMetricText(report.machine.respiratoryRate95th), isMetricBelowSetting(report.machine.respiratoryRate95th, respiratoryRateSetting)));
+    rows.push(
+      metricRow(
+        "95th RR",
+        respiratoryRateMetricText(report.machine.respiratoryRate95th),
+        isRespiratoryRateBelowWarningThreshold(report.machine.respiratoryRate95th, report.machine)
+      )
+    );
   }
   return rows;
 }

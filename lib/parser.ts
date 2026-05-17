@@ -2315,6 +2315,13 @@ function cloneMachineSettings(machine: QuickReportMetrics["machine"]): QuickRepo
   return { ...machine };
 }
 
+function isAutoBiPapReportMachine(machine: QuickReportMetrics["machine"]): boolean {
+  return (
+    classifyTherapyMode(machine) === "BiPAP" &&
+    (machine.pressureIsAuto === true || isAutoBiPapLikeMode(machine.mode) || Boolean(machine.pressureMin || machine.pressureMax))
+  );
+}
+
 function buildDayBucketsFromRecordsAndLeaks(
   dedupedRecords: ParsedRecord[],
   leakStatsByDay: Map<string, LeakStats>,
@@ -3596,6 +3603,7 @@ export function buildQuickReportMetricsFromPreparedSource(
   const maxLeak30m = leakMax30mValues.length > 0 ? Math.max(...leakMax30mValues) : rawMaxLeak;
   const maxLeak60m = leakMax60mValues.length > 0 ? Math.max(...leakMax60mValues) : rawMaxLeak;
   const maxLeak = rawMaxLeak;
+  const isAutoBiPapReport = isAutoBiPapReportMachine(machine);
   const observedMaxLeakMinutes =
     maxLeak === null
       ? null
@@ -3607,7 +3615,11 @@ export function buildQuickReportMetricsFromPreparedSource(
       ? 60
       : maxLeak !== null && maxLeak30m !== null && leakMax30mValues.length > 0 && sameLeakMetricValue(maxLeak, maxLeak30m)
         ? 30
-        : null;
+        : isAutoBiPapReport && maxLeak !== null && maxLeak60m !== null && sameLeakMetricValue(maxLeak, maxLeak60m)
+          ? 60
+          : isAutoBiPapReport && maxLeak !== null && maxLeak30m !== null && sameLeakMetricValue(maxLeak, maxLeak30m)
+            ? 30
+            : null;
   const maxLeakMinutes = observedMaxLeakMinutes ?? maxLeakWindowMinutes;
   const observedSustainedLeakCandidate =
     sustainedLeakCandidates.sort((a, b) => b.minutes - a.minutes || b.leak - a.leak)[0] ?? null;
