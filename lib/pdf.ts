@@ -808,6 +808,18 @@ function shouldDisplayRampPressure(machine: QuickReportMetrics["machine"]): bool
   return Boolean(machine.rampPressure?.trim()) && !isRampOff(machine);
 }
 
+function pressureReliefSettingRow(value: string | null | undefined): TableRow {
+  const text = value?.trim();
+  if (!text) return ["Pressure relief", NO_DATA_FALLBACK];
+
+  const pressureSupport = text.match(/^ps\s*:?\s*(.+)$/i);
+  if (pressureSupport) {
+    return ["Pressure support", pressureSupport[1].trim() || NO_DATA_FALLBACK];
+  }
+
+  return ["Pressure relief", text];
+}
+
 export function machineSettingRows(report: QuickReportMetrics): TableRow[] {
   const rows: TableRow[] = [
     ["Device", textValue(report.machine.device)],
@@ -854,7 +866,7 @@ export function machineSettingRows(report: QuickReportMetrics): TableRow[] {
     rows.push(["Ramp pressure", normalizePressureDisplay(report.machine.rampPressure)]);
   }
 
-  rows.push(["Pressure relief", textValue(report.machine.pressureRelief)]);
+  rows.push(pressureReliefSettingRow(report.machine.pressureRelief));
   return rows;
 }
 

@@ -234,6 +234,27 @@ test("machine settings label auto BiPAP pressure bounds as EPAP and IPAP setting
   );
 });
 
+test("machine settings label PS as pressure support instead of pressure relief", () => {
+  assert.deepEqual(
+    machineSettingRows(
+      reportWithMachine({
+        mode: "VAuto",
+        pressureIsAuto: true,
+        pressureMin: "7 cmH2O",
+        pressureMax: "11 cmH2O",
+        pressureRelief: "PS: 0 cmH2O"
+      })
+    ),
+    [
+      ["Device", "Data point not available"],
+      ["Mode", "VAuto"],
+      ["Min EPAP", "7.0 cmH2O"],
+      ["Max IPAP", "11.0 cmH2O"],
+      ["Pressure support", "0 cmH2O"]
+    ]
+  );
+});
+
 test("respiratory rate row is only shown when a respiratory-rate value exists", () => {
   assert.equal(
     shouldDisplayRespiratoryRate({
