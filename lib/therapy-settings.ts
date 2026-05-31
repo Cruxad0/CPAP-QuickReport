@@ -5,6 +5,8 @@ export interface TherapySettingsSnapshotInput {
   pressureMax?: string | number | null;
   epap?: string | number | null;
   ipap?: string | number | null;
+  // Accepted for loader compatibility, but intentionally ignored by the
+  // report-window setting guard. Availability should only track pressure changes.
   respiratoryRate?: string | number | null;
   tidalVolume?: string | number | null;
   pressureRelief?: string | number | null;
@@ -53,9 +55,6 @@ export function buildTherapySettingsSnapshot(input: TherapySettingsSnapshotInput
   const pressureMax = cleanSettingValue(input.pressureMax);
   const epap = cleanSettingValue(input.epap);
   const ipap = cleanSettingValue(input.ipap);
-  const respiratoryRate = cleanSettingValue(input.respiratoryRate);
-  const tidalVolume = cleanSettingValue(input.tidalVolume);
-  const pressureRelief = cleanSettingValue(input.pressureRelief);
 
   const parts: Array<[string, string]> = [];
   if (mode) parts.push(["mode", mode]);
@@ -64,9 +63,6 @@ export function buildTherapySettingsSnapshot(input: TherapySettingsSnapshotInput
   if (pressureMax) parts.push(["pressureMax", pressureMax]);
   if (epap) parts.push(["epap", epap]);
   if (ipap) parts.push(["ipap", ipap]);
-  if (respiratoryRate) parts.push(["respiratoryRate", respiratoryRate]);
-  if (tidalVolume) parts.push(["tidalVolume", tidalVolume]);
-  if (pressureRelief) parts.push(["pressureRelief", pressureRelief]);
 
   if (parts.length === 0) return null;
 
@@ -76,9 +72,6 @@ export function buildTherapySettingsSnapshot(input: TherapySettingsSnapshotInput
   if (ipap) detailParts.push(`IPAP ${ipap}`);
   if (!epap && !ipap && pressureRange) detailParts.push(pressureRange);
   else if (!epap && !ipap && pressure) detailParts.push(pressure);
-  if (respiratoryRate) detailParts.push(`RR ${respiratoryRate}`);
-  if (tidalVolume) detailParts.push(`Vt ${tidalVolume}`);
-  if (pressureRelief) detailParts.push(pressureRelief);
 
   const label = [mode ?? "Therapy", detailParts.join(" / ")].filter(Boolean).join(" ").trim();
   const signature = parts

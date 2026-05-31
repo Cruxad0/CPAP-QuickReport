@@ -4,6 +4,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { buildQuickReportMetricsFromPreparedSource } from "../lib/parser";
+import { buildTherapySettingsSnapshot } from "../lib/therapy-settings";
 import type { PreparedQuickReportSource, PreparedDayBucket } from "../lib/types";
 
 function bucket(usageHours: number): PreparedDayBucket {
@@ -79,6 +80,12 @@ function therapyBuckets(
       return [addIsoDays(startIso, idx), bucketWithTherapy(7, settings.signature, settings.label)];
     })
   );
+}
+
+function pressureSnapshot(input: Parameters<typeof buildTherapySettingsSnapshot>[0]): { signature: string; label: string } {
+  const snapshot = buildTherapySettingsSnapshot(input);
+  assert.ok(snapshot);
+  return snapshot;
 }
 
 function runLocalAnchorFixture(
@@ -433,6 +440,59 @@ test("90-day APAP reports contract after an auto-pressure range change", () => {
   assert.equal(metrics.daysWithUsage, 45);
   assert.ok(metrics.warnings.some((warning) => warning.includes("Therapy settings changed within the 90-day report window")));
   assert.ok(metrics.warnings.some((warning) => warning.includes("APAP 6-15 cmH2O from February 7, 2026 forward")));
+});
+
+test("90-day APAP reports stay available when only pressure relief changes", () => {
+  const eprOff = pressureSnapshot({
+    mode: "APAP",
+    pressureMin: "6 cmH2O",
+    pressureMax: "15 cmH2O",
+    pressureRelief: "EPR: Off"
+  });
+  const eprOn = pressureSnapshot({
+    mode: "APAP",
+    pressureMin: "6 cmH2O",
+    pressureMax: "15 cmH2O",
+    pressureRelief: "EPR: On 3"
+  });
+  const psChanged = pressureSnapshot({
+    mode: "APAP",
+    pressureMin: "6 cmH2O",
+    pressureMax: "15 cmH2O",
+    pressureRelief: "PS: 4 cmH2O"
+  });
+  assert.equal(eprOff.signature, eprOn.signature);
+  assert.equal(eprOff.signature, psChanged.signature);
+
+  const prepared: PreparedQuickReportSource = {
+    selectedLoader: "Fixture Loader",
+    machine: {
+      mode: "APAP",
+      pressureIsAuto: true,
+      pressureMin: "6 cmH2O",
+      pressureMax: "15 cmH2O",
+      pressureRelief: "EPR: On 3"
+    },
+    warnings: [],
+    latestClinicalDayIso: "2026-03-23",
+    maxLookbackDays: 90,
+    dayBuckets: therapyBuckets("2025-12-24", 90, 72, eprOff, eprOn)
+  };
+
+  const metrics = buildQuickReportMetricsFromPreparedSource(prepared, {
+    patientName: "Fixture Patient",
+    dateOfBirthIso: "1970-01-01",
+    physicianName: "",
+    lookbackDays: 90,
+    windowEndClinicalDayIso: "2026-03-24"
+  });
+
+  assert.equal(metrics.dateRangeStart, "December 24, 2025");
+  assert.equal(metrics.dateRangeEnd, "March 23, 2026");
+  assert.equal(metrics.daysInWindow, 90);
+  assert.equal(metrics.daysWithData, 90);
+  assert.equal(metrics.daysWithUsage, 90);
+  assert.ok(!metrics.warnings.some((warning) => warning.includes("Therapy settings changed within the 90-day report window")));
 });
 
 test("90-day BiPAP reports contract to the latest bilevel setting period after a therapy change", () => {
