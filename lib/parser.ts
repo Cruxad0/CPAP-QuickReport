@@ -457,8 +457,10 @@ function buildImportedTherapyChangeWarning(dayMap: Map<string, DayBucket>, lookb
   const distinctSignatures = new Set(entries.map((entry) => entry.signature));
   if (distinctSignatures.size <= 1) return null;
 
-  const summary = summarizeTherapySettingsRuns(buildTherapySettingsRuns(entries));
-  return `Therapy settings changed within the imported ${lookbackDays}-day history (${summary}). Generated reports will use the most recent contiguous setting period for each date range to avoid mixing therapy settings.`;
+  const latestRun = buildTherapySettingsRuns(entries).at(-1);
+  if (!latestRun) return null;
+
+  return `Therapy settings changed during the imported ${lookbackDays}-day history. Reports use the latest settings period: ${latestRun.label} since ${formatDateHuman(latestRun.startIso)}.`;
 }
 
 function applyTherapySettingsWindowGuard(

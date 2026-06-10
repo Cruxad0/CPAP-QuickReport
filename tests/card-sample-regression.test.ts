@@ -425,6 +425,13 @@ maybeLocalAirSense11CpapTest("filtered AirSense 11 CPAP card preserves its recen
   assert.equal(metrics.daysInWindow, 7);
   assert.equal(metrics.daysWithData, 7);
   assert.equal(metrics.daysWithUsage, 7);
+  assert.ok(
+    prepared.warnings.some(
+      (warning) =>
+        warning ===
+        "Therapy settings changed during the imported 90-day history. Reports use the latest settings period: CPAP 11 cmH2O since June 1, 2026."
+    )
+  );
   assert.ok(metrics.warnings.some((warning) => warning.includes("CPAP 11 cmH2O from June 1, 2026 forward")));
 
   const result = await buildReportArtifactsFromPreparedSource({

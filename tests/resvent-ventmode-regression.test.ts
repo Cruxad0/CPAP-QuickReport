@@ -287,7 +287,7 @@ test("Resvent recent STAT VentMode changes warn and keep reports on the latest t
   });
 
   assert.equal(prepared.machine.mode, "APAP");
-  assert.ok(prepared.warnings.some((warning) => warning.includes("Therapy settings changed within the imported 90-day history")));
+  assert.ok(prepared.warnings.some((warning) => warning.includes("Therapy settings changed during the imported 90-day history")));
   assert.equal(metrics.dateRangeStart, "March 23, 2026");
   assert.equal(metrics.dateRangeEnd, "March 23, 2026");
   assert.equal(metrics.daysInWindow, 1);
