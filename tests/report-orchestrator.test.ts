@@ -88,3 +88,64 @@ test("generated report ranges anchor to the card's latest clinical day", async (
   assert.equal(result.reports[0].metrics.daysInWindow, 7);
   assert.equal(result.reports[0].metrics.daysWithData, 7);
 });
+
+test("the smallest requested report is generated for cards with less than seven days of history", async () => {
+  const prepared: PreparedQuickReportSource = {
+    selectedLoader: "Fixture Loader",
+    machine: {
+      mode: "APAP",
+      pressureIsAuto: true,
+      pressureMin: "8 cmH2O",
+      pressureMax: "12 cmH2O"
+    },
+    warnings: [],
+    latestClinicalDayIso: "2026-03-24",
+    maxLookbackDays: 90,
+    dayBuckets: {
+      "2026-03-19": bucket(1),
+      "2026-03-24": bucket(2)
+    }
+  };
+
+  const result = await buildReportArtifactsFromPreparedSource({
+    prepared,
+    patientName: "Fixture Patient",
+    dateOfBirthIso: "1970-01-01",
+    physicianName: "",
+    reportRanges: [90, 60, 30, 7]
+  });
+
+  assert.deepEqual(result.reports.map((report) => report.days), [7]);
+  assert.equal(result.largestAvailableRange, 7);
+  assert.equal(result.reports[0].metrics.daysInWindow, 6);
+  assert.equal(result.reports[0].metrics.daysWithData, 2);
+});
+
+test("summary history coverage preserves requested report windows with sparse usage", async () => {
+  const prepared: PreparedQuickReportSource = {
+    selectedLoader: "ResMed",
+    machine: {
+      mode: "CPAP",
+      pressure: "Fixed 8 cmH2O"
+    },
+    warnings: [],
+    historyStartClinicalDayIso: "2025-12-26",
+    latestClinicalDayIso: "2026-03-25",
+    maxLookbackDays: 90,
+    dayBuckets: {
+      "2026-03-25": bucket(1)
+    }
+  };
+
+  const result = await buildReportArtifactsFromPreparedSource({
+    prepared,
+    patientName: "Fixture Patient",
+    dateOfBirthIso: "1970-01-01",
+    physicianName: "",
+    reportRanges: [90, 7]
+  });
+
+  assert.deepEqual(result.reports.map((report) => report.days), [90, 7]);
+  assert.equal(result.reports[0].metrics.daysInWindow, 90);
+  assert.equal(result.reports[0].metrics.daysWithData, 1);
+});

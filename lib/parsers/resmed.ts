@@ -79,6 +79,11 @@ type ResMedLeakSignalStats = {
   sustainedLeakMinutes?: number;
 };
 
+type ParsedResMedStr = {
+  records: ParsedRecord[];
+  historyStartClinicalDayIso: string | null;
+};
+
 const RESMED_LARGE_LEAK_THRESHOLD_LPM = 30;
 
 function normalizeWhitespace(value: string): string {
@@ -767,11 +772,13 @@ function parseResMedStrEdf(
   candidate: FamilyParserCandidate,
   bytes: Uint8Array,
   machine: QuickReportMetrics["machine"]
-): ParsedRecord[] {
-  if (!/str\.edf(?:\.gz)?$/i.test(candidate.baseName)) return [];
+): ParsedResMedStr {
+  if (!/str\.edf(?:\.gz)?$/i.test(candidate.baseName)) {
+    return { records: [], historyStartClinicalDayIso: null };
+  }
 
   const edf = parseResMedEdf(bytes);
-  if (!edf) return [];
+  if (!edf) return { records: [], historyStartClinicalDayIso: null };
 
   const modeSignal = findSignal(edf, ["Mode"]);
   const usageAliases = ["Mask Dur", "Duration"];
@@ -1037,7 +1044,10 @@ function parseResMedStrEdf(
     }
   }
 
-  return records;
+  return {
+    records,
+    historyStartClinicalDayIso: new Date(edf.startDate.getTime() - 12 * 3600 * 1000).toISOString().slice(0, 10)
+  };
 }
 
 function parseResMedPldEdf(candidate: FamilyParserCandidate, bytes: Uint8Array): ParsedRecord | null {
@@ -1226,9 +1236,15 @@ export async function parseResMedFamily(context: FamilyParserContext, deps: Fami
       const inflated = await maybeGunzip(bytes);
 
       if (/str\.edf(?:\.gz)?$/i.test(candidate.baseName)) {
-        const records = parseResMedStrEdf(candidate, inflated, context.machine);
-        if (records.length > 0) {
-          context.records.push(...records);
+        const parsed = parseResMedStrEdf(candidate, inflated, context.machine);
+        if (
+          parsed.historyStartClinicalDayIso &&
+          (!context.historyStartClinicalDayIso || parsed.historyStartClinicalDayIso < context.historyStartClinicalDayIso)
+        ) {
+          context.historyStartClinicalDayIso = parsed.historyStartClinicalDayIso;
+        }
+        if (parsed.records.length > 0) {
+          context.records.push(...parsed.records);
         }
         continue;
       }

@@ -56,6 +56,7 @@ export async function buildReportArtifactsFromPreparedSource(
   const reports: GeneratedPdfArtifact[] = [];
   const totalRanges = reportRanges.length;
   const reportWindowEndClinicalDayIso = addIsoDays(prepared.latestClinicalDayIso, 1);
+  const smallestRequestedRange = reportRanges.length > 0 ? Math.min(...reportRanges) : null;
 
   for (let idx = 0; idx < totalRanges; idx += 1) {
     const days = reportRanges[idx];
@@ -82,7 +83,7 @@ export async function buildReportArtifactsFromPreparedSource(
         })
     });
 
-    if (metrics.daysInWindow < days) {
+    if (metrics.daysInWindow < days && days !== smallestRequestedRange) {
       emit(onProgress, {
         phase: "start",
         detail: `Skipping ${days}-day tab (only ${metrics.daysInWindow} days available)...`,

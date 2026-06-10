@@ -32,8 +32,8 @@
       }
     },
     {
-      "name": "Luna II sample card",
-      "path": "Card Samples/Luna2",
+      "name": "Short Luna II sample card",
+      "path": "Card Samples/Luna 2 -3",
       "sourceKind": "folder",
       "lookbackDays": 90,
       "anchorToLatestData": true,
@@ -41,10 +41,10 @@
         "selectedLoaderIncludes": "BMC",
         "mode": "APAP",
         "deviceIncludes": "G2S A20",
-        "pressureMin": "4 cmH2O",
-        "pressureMax": "15 cmH2O",
-        "minDaysWithData": 45,
-        "minDaysWithUsage": 43
+        "pressureMin": "7 cmH2O",
+        "pressureMax": "20 cmH2O",
+        "minDaysWithData": 2,
+        "minDaysWithUsage": 2
       }
     },
     {
@@ -91,6 +91,36 @@
         "pressure": "15 cmH2O",
         "minDaysWithData": 89,
         "minDaysWithUsage": 89
+      }
+    },
+    {
+      "name": "ResMed AirSense 10 short-history sample card",
+      "path": "Card Samples/Airsense 10",
+      "sourceKind": "folder",
+      "lookbackDays": 90,
+      "anchorToLatestData": true,
+      "expect": {
+        "selectedLoaderIncludes": "ResMed",
+        "mode": "CPAP",
+        "deviceIncludes": "AirSense 10 AutoSet",
+        "pressure": "Fixed 8 cmH2O",
+        "minDaysWithData": 2,
+        "minDaysWithUsage": 2
+      }
+    },
+    {
+      "name": "ResMed AirSense 11 CPAP sample card",
+      "path": "Card Samples/Airsense 11 CPAP2",
+      "sourceKind": "folder",
+      "lookbackDays": 90,
+      "anchorToLatestData": true,
+      "expect": {
+        "selectedLoaderIncludes": "ResMed",
+        "mode": "CPAP",
+        "deviceIncludes": "AirSense 11 CPAP",
+        "pressure": "Fixed 11 cmH2O",
+        "minDaysWithData": 7,
+        "minDaysWithUsage": 7
       }
     },
     {

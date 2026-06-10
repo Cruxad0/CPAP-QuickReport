@@ -14,6 +14,7 @@ export interface FamilyParserContext {
   machine: QuickReportMetrics["machine"];
   records: ParsedRecord[];
   sourceTimeZoneOffsetMinutes: number | null;
+  historyStartClinicalDayIso?: string | null;
   warnings: string[];
   onProgress?: (progress: ParseProgress) => void;
   progressStart: number;

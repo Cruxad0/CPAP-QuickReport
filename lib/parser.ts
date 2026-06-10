@@ -3213,6 +3213,7 @@ async function prepareQuickReportSourceInternal(request: PrepareQuickReportSourc
     machine,
     records,
     sourceTimeZoneOffsetMinutes,
+    historyStartClinicalDayIso: null as string | null,
     warnings,
     onProgress,
     progressStart: 70,
@@ -3310,6 +3311,7 @@ async function prepareQuickReportSourceInternal(request: PrepareQuickReportSourc
     machine: cloneMachineSettings(machine),
     sourceTimeZoneOffsetMinutes,
     warnings,
+    historyStartClinicalDayIso: familyParserContext.historyStartClinicalDayIso,
     latestClinicalDayIso: toIsoDate(latest),
     maxLookbackDays: normalizedLookbackDays,
     dayBuckets: Object.fromEntries(dayMap.entries())
@@ -3345,6 +3347,10 @@ export function buildQuickReportMetricsFromPreparedSource(
     let effectiveWindowStartIso = windowStartIso;
 
     const availableDayKeys = new Set(allDayEntries.map(([day]) => day).filter((day) => day < windowEndIso));
+    const historyStartClinicalDayIso = prepared.historyStartClinicalDayIso?.trim();
+    if (historyStartClinicalDayIso && historyStartClinicalDayIso < windowEndIso) {
+      availableDayKeys.add(historyStartClinicalDayIso);
+    }
     if (availableDayKeys.size > 0) {
       const earliestAvailableIso = [...availableDayKeys].sort((a, b) => a.localeCompare(b))[0];
       if (earliestAvailableIso > effectiveWindowStartIso) {

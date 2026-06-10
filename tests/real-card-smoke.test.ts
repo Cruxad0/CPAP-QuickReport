@@ -4,6 +4,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { buildQuickReportMetricsFromPreparedSource, prepareQuickReportSource } from "../lib/parser";
+import { buildReportArtifactsFromPreparedSource } from "../lib/report-orchestrator";
 import type { DataSourceKind } from "../lib/types";
 import { createSourceFilesFromDirectory } from "./helpers/fs-source-files";
 
@@ -136,6 +137,17 @@ test("real card smoke fixtures import end-to-end", async (t) => {
           `expected at least ${expectation.minDaysWithUsage} days with usage, got ${metrics.daysWithUsage}`
         );
       }
+
+      const reportResult = await buildReportArtifactsFromPreparedSource({
+        prepared,
+        patientName: "Fixture Patient",
+        dateOfBirthIso: "1970-01-01",
+        physicianName: "",
+        reportRanges: [7]
+      });
+      assert.equal(reportResult.reports.length, 1, "expected the card data to generate a 7-day report");
+      assert.equal(reportResult.largestAvailableRange, 7);
+      assert.ok(reportResult.reports[0].blob.size > 0, "generated PDF should not be empty");
     });
   }
 });

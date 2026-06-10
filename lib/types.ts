@@ -206,6 +206,7 @@ export interface PreparedQuickReportSource {
   machine: MachineSettings;
   sourceTimeZoneOffsetMinutes?: number | null;
   warnings: string[];
+  historyStartClinicalDayIso?: string | null;
   latestClinicalDayIso: string;
   maxLookbackDays: number;
   dayBuckets: Record<string, PreparedDayBucket>;

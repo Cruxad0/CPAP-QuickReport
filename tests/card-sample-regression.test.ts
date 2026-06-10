@@ -5,6 +5,9 @@ import test from "node:test";
 
 import { buildQuickReportMetricsFromPreparedSource, prepareQuickReportSource } from "../lib/parser";
 import { leakMetricRows } from "../lib/pdf";
+import { buildReportArtifactsFromPreparedSource } from "../lib/report-orchestrator";
+import { filterSourceFilesToRecentWindow, IMPORT_LOOKBACK_DAYS } from "../lib/source-files";
+import type { PreparedQuickReportSource } from "../lib/types";
 import { createSourceFilesFromDirectory } from "./helpers/fs-source-files";
 
 function nextClinicalDayIso(isoDay: string): string {
@@ -28,6 +31,38 @@ async function loadFixture(root: string, lookbackDays = 90) {
   return { prepared, metrics };
 }
 
+async function loadFilteredFixture(root: string, lookbackDays = 90) {
+  const files = await createSourceFilesFromDirectory(root);
+  const filtered = filterSourceFilesToRecentWindow(files, IMPORT_LOOKBACK_DAYS);
+  const prepared = await prepareQuickReportSource({
+    sourceKind: "folder",
+    files: filtered.files,
+    lookbackDays
+  });
+  const metrics = buildQuickReportMetricsFromPreparedSource(prepared, {
+    patientName: "Fixture Patient",
+    dateOfBirthIso: "1970-01-01",
+    physicianName: "",
+    lookbackDays,
+    windowEndClinicalDayIso: nextClinicalDayIso(prepared.latestClinicalDayIso)
+  });
+  return { filtered, prepared, metrics };
+}
+
+async function assertGeneratesSevenDayReport(prepared: PreparedQuickReportSource) {
+  const result = await buildReportArtifactsFromPreparedSource({
+    prepared,
+    patientName: "Fixture Patient",
+    dateOfBirthIso: "1970-01-01",
+    physicianName: "",
+    reportRanges: [7]
+  });
+
+  assert.equal(result.reports.length, 1, "expected the card data to generate a 7-day report");
+  assert.equal(result.largestAvailableRange, 7);
+  assert.ok(result.reports[0].blob.size > 0, "generated PDF should not be empty");
+}
+
 function assertApprox(actual: number | null, expected: number, tolerance: number, label: string) {
   assert.notEqual(actual, null, `${label} should be present`);
   assert.ok(Math.abs((actual as number) - expected) <= tolerance, `${label} expected ${expected} +/- ${tolerance}, got ${actual}`);
@@ -38,6 +73,7 @@ const LOCAL_RESVENT_BIPAP_ROOT = path.join(process.cwd(), "Card Samples", "Resve
 const RESVENT_THERAPY = path.join(process.cwd(), "Card Samples", "Resvent", "THERAPY");
 const LUNA2_ROOT = path.join(process.cwd(), "Card Samples", "Luna2");
 const LOCAL_LUNA2_DUPLICATE_ROOT = path.join(process.cwd(), "Card Samples", "Luna2 -2");
+const LOCAL_LUNA2_SHORT_ROOT = path.join(process.cwd(), "Card Samples", "Luna 2 -3");
 const DREAMSTATION_ROOT = path.join(process.cwd(), "Card Samples", "Dreamstation");
 const LOCAL_DREAMSTATION_ROOT = path.join(process.cwd(), "Card Samples", "Dreamstation2");
 const LOCAL_MIXED_DREAMSTATION_ROOT = path.join(process.cwd(), "Card Samples", "Dreamstation 2 -2");
@@ -48,12 +84,15 @@ const LOCAL_RESMED_AIRSENSE10_ROOT = path.join(process.cwd(), "Card Samples", "R
 const LOCAL_RESMED_CPAP_ROOT = path.join(process.cwd(), "Card Samples", "ResMed -2");
 const LOCAL_RESMED_AIRCURVE10_ROOT = path.join(process.cwd(), "Card Samples", "ResMed -3");
 const LOCAL_RESMED_AIRCURVE10_ST_ROOT = path.join(process.cwd(), "Card Samples", "ResMed -4");
+const LOCAL_RESMED_AIRSENSE10_SHORT_ROOT = path.join(process.cwd(), "Card Samples", "Airsense 10");
+const LOCAL_RESMED_AIRSENSE11_CPAP_ROOT = path.join(process.cwd(), "Card Samples", "Airsense 11 CPAP2");
 
 const maybeResventTest = existsSync(RESVENT_ROOT) ? test : test.skip;
 const maybeLocalResventBipapTest = existsSync(LOCAL_RESVENT_BIPAP_ROOT) ? test : test.skip;
 const maybeResventTherapyTest = existsSync(RESVENT_THERAPY) ? test : test.skip;
 const maybeLunaTest = existsSync(LUNA2_ROOT) ? test : test.skip;
-const maybeLocalLunaDuplicateTest = existsSync(LOCAL_LUNA2_DUPLICATE_ROOT) ? test : test.skip;
+const maybeLocalLunaDuplicateTest = existsSync(LUNA2_ROOT) && existsSync(LOCAL_LUNA2_DUPLICATE_ROOT) ? test : test.skip;
+const maybeLocalLunaShortTest = existsSync(LOCAL_LUNA2_SHORT_ROOT) ? test : test.skip;
 const maybeDreamstationTest = existsSync(DREAMSTATION_ROOT) ? test : test.skip;
 const maybeLocalDreamstationTest = existsSync(LOCAL_DREAMSTATION_ROOT) ? test : test.skip;
 const maybeLocalMixedDreamstationTest = existsSync(LOCAL_MIXED_DREAMSTATION_ROOT) ? test : test.skip;
@@ -64,6 +103,8 @@ const maybeLocalAirSense10Test = existsSync(LOCAL_RESMED_AIRSENSE10_ROOT) ? test
 const maybeLocalResMedCpapTest = existsSync(LOCAL_RESMED_CPAP_ROOT) ? test : test.skip;
 const maybeLocalAirCurve10Test = existsSync(LOCAL_RESMED_AIRCURVE10_ROOT) ? test : test.skip;
 const maybeLocalAirCurve10StTest = existsSync(LOCAL_RESMED_AIRCURVE10_ST_ROOT) ? test : test.skip;
+const maybeLocalAirSense10ShortTest = existsSync(LOCAL_RESMED_AIRSENSE10_SHORT_ROOT) ? test : test.skip;
+const maybeLocalAirSense11CpapTest = existsSync(LOCAL_RESMED_AIRSENSE11_CPAP_ROOT) ? test : test.skip;
 
 maybeResventTest("Resvent sample card preserves APAP config and metrics", async () => {
   const { prepared, metrics } = await loadFixture(RESVENT_ROOT);
@@ -165,6 +206,7 @@ maybeLunaTest("Luna II sample card preserves APAP settings and efficacy metrics"
   assertApprox(metrics.leak95th, 79.0145, 0.1, "95th leak");
   assertApprox(metrics.maxLeak30m, 100, 0.1, "30 min leak");
   assertApprox(metrics.maxLeak60m, 100, 0.1, "60 min leak");
+  await assertGeneratesSevenDayReport(prepared);
 });
 
 maybeLocalLunaDuplicateTest("local Luna II duplicate folder matches the primary Luna II sample", async () => {
@@ -178,6 +220,31 @@ maybeLocalLunaDuplicateTest("local Luna II duplicate folder matches the primary 
   assertApprox(duplicate.metrics.avgUsageHours, root.metrics.avgUsageHours as number, 0.0001, "avg usage");
   assertApprox(duplicate.metrics.avgAhi, root.metrics.avgAhi as number, 0.0001, "avg AHI");
   assertApprox(duplicate.metrics.avgLeak, root.metrics.avgLeak as number, 0.0001, "avg leak");
+});
+
+maybeLocalLunaShortTest("short Luna II card still generates an adjusted 7-day report", async () => {
+  const { prepared, metrics } = await loadFilteredFixture(LOCAL_LUNA2_SHORT_ROOT);
+  assert.equal(prepared.selectedLoader, "Apex / BMC / Luna");
+  assert.equal(prepared.machine.device, "G2S A20 (ES422A33105)");
+  assert.equal(prepared.machine.mode, "APAP");
+  assert.equal(prepared.machine.pressureMin, "7 cmH2O");
+  assert.equal(prepared.machine.pressureMax, "20 cmH2O");
+  assert.equal(prepared.latestClinicalDayIso, "2026-03-24");
+  assert.equal(metrics.daysInWindow, 6);
+  assert.equal(metrics.daysWithData, 2);
+  assert.equal(metrics.daysWithUsage, 2);
+  assert.equal(metrics.compliantDays, 0);
+  assertApprox(metrics.avgUsageHours, 0.025, 0.001, "avg usage");
+
+  const result = await buildReportArtifactsFromPreparedSource({
+    prepared,
+    patientName: "Fixture Patient",
+    dateOfBirthIso: "1970-01-01",
+    physicianName: ""
+  });
+  assert.deepEqual(result.reports.map((report) => report.days), [7]);
+  assert.equal(result.reports[0].metrics.daysInWindow, 6);
+  assert.ok(result.reports[0].blob.size > 0);
 });
 
 maybeDreamstationTest("DreamStation sample card preserves active-root APAP settings and leak metrics", async () => {
@@ -262,6 +329,7 @@ maybeAirSense11Test("ResMed AirSense 11 public fixture loads with active CPAP pr
   assertApprox(metrics.maxLeak30m, 52.8, 0.1, "30 min leak");
   assertApprox(metrics.maxLeak60m, 52.8, 0.1, "60 min leak");
   assert.ok(!metrics.warnings.includes("Leak metrics were not detected from the selected files."));
+  await assertGeneratesSevenDayReport(prepared);
 });
 
 maybeAirCurve10Test("ResMed AirCurve 10 VAuto public fixture loads with bilevel settings", async () => {
@@ -320,6 +388,53 @@ maybeLocalAirSense10Test("local ResMed AirSense 10 CPAP sample reports selected-
   assertApprox(metrics.maxLeak30m, 120, 0.02, "30 min leak");
   assertApprox(metrics.maxLeak60m, 120, 0.02, "60 min leak");
   assert.ok(!metrics.warnings.includes("Leak metrics were not detected from the selected files."));
+});
+
+maybeLocalAirSense10ShortTest("filtered AirSense 10 summary coverage generates all compliance report ranges", async () => {
+  const { prepared, metrics } = await loadFilteredFixture(LOCAL_RESMED_AIRSENSE10_SHORT_ROOT);
+  assert.equal(prepared.selectedLoader, "ResMed");
+  assert.equal(prepared.machine.device, "AirSense 10 AutoSet");
+  assert.equal(prepared.machine.mode, "CPAP");
+  assert.equal(prepared.machine.pressure, "Fixed 8 cmH2O");
+  assert.equal(prepared.historyStartClinicalDayIso, "2025-06-01");
+  assert.equal(prepared.latestClinicalDayIso, "2026-06-01");
+  assert.equal(metrics.daysInWindow, 90);
+  assert.equal(metrics.daysWithData, 2);
+  assert.equal(metrics.daysWithUsage, 2);
+  assert.equal(metrics.compliantDays, 0);
+
+  const result = await buildReportArtifactsFromPreparedSource({
+    prepared,
+    patientName: "Fixture Patient",
+    dateOfBirthIso: "1970-01-01",
+    physicianName: ""
+  });
+  assert.deepEqual(result.reports.map((report) => report.days), [90, 60, 30, 7]);
+  assert.ok(result.reports.every((report) => report.blob.size > 0));
+});
+
+maybeLocalAirSense11CpapTest("filtered AirSense 11 CPAP card preserves its recent pressure change and report", async () => {
+  const { prepared, metrics } = await loadFilteredFixture(LOCAL_RESMED_AIRSENSE11_CPAP_ROOT);
+  assert.equal(prepared.selectedLoader, "ResMed");
+  assert.equal(prepared.machine.device, "AirSense 11 CPAP");
+  assert.equal(prepared.machine.mode, "CPAP");
+  assert.equal(prepared.machine.pressure, "Fixed 11 cmH2O");
+  assert.equal(prepared.sourceTimeZoneOffsetMinutes, -300);
+  assert.equal(prepared.historyStartClinicalDayIso, "2025-04-05");
+  assert.equal(prepared.latestClinicalDayIso, "2026-06-07");
+  assert.equal(metrics.daysInWindow, 7);
+  assert.equal(metrics.daysWithData, 7);
+  assert.equal(metrics.daysWithUsage, 7);
+  assert.ok(metrics.warnings.some((warning) => warning.includes("CPAP 11 cmH2O from June 1, 2026 forward")));
+
+  const result = await buildReportArtifactsFromPreparedSource({
+    prepared,
+    patientName: "Fixture Patient",
+    dateOfBirthIso: "1970-01-01",
+    physicianName: ""
+  });
+  assert.deepEqual(result.reports.map((report) => report.days), [7]);
+  assert.ok(result.reports[0].blob.size > 0);
 });
 
 maybeLocalResMedCpapTest("local ResMed CPAP sample treats 95th leak as valid leak evidence", async () => {
