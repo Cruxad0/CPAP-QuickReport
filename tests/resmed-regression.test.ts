@@ -19,9 +19,18 @@ function writeAsciiField(target: Uint8Array, offset: number, length: number, val
   target.set(encoded, offset);
 }
 
-function createSyntheticResMedStrEdf(options: { leakUnit?: string; leakRawValues?: [number, number, number] } = {}): Uint8Array {
+function createSyntheticResMedStrEdf(
+  options: { leakUnit?: string; leakRawValues?: [number, number, number]; includeApneaSummary?: boolean } = {}
+): Uint8Array {
   const leakUnit = options.leakUnit ?? "cmH2O";
   const leakRawValues = options.leakRawValues ?? [30, 90, 120];
+  const apneaSummarySignals =
+    options.includeApneaSummary === false
+      ? []
+      : [
+          { label: "AI", min: 0, max: 50, dmin: 0, dmax: 500, samples: 1, value: 10 },
+          { label: "CAI", min: 0, max: 50, dmin: 0, dmax: 500, samples: 1, value: 2 }
+        ];
   const signals = [
     { label: "Date", min: 0, max: 40000, dmin: 0, dmax: 40000, samples: 1, value: 20260415 },
     { label: "Duration", min: 0, max: 24, dmin: 0, dmax: 2400, samples: 1, value: 600 },
@@ -31,8 +40,7 @@ function createSyntheticResMedStrEdf(options: { leakUnit?: string; leakRawValues
     { label: "S.EPR.EPREnable", min: 0, max: 1, dmin: 0, dmax: 1, samples: 1, value: 1 },
     { label: "S.EPR.Level", min: 0, max: 3, dmin: 0, dmax: 3, samples: 1, value: 3 },
     { label: "AHI", min: 0, max: 50, dmin: 0, dmax: 500, samples: 1, value: 15 },
-    { label: "AI", min: 0, max: 50, dmin: 0, dmax: 500, samples: 1, value: 10 },
-    { label: "CAI", min: 0, max: 50, dmin: 0, dmax: 500, samples: 1, value: 2 },
+    ...apneaSummarySignals,
     { label: "Leak.50", min: 0, max: 100, dmin: 0, dmax: 1000, samples: 1, value: leakRawValues[0], unit: leakUnit },
     { label: "Leak.95", min: 0, max: 100, dmin: 0, dmax: 1000, samples: 1, value: leakRawValues[1], unit: leakUnit },
     { label: "Leak Max", min: 0, max: 100, dmin: 0, dmax: 1000, samples: 1, value: leakRawValues[2], unit: leakUnit },
@@ -74,7 +82,7 @@ function createSyntheticResMedStrEdf(options: { leakUnit?: string; leakRawValues
     const signal = signals[i];
     writeAsciiField(bytes, labelsStart + i * 16, 16, signal.label);
     writeAsciiField(bytes, transducerStart + i * 80, 80, "");
-    writeAsciiField(bytes, physDimStart + i * 8, 8, signal.unit ?? "cmH2O");
+    writeAsciiField(bytes, physDimStart + i * 8, 8, "unit" in signal ? signal.unit : "cmH2O");
     writeAsciiField(bytes, physMinStart + i * 8, 8, String(signal.min));
     writeAsciiField(bytes, physMaxStart + i * 8, 8, String(signal.max));
     writeAsciiField(bytes, digMinStart + i * 8, 8, String(signal.dmin));
@@ -89,7 +97,11 @@ function createSyntheticResMedStrEdf(options: { leakUnit?: string; leakRawValues
   return bytes;
 }
 
-function createSyntheticResMedEveEdf(arousalCount: number): Uint8Array {
+function createSyntheticResMedEveEdf(
+  arousalCount: number,
+  apneaEvents: string[] = [],
+  startDate = "15.04.26"
+): Uint8Array {
   const signals = [
     { label: "EDF Annotations", samples: 40 },
     { label: "Crc16", samples: 1 }
@@ -104,7 +116,7 @@ function createSyntheticResMedEveEdf(arousalCount: number): Uint8Array {
   writeAsciiField(bytes, 0, 8, "0");
   writeAsciiField(bytes, 8, 80, "QuickReport Fixture");
   writeAsciiField(bytes, 88, 80, "Fixture Patient");
-  writeAsciiField(bytes, 168, 8, "15.04.26");
+  writeAsciiField(bytes, 168, 8, startDate);
   writeAsciiField(bytes, 176, 8, "00.00.00");
   writeAsciiField(bytes, 184, 8, String(headerBytes));
   writeAsciiField(bytes, 192, 44, "Synthetic ResMed EVE");
@@ -135,7 +147,9 @@ function createSyntheticResMedEveEdf(arousalCount: number): Uint8Array {
     writeAsciiField(bytes, samplesStart + i * 8, 8, String(signal.samples));
   }
 
-  const annotationPayload = new TextEncoder().encode(Array.from({ length: arousalCount }, () => "Arousal").join("\u0014"));
+  const annotationPayload = new TextEncoder().encode(
+    [...Array.from({ length: arousalCount }, () => "Arousal"), ...apneaEvents].join("\u0014")
+  );
   bytes.set(annotationPayload.subarray(0, signals[0].samples * 2), headerBytes);
   return bytes;
 }
@@ -232,11 +246,12 @@ test("ResMed preparation retains root STR/settings metadata when DATALOG EDF vol
   assert.equal(prepared.latestClinicalDayIso, "2026-04-15");
 });
 
-test("ResMed STR and EVE parsing expose leak summaries, EPR, and arousal-derived RERA", async () => {
+test("ResMed STR, EVE, and PLD parsing expose leak summaries, EPR, and correctly aggregated RERA", async () => {
   const files: SourceFile[] = [
     createSourceFile("Identification.tgt", new TextEncoder().encode("#PNA AirSense_10_AutoSet\n")),
     createSourceFile("STR.edf", createSyntheticResMedStrEdf()),
-    createSourceFile("DATALOG/20260415/20260415_000000_EVE.edf", createSyntheticResMedEveEdf(3))
+    createSourceFile("DATALOG/20260415/20260416_000000_EVE.edf", createSyntheticResMedEveEdf(3, [], "16.04.26")),
+    createSourceFile("DATALOG/20260415/20260415_000000_PLD.edf", createSyntheticResMedPldEdf([0.2, 0.6, 0.2]))
   ];
 
   const prepared = await prepareQuickReportSource({
@@ -258,6 +273,61 @@ test("ResMed STR and EVE parsing expose leak summaries, EPR, and arousal-derived
   assert.equal(metrics.maxLeak, 12);
   assert.equal(metrics.avgReraIndex, 0.5);
   assert.equal(metrics.rera95th, 0.5);
+});
+
+test("ResMed EVE events fill missing STR residual and central apnea indexes", async () => {
+  const files: SourceFile[] = [
+    createSourceFile("Identification.json", new TextEncoder().encode('{"ProductName":"AirSense 11 AutoSet"}')),
+    createSourceFile("STR.edf", createSyntheticResMedStrEdf({ includeApneaSummary: false })),
+    createSourceFile(
+      "DATALOG/20260415/20260415_000000_EVE.edf",
+      createSyntheticResMedEveEdf(0, ["Obstructive Apnea", "Central Apnea", "Apnea"])
+    )
+  ];
+
+  const prepared = await prepareQuickReportSource({
+    sourceKind: "folder",
+    files,
+    lookbackDays: 90
+  });
+  const metrics = buildQuickReportMetricsFromPreparedSource(prepared, {
+    patientName: "Fixture Patient",
+    dateOfBirthIso: "1970-01-01",
+    physicianName: "",
+    lookbackDays: 7,
+    windowEndClinicalDayIso: "2026-04-16"
+  });
+
+  assert.equal(metrics.avgResidualApneas, 0.5);
+  assert.equal(metrics.residualApneas95th, 0.5);
+  assert.ok(Math.abs((metrics.avgCentralApneas ?? 0) - 1 / 6) < 0.0001);
+  assert.ok(Math.abs((metrics.centralApneas95th ?? 0) - 1 / 6) < 0.0001);
+});
+
+test("ResMed generic EVE apnea events do not invent a central apnea index", async () => {
+  const files: SourceFile[] = [
+    createSourceFile("Identification.json", new TextEncoder().encode('{"ProductName":"AirSense 11 CPAP"}')),
+    createSourceFile("STR.edf", createSyntheticResMedStrEdf({ includeApneaSummary: false })),
+    createSourceFile("DATALOG/20260415/20260415_000000_EVE.edf", createSyntheticResMedEveEdf(0, ["Apnea", "Apnea"]))
+  ];
+
+  const prepared = await prepareQuickReportSource({
+    sourceKind: "folder",
+    files,
+    lookbackDays: 90
+  });
+  const metrics = buildQuickReportMetricsFromPreparedSource(prepared, {
+    patientName: "Fixture Patient",
+    dateOfBirthIso: "1970-01-01",
+    physicianName: "",
+    lookbackDays: 7,
+    windowEndClinicalDayIso: "2026-04-16"
+  });
+
+  assert.ok(Math.abs((metrics.avgResidualApneas ?? 0) - 1 / 3) < 0.0001);
+  assert.ok(Math.abs((metrics.residualApneas95th ?? 0) - 1 / 3) < 0.0001);
+  assert.equal(metrics.avgCentralApneas, null);
+  assert.equal(metrics.centralApneas95th, null);
 });
 
 test("ResMed STR leak signals in L/s are converted to report L/min", async () => {

@@ -84,6 +84,14 @@ type ParsedResMedStr = {
   historyStartClinicalDayIso: string | null;
 };
 
+type ResMedEveEventCounts = {
+  dayIso: string;
+  apneaCount: number;
+  centralApneaCount: number;
+  arousalCount: number;
+  hasClassifiedApneaEvents: boolean;
+};
+
 const RESMED_LARGE_LEAK_THRESHOLD_LPM = 30;
 
 function normalizeWhitespace(value: string): string {
@@ -1087,31 +1095,53 @@ function parseResMedPldEdf(candidate: FamilyParserCandidate, bytes: Uint8Array):
   };
 }
 
-function parseResMedEveArousalCount(candidate: FamilyParserCandidate, bytes: Uint8Array): { dayIso: string; count: number } | null {
+function resMedEveClinicalDayIso(candidate: FamilyParserCandidate, edf: EdfInfo): string {
+  const folderMatch = candidate.normalizedPath.match(/(?:^|\/)datalog\/(\d{4})(\d{2})(\d{2})(?:\/|$)/i);
+  if (folderMatch) return `${folderMatch[1]}-${folderMatch[2]}-${folderMatch[3]}`;
+
+  return new Date(edf.startDate.getTime() - 12 * 3600 * 1000).toISOString().slice(0, 10);
+}
+
+function parseResMedEveEventCounts(candidate: FamilyParserCandidate, bytes: Uint8Array): ResMedEveEventCounts | null {
   if (!/eve\.edf(?:\.gz)?$/i.test(candidate.baseName)) return null;
 
   const edf = parseResMedEdf(bytes);
   if (!edf) return null;
 
-  const count = countAsciiOccurrences(bytes.subarray(edf.headerBytes), "Arousal");
-  if (count <= 0) return null;
+  const payload = bytes.subarray(edf.headerBytes);
+  const centralApneaCount = countAsciiOccurrences(payload, "Central Apnea");
 
   return {
-    dayIso: edf.startDate.toISOString().slice(0, 10),
-    count
+    dayIso: resMedEveClinicalDayIso(candidate, edf),
+    apneaCount: countAsciiOccurrences(payload, "Apnea"),
+    centralApneaCount,
+    arousalCount: countAsciiOccurrences(payload, "Arousal"),
+    hasClassifiedApneaEvents:
+      centralApneaCount > 0 || countAsciiOccurrences(payload, "Obstructive Apnea") > 0
   };
 }
 
-function mergeResMedArousalCounts(records: ParsedRecord[], arousalCountsByDay: Map<string, number>) {
+function mergeResMedEveEventCounts(
+  records: ParsedRecord[],
+  eventCountsByDay: Map<string, ResMedEveEventCounts>,
+  hasClassifiedApneaEvents: boolean,
+  hasArousalEvents: boolean
+) {
   for (const record of records) {
-    if (typeof record.reraIndex === "number" && record.reraIndex >= 0) continue;
+    if (typeof record.usageHours !== "number" || record.usageHours <= 0 || record.usageHours > 24) continue;
+
     const dayIso = record.date.toISOString().slice(0, 10);
-    const arousalCount = arousalCountsByDay.get(dayIso);
-    if (!arousalCount || arousalCount <= 0) continue;
-    if (typeof record.usageHours === "number" && record.usageHours > 0 && record.usageHours <= 24) {
-      record.reraIndex = arousalCount / record.usageHours;
-    } else {
-      record.reraIndex = arousalCount;
+    const eventCounts = eventCountsByDay.get(dayIso);
+    if (!eventCounts) continue;
+
+    if (record.residualApneas === undefined) {
+      record.residualApneas = eventCounts.apneaCount / record.usageHours;
+    }
+    if (record.centralApneas === undefined && hasClassifiedApneaEvents) {
+      record.centralApneas = eventCounts.centralApneaCount / record.usageHours;
+    }
+    if (record.reraIndex === undefined && hasArousalEvents) {
+      record.reraIndex = eventCounts.arousalCount / record.usageHours;
     }
   }
 }
@@ -1216,7 +1246,9 @@ export async function parseResMedFamily(context: FamilyParserContext, deps: Fami
     );
   }
 
-  const arousalCountsByDay = new Map<string, number>();
+  const eventCountsByDay = new Map<string, ResMedEveEventCounts>();
+  let hasClassifiedApneaEvents = false;
+  let hasArousalEvents = false;
   let processed = 0;
   for (const candidate of context.candidates) {
     if (!/(?:str|eve|pld)\.edf(?:\.gz)?$/i.test(candidate.baseName)) continue;
@@ -1257,16 +1289,26 @@ export async function parseResMedFamily(context: FamilyParserContext, deps: Fami
         continue;
       }
 
-      const arousalCounts = parseResMedEveArousalCount(candidate, inflated);
-      if (arousalCounts) {
-        arousalCountsByDay.set(arousalCounts.dayIso, (arousalCountsByDay.get(arousalCounts.dayIso) ?? 0) + arousalCounts.count);
+      const eventCounts = parseResMedEveEventCounts(candidate, inflated);
+      if (eventCounts) {
+        const existing = eventCountsByDay.get(eventCounts.dayIso);
+        if (existing) {
+          existing.apneaCount += eventCounts.apneaCount;
+          existing.centralApneaCount += eventCounts.centralApneaCount;
+          existing.arousalCount += eventCounts.arousalCount;
+          existing.hasClassifiedApneaEvents ||= eventCounts.hasClassifiedApneaEvents;
+        } else {
+          eventCountsByDay.set(eventCounts.dayIso, eventCounts);
+        }
+        hasClassifiedApneaEvents ||= eventCounts.hasClassifiedApneaEvents;
+        hasArousalEvents ||= eventCounts.arousalCount > 0;
       }
     } catch {
       continue;
     }
   }
 
-  if (arousalCountsByDay.size > 0 && context.records.length > 0) {
-    mergeResMedArousalCounts(context.records, arousalCountsByDay);
+  if (eventCountsByDay.size > 0 && context.records.length > 0) {
+    mergeResMedEveEventCounts(context.records, eventCountsByDay, hasClassifiedApneaEvents, hasArousalEvents);
   }
 }

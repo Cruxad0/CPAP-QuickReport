@@ -381,6 +381,8 @@ maybeLocalAirSense10Test("local ResMed AirSense 10 CPAP sample reports selected-
   assert.equal(metrics.compliantDays, 89);
   assertApprox(metrics.avgUsageHours, 7.3459, 0.02, "avg usage");
   assertApprox(metrics.avgAhi, 0.75, 0.02, "avg AHI");
+  assertApprox(metrics.avgReraIndex, 0.8074, 0.02, "avg RERA index");
+  assertApprox(metrics.rera95th, 1.9356, 0.02, "95th RERA index");
   assertApprox(metrics.machine.pressureAvg ?? null, 5.8827, 0.02, "avg pressure");
   assertApprox(metrics.machine.pressure95th ?? null, 6, 0.02, "95th pressure");
   assertApprox(metrics.avgLeak, 1.4933, 0.02, "avg leak");
@@ -425,6 +427,10 @@ maybeLocalAirSense11CpapTest("filtered AirSense 11 CPAP card preserves its recen
   assert.equal(metrics.daysInWindow, 7);
   assert.equal(metrics.daysWithData, 7);
   assert.equal(metrics.daysWithUsage, 7);
+  assertApprox(metrics.avgResidualApneas, 0.0458, 0.001, "avg residual apneas");
+  assertApprox(metrics.residualApneas95th, 0.1621, 0.001, "95th residual apneas");
+  assert.equal(metrics.avgCentralApneas, null);
+  assert.equal(metrics.centralApneas95th, null);
   assert.ok(
     prepared.warnings.some(
       (warning) =>
