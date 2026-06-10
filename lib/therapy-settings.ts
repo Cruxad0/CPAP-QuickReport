@@ -15,6 +15,7 @@ export interface TherapySettingsSnapshotInput {
 export interface TherapySettingsSnapshot {
   signature: string;
   label: string;
+  machine: MachineSettings;
 }
 
 function cleanSettingValue(value: string | number | null | undefined): string | null {
@@ -79,5 +80,16 @@ export function buildTherapySettingsSnapshot(input: TherapySettingsSnapshotInput
     .sort()
     .join("|");
 
-  return { signature, label };
+  const machine: MachineSettings = {
+    ...(mode ? { mode } : {}),
+    ...(pressure ? { pressure: `Fixed ${pressure}` } : {}),
+    ...(pressureMin ? { pressureMin } : {}),
+    ...(pressureMax ? { pressureMax } : {}),
+    ...(pressureMin || pressureMax ? { pressureIsAuto: true } : {}),
+    ...(epap ? { epap } : {}),
+    ...(ipap ? { ipap } : {})
+  };
+
+  return { signature, label, machine };
 }
+import type { MachineSettings } from "@/lib/types";

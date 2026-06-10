@@ -1,6 +1,6 @@
 /// <reference lib="webworker" />
 
-import { prepareQuickReportSource } from "@/lib/parser";
+import { buildQuickReportMetricsFromPreparedSource, prepareQuickReportSource } from "@/lib/parser";
 import { buildReportArtifactsFromPreparedSource } from "@/lib/report-orchestrator";
 import {
   bytesToLabel,
@@ -26,7 +26,10 @@ type WorkerDirectoryHandle = FileSystemDirectoryHandle & {
 let preparedSource: PreparedQuickReportSource | null = null;
 let loadedSourceKind: DataSourceKind | null = null;
 let loadedSourceSummaries: Array<ReturnType<typeof createSourceFileSummary>> = [];
-const folderLoadState = new Map<number, { files: FolderSourceEntry[]; importLookbackDays: number; parseLookbackDays: number }>();
+const folderLoadState = new Map<
+  number,
+  { files: FolderSourceEntry[]; importLookbackDays: number; parseLookbackDays: number; hasOlderDatedData: boolean }
+>();
 const WORKER_DIRECTORY_ENUMERATION_BATCH_SIZE = 64;
 
 function postMessageSafe(message: ReportWorkerResponse) {
@@ -63,7 +66,7 @@ async function enumerateFolderHandle(
   requestId: number,
   rootHandle: WorkerDirectoryHandle,
   lookbackDays: number
-): Promise<DeferredFolderSourceEntry[]> {
+): Promise<{ entries: DeferredFolderSourceEntry[]; hasOlderDatedData: boolean }> {
   const deferredEntries: DeferredFolderSourceEntry[] = [];
   const datedDirectories: Array<{ handle: WorkerDirectoryHandle; prefix: string; date: Date }> = [];
   let discovered = 0;
@@ -128,7 +131,10 @@ async function enumerateFolderHandle(
   );
 
   emitProgress(requestId, "scan", `Scanning SD-CARD structure... ${deferredEntries.length} files found`, 1);
-  return deferredEntries;
+  return {
+    entries: deferredEntries,
+    hasOlderDatedData: skippedDatedDirectories > 0
+  };
 }
 
 async function loadFolderFromDirectoryHandle(
@@ -138,7 +144,8 @@ async function loadFolderFromDirectoryHandle(
   parseLookbackDays: number
 ) {
   emitProgress(requestId, "scan", "Loading SD-CARD...", 1);
-  const deferredEntries = await enumerateFolderHandle(requestId, rootHandle, importLookbackDays);
+  const enumeration = await enumerateFolderHandle(requestId, rootHandle, importLookbackDays);
+  const deferredEntries = enumeration.entries;
 
   if (deferredEntries.length === 0) {
     throw new Error("Directory picker returned no files. Try selecting the SD-card root folder.");
@@ -153,7 +160,8 @@ async function loadFolderFromDirectoryHandle(
     async () =>
       await createCachedSourceFilesFromFolder(filteredEntries.entries, (progress) => emitProgress(requestId, progress.phase, progress.detail, progress.percent)),
     importLookbackDays,
-    parseLookbackDays
+    parseLookbackDays,
+    enumeration.hasOlderDatedData || filteredEntries.hasOlderDatedData
   );
 }
 
@@ -162,13 +170,15 @@ async function loadSource(
   sourceKind: DataSourceKind,
   loader: () => Promise<import("@/lib/types").SourceFile[]>,
   importLookbackDays: number,
-  parseLookbackDays: number
+  parseLookbackDays: number,
+  knownOlderDatedData = false
 ) {
   emitProgress(requestId, sourceKind === "folder" ? "scan" : "zip", sourceKind === "folder" ? "Loading SD folder..." : "Opening ZIP file...", 4);
   const mapped = await loader();
 
   emitProgress(requestId, sourceKind === "folder" ? "scan" : "zip", `Keeping recent ${importLookbackDays}-day window...`, 50);
   const filtered = filterSourceFilesToRecentWindow(mapped, importLookbackDays);
+  const hasOlderDatedData = knownOlderDatedData || filtered.hasOlderDatedData;
 
   emitProgress(requestId, "parse", "Preparing parsed therapy dataset...", 54);
   const prepared = await prepareQuickReportSource({
@@ -210,7 +220,9 @@ async function loadSource(
     statusMessage,
     selectedLoader: prepared.selectedLoader,
     latestClinicalDayIso: prepared.latestClinicalDayIso,
-    warnings: prepared.warnings
+    warnings: prepared.warnings,
+    hasOlderDatedData,
+    therapySettingsPeriods: prepared.therapySettingsPeriods ?? []
   });
 }
 
@@ -225,7 +237,8 @@ self.onmessage = async (event: MessageEvent<ReportWorkerRequest>) => {
       folderLoadState.set(request.requestId, {
         files: [],
         importLookbackDays: request.importLookbackDays,
-        parseLookbackDays: request.parseLookbackDays
+        parseLookbackDays: request.parseLookbackDays,
+        hasOlderDatedData: request.hasOlderDatedData === true
       });
       emitProgress(request.requestId, "scan", "Receiving SD-CARD selection...", 1);
       return;
@@ -263,7 +276,8 @@ self.onmessage = async (event: MessageEvent<ReportWorkerRequest>) => {
             emitProgress(request.requestId, progress.phase, progress.detail, progress.percent)
           ),
         state.importLookbackDays,
-        state.parseLookbackDays
+        state.parseLookbackDays,
+        state.hasOlderDatedData
       );
       return;
     }
@@ -304,6 +318,27 @@ self.onmessage = async (event: MessageEvent<ReportWorkerRequest>) => {
         type: "reports-ready",
         reports: result.reports,
         statusMessage: "Report generated successfully. Review preview and export PDF."
+      });
+      return;
+    }
+
+    if (request.type === "review-previous-therapy") {
+      if (!preparedSource) {
+        throw new Error("No prepared source is loaded. Select an SD-CARD first.");
+      }
+
+      const metrics = buildQuickReportMetricsFromPreparedSource(preparedSource, {
+        patientName: request.patientName,
+        dateOfBirthIso: request.dateOfBirthIso,
+        physicianName: request.physicianName,
+        lookbackDays: 90,
+        therapyPeriodKind: "previous",
+        onProgress: (progress) => emitProgress(request.requestId, progress.phase, progress.detail, progress.percent)
+      });
+      postMessageSafe({
+        requestId: request.requestId,
+        type: "previous-review-ready",
+        metrics
       });
       return;
     }

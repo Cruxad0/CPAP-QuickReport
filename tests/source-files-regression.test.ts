@@ -58,6 +58,7 @@ test("recent-window filters keep the most recent dated data relative to the late
   assert.equal(filtered.files.some((file) => file.path.includes("202512/26")), true);
   assert.equal(filtered.files.some((file) => file.path.includes("202512/27")), true);
   assert.equal(filtered.files.some((file) => file.path.includes("202603/25")), true);
+  assert.equal(filtered.hasOlderDatedData, true);
 });
 
 test("early path pruning skips old dated folders before SD-card enumeration continues", () => {

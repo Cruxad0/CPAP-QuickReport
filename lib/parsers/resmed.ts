@@ -952,7 +952,8 @@ function parseResMedStrEdf(
       epapAvg: isReportPressureMetric(epapAvg) ? epapAvg : undefined,
       epap95th: isReportPressureMetric(epap95th) ? epap95th : undefined,
       therapySettingsSignature: therapySettings?.signature,
-      therapySettingsLabel: therapySettings?.label
+      therapySettingsLabel: therapySettings?.label,
+      therapySettingsMachine: therapySettings?.machine
     });
 
     if (!latestRecordDate || date > latestRecordDate) {

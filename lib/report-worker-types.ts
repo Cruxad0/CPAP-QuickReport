@@ -1,5 +1,12 @@
 import type { FolderSourceEntry } from "@/lib/source-files";
-import type { DataSourceKind, GeneratedPdfArtifact, ParseProgress, SourceFileSummary } from "@/lib/types";
+import type {
+  DataSourceKind,
+  GeneratedPdfArtifact,
+  ParseProgress,
+  QuickReportMetrics,
+  SourceFileSummary,
+  TherapySettingsPeriod
+} from "@/lib/types";
 
 export type SourceSelectionKind = "folder" | "zip";
 
@@ -9,6 +16,7 @@ export type ReportWorkerRequest =
       type: "load-folder-start";
       importLookbackDays: number;
       parseLookbackDays: number;
+      hasOlderDatedData?: boolean;
     }
   | {
       requestId: number;
@@ -43,6 +51,13 @@ export type ReportWorkerRequest =
     }
   | {
       requestId: number;
+      type: "review-previous-therapy";
+      patientName: string;
+      dateOfBirthIso: string;
+      physicianName: string;
+    }
+  | {
+      requestId: number;
       type: "reset";
     };
 
@@ -63,12 +78,19 @@ export type ReportWorkerResponse =
       selectedLoader: string;
       latestClinicalDayIso: string;
       warnings: string[];
+      hasOlderDatedData: boolean;
+      therapySettingsPeriods: TherapySettingsPeriod[];
     }
   | {
       requestId: number;
       type: "reports-ready";
       reports: GeneratedPdfArtifact[];
       statusMessage: string;
+    }
+  | {
+      requestId: number;
+      type: "previous-review-ready";
+      metrics: QuickReportMetrics;
     }
   | {
       requestId: number;

@@ -53,11 +53,17 @@ function bucket(usageHours: number): PreparedDayBucket {
   };
 }
 
-function bucketWithTherapy(usageHours: number, signature: string, label: string): PreparedDayBucket {
+function bucketWithTherapy(
+  usageHours: number,
+  signature: string,
+  label: string,
+  machine?: PreparedDayBucket["therapySettingsMachine"]
+): PreparedDayBucket {
   return {
     ...bucket(usageHours),
     therapySettingsSignature: signature,
-    therapySettingsLabel: label
+    therapySettingsLabel: label,
+    therapySettingsMachine: machine
   };
 }
 
@@ -71,22 +77,65 @@ function therapyBuckets(
   startIso: string,
   count: number,
   splitIndex: number,
-  earlier: { signature: string; label: string },
-  latest: { signature: string; label: string }
+  earlier: { signature: string; label: string; machine?: PreparedDayBucket["therapySettingsMachine"] },
+  latest: { signature: string; label: string; machine?: PreparedDayBucket["therapySettingsMachine"] }
 ): Record<string, PreparedDayBucket> {
   return Object.fromEntries(
     Array.from({ length: count }, (_, idx) => {
       const settings = idx < splitIndex ? earlier : latest;
-      return [addIsoDays(startIso, idx), bucketWithTherapy(7, settings.signature, settings.label)];
+      return [addIsoDays(startIso, idx), bucketWithTherapy(7, settings.signature, settings.label, settings.machine)];
     })
   );
 }
 
-function pressureSnapshot(input: Parameters<typeof buildTherapySettingsSnapshot>[0]): { signature: string; label: string } {
+function pressureSnapshot(input: Parameters<typeof buildTherapySettingsSnapshot>[0]): NonNullable<ReturnType<typeof buildTherapySettingsSnapshot>> {
   const snapshot = buildTherapySettingsSnapshot(input);
   assert.ok(snapshot);
   return snapshot;
 }
+
+test("previous therapy review uses only the immediately prior settings generation and caps it at 90 days", () => {
+  const oldest = pressureSnapshot({ mode: "CPAP", pressure: "6 cmH2O" });
+  const previous = pressureSnapshot({ mode: "CPAP", pressure: "8 cmH2O" });
+  const current = pressureSnapshot({ mode: "APAP", pressureMin: "8 cmH2O", pressureMax: "15 cmH2O" });
+  const startIso = "2025-12-01";
+  const dayBuckets = Object.fromEntries(
+    Array.from({ length: 181 }, (_, idx) => {
+      const settings = idx < 20 ? oldest : idx < 160 ? previous : current;
+      return [addIsoDays(startIso, idx), bucketWithTherapy(7, settings.signature, settings.label, settings.machine)];
+    })
+  );
+  const prepared: PreparedQuickReportSource = {
+    selectedLoader: "Fixture Loader",
+    machine: {
+      device: "Fixture Device",
+      mode: "APAP",
+      pressureIsAuto: true,
+      pressureMin: "8 cmH2O",
+      pressureMax: "15 cmH2O"
+    },
+    warnings: [],
+    latestClinicalDayIso: addIsoDays(startIso, 180),
+    maxLookbackDays: 181,
+    dayBuckets
+  };
+
+  const metrics = buildQuickReportMetricsFromPreparedSource(prepared, {
+    patientName: "Fixture Patient",
+    dateOfBirthIso: "1970-01-01",
+    physicianName: "",
+    lookbackDays: 90,
+    therapyPeriodKind: "previous"
+  });
+
+  assert.equal(metrics.daysInWindow, 90);
+  assert.equal(metrics.daysWithData, 90);
+  assert.equal(metrics.machine.mode, "CPAP");
+  assert.equal(metrics.machine.pressure, "Fixed 8 cmH2O");
+  assert.equal(metrics.machine.pressureMin, undefined);
+  assert.ok(!metrics.warnings.some((warning) => warning.includes("CPAP 6 cmH2O")));
+  assert.ok(metrics.warnings.some((warning) => warning.includes("Historical therapy period for review only")));
+});
 
 function runLocalAnchorFixture(
   nowIso: string,

@@ -436,6 +436,137 @@ textarea {
   gap: 0.8rem;
 }
 
+.therapy-history-heading,
+.previous-review-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.therapy-history-heading h3,
+.previous-review-heading h3 {
+  margin: 0;
+}
+
+.therapy-history-heading p,
+.previous-review-heading p {
+  margin: 0.35rem 0 0;
+}
+
+.older-history-banner {
+  margin-top: 0.9rem;
+  padding: 0.85rem;
+  border: 1px solid #d8c47a;
+  border-radius: 12px;
+  background: #fff9df;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.older-history-banner div {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.older-history-banner span {
+  color: #6e5a17;
+  font-size: 0.9rem;
+}
+
+.therapy-period-list {
+  margin-top: 0.9rem;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.85rem;
+}
+
+.therapy-period {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 0.9rem;
+  background: #fbfdff;
+}
+
+.therapy-period-current {
+  border-color: #a9d5c3;
+  background: #f5fcf9;
+}
+
+.therapy-period-previous,
+.previous-review-card {
+  border-color: #e2cf8a;
+  background: #fffdf4;
+}
+
+.therapy-period h4 {
+  margin: 0.65rem 0 0.25rem;
+  font-size: 1.05rem;
+}
+
+.therapy-period p {
+  margin: 0.25rem 0;
+}
+
+.therapy-period-badge {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  padding: 0.25rem 0.55rem;
+  border-radius: 999px;
+  background: #e2f2f8;
+  color: #18536b;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.therapy-period-previous .therapy-period-badge,
+.previous-review-card .therapy-period-badge {
+  background: #f5e7ad;
+  color: #684f00;
+}
+
+.review-only-notice,
+.previous-unavailable {
+  margin: 0.75rem 0 0;
+  padding: 0.65rem 0.75rem;
+  border-radius: 9px;
+  background: #fff4c7;
+  color: #684f00;
+  font-weight: 700;
+}
+
+.previous-review-metrics {
+  margin-top: 0.9rem;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.7rem;
+}
+
+.previous-review-metrics div {
+  display: grid;
+  gap: 0.3rem;
+  padding: 0.8rem;
+  border: 1px solid #e6d9a6;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.previous-review-metrics span {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.previous-review-metrics strong {
+  font-size: 1.15rem;
+  color: #584500;
+}
+
 .preview-frame {
   display: block;
   width: 100%;
@@ -701,6 +832,14 @@ textarea {
     grid-column: span 12;
   }
 
+  .therapy-period-list {
+    grid-template-columns: 1fr;
+  }
+
+  .previous-review-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .affiliate-disclosure summary {
     gap: 0.58rem;
     padding: 0.68rem;
@@ -730,6 +869,17 @@ textarea {
 }
 
 @media (max-width: 560px) {
+  .older-history-banner,
+  .therapy-history-heading,
+  .previous-review-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .previous-review-metrics {
+    grid-template-columns: 1fr;
+  }
+
   .affiliate-disclosure summary {
     grid-template-columns: auto minmax(0, 1fr);
   }

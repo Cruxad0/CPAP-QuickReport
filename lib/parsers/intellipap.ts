@@ -15,6 +15,7 @@ type IntelliPapAggregate = {
   pressure95th?: number;
   therapySettingsSignature?: string;
   therapySettingsLabel?: string;
+  therapySettingsMachine?: ParsedRecord["therapySettingsMachine"];
 };
 
 type Dv5Session = {
@@ -288,7 +289,8 @@ function parseDv6Summaries(bytes: Uint8Array, machine: FamilyParserContext["mach
       pressureAvg: bytes[pos + 14] / 10,
       pressure95th: bytes[pos + 18] / 10,
       therapySettingsSignature: therapySettings?.signature,
-      therapySettingsLabel: therapySettings?.label
+      therapySettingsLabel: therapySettings?.label,
+      therapySettingsMachine: therapySettings?.machine
     });
 
     void end;

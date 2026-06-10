@@ -1436,7 +1436,8 @@ function toParsedRecord(session: Prs1SessionAccumulator): ParsedRecord | null {
     pressureAvg,
     pressure95th,
     therapySettingsSignature: therapySettings?.signature,
-    therapySettingsLabel: therapySettings?.label
+    therapySettingsLabel: therapySettings?.label,
+    therapySettingsMachine: therapySettings?.machine
   };
 }
 

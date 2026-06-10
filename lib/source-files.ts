@@ -7,6 +7,7 @@ import type { ParseProgress, SourceFile, SourceFileSummary } from "@/lib/types";
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 export const IMPORT_LOOKBACK_DAYS = 91;
+export const OLDER_HISTORY_IMPORT_LOOKBACK_DAYS = 181;
 
 export type RecentWindowFilterResult = {
   files: SourceFile[];
@@ -15,6 +16,7 @@ export type RecentWindowFilterResult = {
   filteredOutBytes: number;
   latestDateIso: string | null;
   hadDatedFiles: boolean;
+  hasOlderDatedData: boolean;
 };
 
 export type MaterializedFolderSourceEntry = {
@@ -54,6 +56,7 @@ export type RecentFolderEntryFilterResult = {
   filteredOutBytes: number;
   latestDateIso: string | null;
   hadDatedFiles: boolean;
+  hasOlderDatedData: boolean;
 };
 
 type ProgressCallback = (progress: ParseProgress) => void;
@@ -286,7 +289,8 @@ export function filterSourceFilesToRecentWindow(files: SourceFile[], lookbackDay
       filteredOutCount: files.length - relevantFiles.length,
       filteredOutBytes: files.filter((file) => shouldIgnorePathEarly(file.path)).reduce((sum, file) => sum + file.size, 0),
       latestDateIso: null,
-      hadDatedFiles: false
+      hadDatedFiles: false,
+      hasOlderDatedData: false
     };
   }
 
@@ -294,17 +298,20 @@ export function filterSourceFilesToRecentWindow(files: SourceFile[], lookbackDay
   const datedCoverage = dated.length / Math.max(1, relevantFiles.length);
   const latestDatedFile = dated.reduce((latest, entry) => (entry.date > latest.date ? entry : latest), dated[0]);
   if (!likelyFamilyId && datedCoverage < 0.1) {
+    const { startMs } = resolveLatestDataWindowMs(latestDatedFile.date, lookbackDays);
     return {
       files,
       originalCount: files.length,
       filteredOutCount: 0,
       filteredOutBytes: 0,
       latestDateIso: toIsoDate(latestDatedFile.date),
-      hadDatedFiles: true
+      hadDatedFiles: true,
+      hasOlderDatedData: dated.some((entry) => entry.date.getTime() < startMs)
     };
   }
 
   const { startMs: windowStartMs, endMs: anchoredWindowEndMs } = resolveLatestDataWindowMs(latestDatedFile.date, lookbackDays);
+  const hasOlderDatedData = dated.some((entry) => entry.date.getTime() < windowStartMs);
 
   let filteredOutCount = 0;
   let filteredOutBytes = 0;
@@ -341,7 +348,8 @@ export function filterSourceFilesToRecentWindow(files: SourceFile[], lookbackDay
     filteredOutBytes:
       files.reduce((sum, file) => (outputFileSet.has(file) ? sum : sum + file.size), 0),
     latestDateIso,
-    hadDatedFiles: true
+    hadDatedFiles: true,
+    hasOlderDatedData
   };
 }
 
@@ -355,6 +363,7 @@ export function filterFolderEntriesToRecentWindow<T extends { relativePath: stri
   filteredOutBytes: number;
   latestDateIso: string | null;
   hadDatedFiles: boolean;
+  hasOlderDatedData: boolean;
 } {
   const relevantEntries = entries.filter((entry) => !shouldIgnorePathEarly(entry.relativePath));
   const datedEntries = relevantEntries.map((entry) => ({
@@ -372,7 +381,8 @@ export function filterFolderEntriesToRecentWindow<T extends { relativePath: stri
       filteredOutCount: entries.length - relevantEntries.length,
       filteredOutBytes: entries.filter((entry) => shouldIgnorePathEarly(entry.relativePath)).reduce((sum, entry) => sum + entry.size, 0),
       latestDateIso: null,
-      hadDatedFiles: false
+      hadDatedFiles: false,
+      hasOlderDatedData: false
     };
   }
 
@@ -380,17 +390,20 @@ export function filterFolderEntriesToRecentWindow<T extends { relativePath: stri
   const datedCoverage = dated.length / Math.max(1, relevantEntries.length);
   const latestDatedEntry = dated.reduce((latest, item) => (item.date > latest.date ? item : latest), dated[0]);
   if (!likelyFamilyId && datedCoverage < 0.1) {
+    const { startMs } = resolveLatestDataWindowMs(latestDatedEntry.date, lookbackDays);
     return {
       entries,
       originalCount: entries.length,
       filteredOutCount: entries.length - relevantEntries.length,
       filteredOutBytes: entries.filter((entry) => shouldIgnorePathEarly(entry.relativePath)).reduce((sum, entry) => sum + entry.size, 0),
       latestDateIso: toIsoDate(latestDatedEntry.date),
-      hadDatedFiles: true
+      hadDatedFiles: true,
+      hasOlderDatedData: dated.some((item) => item.date.getTime() < startMs)
     };
   }
 
   const { startMs: windowStartMs, endMs: anchoredWindowEndMs } = resolveLatestDataWindowMs(latestDatedEntry.date, lookbackDays);
+  const hasOlderDatedData = dated.some((item) => item.date.getTime() < windowStartMs);
 
   let filteredOutCount = 0;
   let filteredOutBytes = 0;
@@ -425,7 +438,8 @@ export function filterFolderEntriesToRecentWindow<T extends { relativePath: stri
     filteredOutCount: entries.length - outputEntries.length,
     filteredOutBytes: entries.reduce((sum, entry) => (outputEntrySet.has(entry) ? sum : sum + entry.size), 0),
     latestDateIso,
-    hadDatedFiles: true
+    hadDatedFiles: true,
+    hasOlderDatedData
   };
 }
 

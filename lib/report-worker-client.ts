@@ -5,7 +5,7 @@ import {
   type FolderSourceMetaEntry
 } from "@/lib/source-files";
 import type { ReportWorkerRequest, ReportWorkerResponse } from "@/lib/report-worker-types";
-import type { GeneratedPdfArtifact, ParseProgress, SourceFileSummary } from "@/lib/types";
+import type { GeneratedPdfArtifact, ParseProgress, QuickReportMetrics, SourceFileSummary, TherapySettingsPeriod } from "@/lib/types";
 
 type LoadSourceResult = {
   sourceKind: "folder" | "zip";
@@ -16,6 +16,8 @@ type LoadSourceResult = {
   selectedLoader: string;
   latestClinicalDayIso: string;
   warnings: string[];
+  hasOlderDatedData: boolean;
+  therapySettingsPeriods: TherapySettingsPeriod[];
 };
 
 type GenerateReportsResult = {
@@ -34,6 +36,12 @@ type PendingRequest =
       type: "generate-reports";
       onProgress?: (progress: ParseProgress) => void;
       resolve: (value: GenerateReportsResult) => void;
+      reject: (reason?: unknown) => void;
+    }
+  | {
+      type: "review-previous-therapy";
+      onProgress?: (progress: ParseProgress) => void;
+      resolve: (value: QuickReportMetrics) => void;
       reject: (reason?: unknown) => void;
     }
   | {
@@ -71,20 +79,30 @@ export class ReportWorkerClient {
     files: FileList | readonly File[],
     options: { importLookbackDays: number; parseLookbackDays: number; onProgress?: (progress: ParseProgress) => void }
   ): Promise<LoadSourceResult> {
-    const recentEntries = await this.buildRecentFileListEntries(files, options);
-    return await this.loadFolderEntriesInternal(recentEntries, options, true);
+    const recent = await this.buildRecentFileListEntries(files, options);
+    return await this.loadFolderEntriesInternal(recent.entries, { ...options, hasOlderDatedData: recent.hasOlderDatedData }, true);
   }
 
   async loadFolderEntries(
     entries: readonly DeferredFolderSourceEntry[],
-    options: { importLookbackDays: number; parseLookbackDays: number; onProgress?: (progress: ParseProgress) => void }
+    options: {
+      importLookbackDays: number;
+      parseLookbackDays: number;
+      hasOlderDatedData?: boolean;
+      onProgress?: (progress: ParseProgress) => void;
+    }
   ): Promise<LoadSourceResult> {
     return await this.loadFolderEntriesInternal(entries, options, false);
   }
 
   private async loadFolderEntriesInternal(
     entries: readonly DeferredFolderSourceEntry[],
-    options: { importLookbackDays: number; parseLookbackDays: number; onProgress?: (progress: ParseProgress) => void },
+    options: {
+      importLookbackDays: number;
+      parseLookbackDays: number;
+      hasOlderDatedData?: boolean;
+      onProgress?: (progress: ParseProgress) => void;
+    },
     entriesAlreadyFiltered: boolean
   ): Promise<LoadSourceResult> {
     const requestId = this.nextRequestId++;
@@ -144,7 +162,12 @@ export class ReportWorkerClient {
   private async postFolderLoadInChunks(
     requestId: number,
     entries: readonly DeferredFolderSourceEntry[],
-    options: { importLookbackDays: number; parseLookbackDays: number; onProgress?: (progress: ParseProgress) => void },
+    options: {
+      importLookbackDays: number;
+      parseLookbackDays: number;
+      hasOlderDatedData?: boolean;
+      onProgress?: (progress: ParseProgress) => void;
+    },
     entriesAlreadyFiltered = false
   ) {
     const recentEntries = entriesAlreadyFiltered ? entries : await this.buildRecentFolderEntries(entries, options);
@@ -156,7 +179,8 @@ export class ReportWorkerClient {
       requestId,
       type: "load-folder-start",
       importLookbackDays: options.importLookbackDays,
-      parseLookbackDays: options.parseLookbackDays
+      parseLookbackDays: options.parseLookbackDays,
+      hasOlderDatedData: options.hasOlderDatedData
     };
     this.worker.postMessage(startRequest);
 
@@ -197,7 +221,7 @@ export class ReportWorkerClient {
   private async buildRecentFileListEntries(
     files: FileList | readonly File[],
     options: { importLookbackDays: number; onProgress?: (progress: ParseProgress) => void }
-  ): Promise<DeferredFolderSourceEntry[]> {
+  ): Promise<{ entries: DeferredFolderSourceEntry[]; hasOlderDatedData: boolean }> {
     const metadataEntries: FolderSourceMetaEntry[] = [];
 
     for (let start = 0; start < files.length; start += ReportWorkerClient.FILE_LIST_SCAN_CHUNK_SIZE) {
@@ -236,8 +260,9 @@ export class ReportWorkerClient {
       });
     }
 
-    return filtered.entries
-      .map<DeferredFolderSourceEntry | null>((entry) => {
+    return {
+      entries: filtered.entries
+        .map<DeferredFolderSourceEntry | null>((entry) => {
         const file = files[entry.index];
         if (!file) return null;
         return {
@@ -248,7 +273,9 @@ export class ReportWorkerClient {
           file
         } satisfies DeferredFolderSourceEntry;
       })
-      .filter((entry): entry is DeferredFolderSourceEntry => Boolean(entry));
+        .filter((entry): entry is DeferredFolderSourceEntry => Boolean(entry)),
+      hasOlderDatedData: filtered.hasOlderDatedData
+    };
   }
 
   private async buildRecentFolderEntries(
@@ -422,6 +449,33 @@ export class ReportWorkerClient {
     });
   }
 
+  async reviewPreviousTherapy(
+    params: {
+      patientName: string;
+      dateOfBirthIso: string;
+      physicianName: string;
+    },
+    onProgress?: (progress: ParseProgress) => void
+  ): Promise<QuickReportMetrics> {
+    const requestId = this.nextRequestId++;
+    return await new Promise<QuickReportMetrics>((resolve, reject) => {
+      this.pending.set(requestId, {
+        type: "review-previous-therapy",
+        onProgress,
+        resolve,
+        reject
+      });
+      const request: ReportWorkerRequest = {
+        requestId,
+        type: "review-previous-therapy",
+        patientName: params.patientName,
+        dateOfBirthIso: params.dateOfBirthIso,
+        physicianName: params.physicianName
+      };
+      this.worker.postMessage(request);
+    });
+  }
+
   async reset(): Promise<void> {
     const requestId = this.nextRequestId++;
     return await new Promise<void>((resolve, reject) => {
@@ -458,7 +512,9 @@ export class ReportWorkerClient {
         statusMessage: message.statusMessage,
         selectedLoader: message.selectedLoader,
         latestClinicalDayIso: message.latestClinicalDayIso,
-        warnings: message.warnings
+        warnings: message.warnings,
+        hasOlderDatedData: message.hasOlderDatedData,
+        therapySettingsPeriods: message.therapySettingsPeriods
       });
       return;
     }
@@ -469,6 +525,12 @@ export class ReportWorkerClient {
         reports: message.reports,
         statusMessage: message.statusMessage
       });
+      return;
+    }
+
+    if (message.type === "previous-review-ready" && pending.type === "review-previous-therapy") {
+      this.pending.delete(message.requestId);
+      pending.resolve(message.metrics);
       return;
     }
 

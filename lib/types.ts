@@ -56,6 +56,7 @@ export interface ParsedRecord {
   respiratoryRateMin?: number;
   therapySettingsSignature?: string;
   therapySettingsLabel?: string;
+  therapySettingsMachine?: MachineSettings;
 }
 
 export interface MachineSettings {
@@ -149,7 +150,20 @@ export interface BuildQuickReportMetricsFromPreparedRequest {
   physicianName: string;
   lookbackDays?: number;
   windowEndClinicalDayIso?: string;
+  therapyPeriodKind?: TherapyPeriodKind;
   onProgress?: (p: ParseProgress) => void;
+}
+
+export type TherapyPeriodKind = "current" | "previous";
+
+export interface TherapySettingsPeriod {
+  kind: TherapyPeriodKind;
+  signature: string;
+  label: string;
+  startClinicalDayIso: string;
+  endClinicalDayIso: string;
+  daysWithData: number;
+  machine?: MachineSettings;
 }
 
 export interface PreparedDayBucket {
@@ -199,6 +213,7 @@ export interface PreparedDayBucket {
   respiratoryRateBins: Record<string, number>;
   therapySettingsSignature?: string | null;
   therapySettingsLabel?: string | null;
+  therapySettingsMachine?: MachineSettings | null;
 }
 
 export interface PreparedQuickReportSource {
@@ -209,6 +224,7 @@ export interface PreparedQuickReportSource {
   historyStartClinicalDayIso?: string | null;
   latestClinicalDayIso: string;
   maxLookbackDays: number;
+  therapySettingsPeriods?: TherapySettingsPeriod[];
   dayBuckets: Record<string, PreparedDayBucket>;
 }
 

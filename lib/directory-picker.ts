@@ -21,6 +21,11 @@ type DirectoryPickerWindow = Window & {
 
 const DIRECTORY_ENUMERATION_BATCH_SIZE = 48;
 
+export type DeferredFolderEnumerationResult = {
+  entries: DeferredFolderSourceEntry[];
+  hasOlderDatedData: boolean;
+};
+
 async function yieldToBrowser(): Promise<void> {
   const pickerWindow = window as DirectoryPickerWindow;
   if (typeof pickerWindow.requestIdleCallback === "function") {
@@ -60,7 +65,7 @@ export async function enumerateDeferredFolderEntries(
   rootHandle: DirectoryPickerDirectoryHandle,
   lookbackDays: number,
   onProgress?: ProgressCallback
-): Promise<DeferredFolderSourceEntry[]> {
+): Promise<DeferredFolderEnumerationResult> {
   const deferredEntries: DeferredFolderSourceEntry[] = [];
   const datedDirectories: Array<{ handle: DirectoryPickerDirectoryHandle; prefix: string; date: Date }> = [];
   let discovered = 0;
@@ -141,14 +146,17 @@ export async function enumerateDeferredFolderEntries(
     percent: 1
   });
 
-  return deferredEntries;
+  return {
+    entries: deferredEntries,
+    hasOlderDatedData: skippedDatedDirectories > 0
+  };
 }
 
 export async function pickDeferredFolderEntries(
   lookbackDays: number,
   onProgress?: ProgressCallback,
   onPicked?: () => void
-): Promise<DeferredFolderSourceEntry[]> {
+): Promise<DeferredFolderEnumerationResult> {
   const rootHandle = await pickDirectoryHandle(onPicked);
   return await enumerateDeferredFolderEntries(rootHandle, lookbackDays, onProgress);
 }

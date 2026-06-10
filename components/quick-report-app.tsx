@@ -5,9 +5,9 @@ import { flushSync } from "react-dom";
 import { enumerateDeferredFolderEntries, pickDirectoryHandle, supportsDirectoryPicker } from "@/lib/directory-picker";
 import { ReportWorkerClient } from "@/lib/report-worker-client";
 import { REPORT_RANGE_OPTIONS, type ReportRangeDays } from "@/lib/report-orchestrator";
-import { bytesToLabel, IMPORT_LOOKBACK_DAYS } from "@/lib/source-files";
+import { bytesToLabel, IMPORT_LOOKBACK_DAYS, OLDER_HISTORY_IMPORT_LOOKBACK_DAYS } from "@/lib/source-files";
 import { daysSinceIsoDate, staleDataAgeClassName, staleDataSeverity } from "@/lib/stale-data";
-import { ParseProgress, QuickReportMetrics, SourceFileSummary } from "@/lib/types";
+import { ParseProgress, QuickReportMetrics, SourceFileSummary, TherapySettingsPeriod } from "@/lib/types";
 
 const MONTH_LABELS = [
   "January",
@@ -133,6 +133,10 @@ function formatIsoDateLong(isoDate: string): string {
   const parsed = parseIsoDate(isoDate);
   if (!parsed) return isoDate;
   return LONG_DATE_FORMATTER.format(Date.UTC(parsed.year, parsed.month - 1, parsed.day, 12));
+}
+
+function formatMetric(value: number | null | undefined, suffix = ""): string {
+  return typeof value === "number" && Number.isFinite(value) ? `${Number(value.toFixed(1))}${suffix}` : "Not available";
 }
 
 function isMixedDataWarning(warning: string): boolean {
@@ -275,6 +279,7 @@ export function QuickReportApp() {
   const folderInputRef = useRef<HTMLInputElement>(null);
   const zipInputRef = useRef<HTMLInputElement>(null);
   const headerInputRef = useRef<HTMLInputElement>(null);
+  const selectedDirectoryHandleRef = useRef<Awaited<ReturnType<typeof pickDirectoryHandle>> | null>(null);
   const workerClientRef = useRef<ReportWorkerClient | null>(null);
   const sourceSelectionAttemptRef = useRef(0);
   const parseProgressRafRef = useRef<number | null>(null);
@@ -289,6 +294,12 @@ export function QuickReportApp() {
   const [loadedSourceLoader, setLoadedSourceLoader] = useState<string | null>(null);
   const [loadedSourceLatestClinicalDayIso, setLoadedSourceLatestClinicalDayIso] = useState<string | null>(null);
   const [loadedSourceWarnings, setLoadedSourceWarnings] = useState<string[]>([]);
+  const [loadedSourceKind, setLoadedSourceKind] = useState<"folder" | "zip" | null>(null);
+  const [hasOlderDatedData, setHasOlderDatedData] = useState(false);
+  const [olderHistoryLoaded, setOlderHistoryLoaded] = useState(false);
+  const [therapySettingsPeriods, setTherapySettingsPeriods] = useState<TherapySettingsPeriod[]>([]);
+  const [previousTherapyReview, setPreviousTherapyReview] = useState<QuickReportMetrics | null>(null);
+  const [showPreviousTherapyReview, setShowPreviousTherapyReview] = useState(false);
   const [headerDataUrl, setHeaderDataUrl] = useState<string | undefined>(undefined);
   const [activeReportDays, setActiveReportDays] = useState<ReportRangeDays>(90);
 
@@ -378,6 +389,14 @@ export function QuickReportApp() {
   const activeTherapyChangeWarning = activeMetrics?.warnings.find(isTherapyChangeWarning) ?? null;
   const displayedTherapyChangeWarning = activeTherapyChangeWarning ?? loadedTherapyChangeWarning;
   const hasGeneratedReports = generatedReportDays.length > 0;
+  const currentTherapyPeriod = useMemo(
+    () => therapySettingsPeriods.find((period) => period.kind === "current") ?? null,
+    [therapySettingsPeriods]
+  );
+  const previousTherapyPeriod = useMemo(
+    () => therapySettingsPeriods.find((period) => period.kind === "previous") ?? null,
+    [therapySettingsPeriods]
+  );
 
   const dateOfBirthIso = useMemo(() => normalizeDobInput(dateOfBirthInput), [dateOfBirthInput]);
   const isPatientNameMissing = patientName.trim().length <= 1;
@@ -503,6 +522,12 @@ export function QuickReportApp() {
     setLoadedSourceLoader(null);
     setLoadedSourceLatestClinicalDayIso(null);
     setLoadedSourceWarnings([]);
+    setLoadedSourceKind(null);
+    setHasOlderDatedData(false);
+    setOlderHistoryLoaded(false);
+    setTherapySettingsPeriods([]);
+    setPreviousTherapyReview(null);
+    setShowPreviousTherapyReview(false);
   };
 
   const handleResetClearAll = async () => {
@@ -526,6 +551,7 @@ export function QuickReportApp() {
       setSourceFileBytes(0);
       setPatientName("");
       setDateOfBirthInput("");
+      selectedDirectoryHandleRef.current = null;
       clearSourceInputs();
       setParseProgressImmediate({ phase: "idle", detail: "Idle", percent: 0 });
       setStatus("idle");
@@ -544,6 +570,7 @@ export function QuickReportApp() {
   const handleFolderSelection: React.ChangeEventHandler<HTMLInputElement> = async (event) => {
     sourceSelectionAttemptRef.current += 1;
     setPendingSourceSelection(null);
+    selectedDirectoryHandleRef.current = null;
     const files = event.target.files;
     if (!files || files.length === 0) {
       setIsSourceLoading(false);
@@ -577,6 +604,12 @@ export function QuickReportApp() {
       setLoadedSourceLoader(loaded.selectedLoader);
       setLoadedSourceLatestClinicalDayIso(loaded.latestClinicalDayIso);
       setLoadedSourceWarnings(loaded.warnings);
+      setLoadedSourceKind(loaded.sourceKind);
+      setHasOlderDatedData(loaded.hasOlderDatedData);
+      setOlderHistoryLoaded(false);
+      setTherapySettingsPeriods(loaded.therapySettingsPeriods);
+      setPreviousTherapyReview(null);
+      setShowPreviousTherapyReview(false);
       revokeGeneratedReportUrls(generatedReports);
       setGeneratedReports({});
       setActiveReportDays(90);
@@ -612,6 +645,7 @@ export function QuickReportApp() {
         setLoadedSourceLatestClinicalDayIso(null);
         setLoadedSourceWarnings([]);
       });
+      selectedDirectoryHandleRef.current = rootHandle;
       const client = workerClientRef.current;
       if (!client) throw new Error("Background worker is not available.");
 
@@ -627,10 +661,10 @@ export function QuickReportApp() {
         if (!/directory handle transfer/i.test(message)) {
           throw error;
         }
-        const deferredEntries = await enumerateDeferredFolderEntries(rootHandle, IMPORT_LOOKBACK_DAYS, (progress) =>
+        const enumeration = await enumerateDeferredFolderEntries(rootHandle, IMPORT_LOOKBACK_DAYS, (progress) =>
           queueParseProgress(progress)
         );
-        if (deferredEntries.length === 0) {
+        if (enumeration.entries.length === 0) {
           setPendingSourceSelection(null);
           setIsSourceLoading(false);
           setStatus("idle");
@@ -641,9 +675,10 @@ export function QuickReportApp() {
           return;
         }
 
-        loaded = await client.loadFolderEntries(deferredEntries, {
+        loaded = await client.loadFolderEntries(enumeration.entries, {
           importLookbackDays: IMPORT_LOOKBACK_DAYS,
           parseLookbackDays: REPORT_RANGE_OPTIONS[0],
+          hasOlderDatedData: enumeration.hasOlderDatedData,
           onProgress: (progress) => queueParseProgress(progress)
         });
       }
@@ -654,6 +689,12 @@ export function QuickReportApp() {
       setLoadedSourceLoader(loaded.selectedLoader);
       setLoadedSourceLatestClinicalDayIso(loaded.latestClinicalDayIso);
       setLoadedSourceWarnings(loaded.warnings);
+      setLoadedSourceKind(loaded.sourceKind);
+      setHasOlderDatedData(loaded.hasOlderDatedData);
+      setOlderHistoryLoaded(false);
+      setTherapySettingsPeriods(loaded.therapySettingsPeriods);
+      setPreviousTherapyReview(null);
+      setShowPreviousTherapyReview(false);
       revokeGeneratedReportUrls(generatedReports);
       setGeneratedReports({});
       setActiveReportDays(90);
@@ -696,6 +737,7 @@ export function QuickReportApp() {
   const handleZipSelection: React.ChangeEventHandler<HTMLInputElement> = async (event) => {
     sourceSelectionAttemptRef.current += 1;
     setPendingSourceSelection(null);
+    selectedDirectoryHandleRef.current = null;
     const zipFile = event.target.files?.[0];
     if (!zipFile) {
       setIsSourceLoading(false);
@@ -728,6 +770,12 @@ export function QuickReportApp() {
       setLoadedSourceLoader(loaded.selectedLoader);
       setLoadedSourceLatestClinicalDayIso(loaded.latestClinicalDayIso);
       setLoadedSourceWarnings(loaded.warnings);
+      setLoadedSourceKind(loaded.sourceKind);
+      setHasOlderDatedData(loaded.hasOlderDatedData);
+      setOlderHistoryLoaded(false);
+      setTherapySettingsPeriods(loaded.therapySettingsPeriods);
+      setPreviousTherapyReview(null);
+      setShowPreviousTherapyReview(false);
       setStatus("idle");
       setStatusMessage(loaded.statusMessage);
       revokeGeneratedReportUrls(generatedReports);
@@ -766,6 +814,118 @@ export function QuickReportApp() {
     if (headerInputRef.current) headerInputRef.current.value = "";
   };
 
+  const handleLoadOlderHistory = async () => {
+    const client = workerClientRef.current;
+    if (!client || isSourceLoading || olderHistoryLoaded) return;
+
+    setIsSourceLoading(true);
+    setStatus("working");
+    setErrors([]);
+    setStatusMessage("Loading the immediately previous therapy settings period...");
+    setParseProgressImmediate({ phase: "scan", detail: "Loading older therapy history...", percent: 1 });
+
+    try {
+      let loaded;
+      const rootHandle = selectedDirectoryHandleRef.current;
+      if (rootHandle) {
+        try {
+          loaded = await client.loadFolderHandle(rootHandle, {
+            importLookbackDays: OLDER_HISTORY_IMPORT_LOOKBACK_DAYS,
+            parseLookbackDays: OLDER_HISTORY_IMPORT_LOOKBACK_DAYS,
+            onProgress: (progress) => queueParseProgress(progress)
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Directory handle transfer to worker failed.";
+          if (!/directory handle transfer/i.test(message)) throw error;
+          const enumeration = await enumerateDeferredFolderEntries(
+            rootHandle,
+            OLDER_HISTORY_IMPORT_LOOKBACK_DAYS,
+            (progress) => queueParseProgress(progress)
+          );
+          loaded = await client.loadFolderEntries(enumeration.entries, {
+            importLookbackDays: OLDER_HISTORY_IMPORT_LOOKBACK_DAYS,
+            parseLookbackDays: OLDER_HISTORY_IMPORT_LOOKBACK_DAYS,
+            hasOlderDatedData: enumeration.hasOlderDatedData,
+            onProgress: (progress) => queueParseProgress(progress)
+          });
+        }
+      } else if (loadedSourceKind === "folder" && folderInputRef.current?.files?.length) {
+        loaded = await client.loadFolder(folderInputRef.current.files, {
+          importLookbackDays: OLDER_HISTORY_IMPORT_LOOKBACK_DAYS,
+          parseLookbackDays: OLDER_HISTORY_IMPORT_LOOKBACK_DAYS,
+          onProgress: (progress) => queueParseProgress(progress)
+        });
+      } else if (loadedSourceKind === "zip" && zipInputRef.current?.files?.[0]) {
+        loaded = await client.loadZip(zipInputRef.current.files[0], {
+          importLookbackDays: OLDER_HISTORY_IMPORT_LOOKBACK_DAYS,
+          parseLookbackDays: OLDER_HISTORY_IMPORT_LOOKBACK_DAYS,
+          onProgress: (progress) => queueParseProgress(progress)
+        });
+      } else {
+        throw new Error("The selected device/card is no longer available. Select it again to load older history.");
+      }
+
+      setSourceFiles(loaded.files);
+      setSourceFileCount(loaded.totalFileCount);
+      setSourceFileBytes(loaded.totalBytes);
+      setLoadedSourceLoader(loaded.selectedLoader);
+      setLoadedSourceLatestClinicalDayIso(loaded.latestClinicalDayIso);
+      setLoadedSourceWarnings(loaded.warnings);
+      setHasOlderDatedData(loaded.hasOlderDatedData);
+      setTherapySettingsPeriods(loaded.therapySettingsPeriods);
+      setOlderHistoryLoaded(true);
+      setPreviousTherapyReview(null);
+      setShowPreviousTherapyReview(false);
+      setStatus(hasGeneratedReports ? "ready" : "idle");
+      setStatusMessage(
+        loaded.therapySettingsPeriods.some((period) => period.kind === "previous")
+          ? "Older therapy data with different settings was found."
+          : "Previous settings unavailable from this device/card."
+      );
+      setParseProgressImmediate({ phase: "ready", detail: "Older therapy history checked", percent: 100 });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not load older therapy history.";
+      setStatus("error");
+      setErrors([message]);
+      setStatusMessage("Older therapy history load failed.");
+      setParseProgressImmediate({ phase: "error", detail: "Older history load failed", percent: 0 });
+    } finally {
+      setIsSourceLoading(false);
+    }
+  };
+
+  const handleReviewPreviousTherapy = async () => {
+    if (!canGenerate || !previousTherapyPeriod) return;
+
+    setStatus("working");
+    setErrors([]);
+    setStatusMessage("Preparing previous therapy period review...");
+    setParseProgressImmediate({ phase: "compute", detail: "Preparing previous therapy review...", percent: 2 });
+    try {
+      const client = workerClientRef.current;
+      if (!client) throw new Error("Background worker is not available.");
+      const metrics = await client.reviewPreviousTherapy(
+        {
+          patientName,
+          dateOfBirthIso: dateOfBirthIso ?? "",
+          physicianName
+        },
+        (progress) => queueParseProgress(progress)
+      );
+      setPreviousTherapyReview(metrics);
+      setShowPreviousTherapyReview(true);
+      setStatus(hasGeneratedReports ? "ready" : "idle");
+      setStatusMessage("Previous therapy period ready for review. Export is unavailable.");
+      setParseProgressImmediate({ phase: "done", detail: "Previous therapy review ready", percent: 100 });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not prepare previous therapy review.";
+      setStatus("error");
+      setErrors([message]);
+      setStatusMessage("Previous therapy review failed.");
+      setParseProgressImmediate({ phase: "error", detail: "Previous therapy review failed", percent: 0 });
+    }
+  };
+
   const handleGenerate = async () => {
     if (!canGenerate) return;
 
@@ -802,6 +962,7 @@ export function QuickReportApp() {
       const largestAvailableTab = REPORT_RANGE_OPTIONS.find((days) => Boolean(generated[days])) ?? 7;
       setActiveReportDays(largestAvailableTab);
       setIsPreviewCollapsed(false);
+      setShowPreviousTherapyReview(false);
       setStatus("ready");
       setStatusMessage(result.statusMessage);
       setParseProgressImmediate({ phase: "done", detail: "Done", percent: 100 });
@@ -888,6 +1049,7 @@ export function QuickReportApp() {
             <li>Enter the patient name and date of birth.</li>
             <li>Click <strong>Select SD-CARD</strong> and choose the SD-card root folder.</li>
             <li>Click <strong>Generate Reports</strong> to create 90, 60, 30, and 7 day reports.</li>
+            <li>If available, use <strong>Load Older History</strong> to review only the immediately previous therapy settings period.</li>
             <li>Use the report tabs in preview, then click <strong>Export PDF</strong> to save.</li>
           </ol>
         </article>
@@ -1020,7 +1182,7 @@ export function QuickReportApp() {
         <article className={`card col-8 ${isDataSourceLoading ? "card-loading" : ""}`} aria-busy={isDataSourceLoading}>
           {isDataSourceLoading ? <div className="loading-overlay">{dataSourceOverlayText}</div> : null}
           <h3>Data Source</h3>
-          <p className="subtle">Choose the SD-card root folder. Do not select a subfolder. The webapp keeps only the most recent 90 days NIMV data locally in browser.</p>
+          <p className="subtle">Choose the SD-card root folder. Do not select a subfolder. The webapp initially keeps only the most recent 90 days NIMV data locally in browser.</p>
 
           <div className="actions">
             <button
@@ -1100,6 +1262,158 @@ export function QuickReportApp() {
           </div>
         </article>
 
+        {loadedSourceLoader ? (
+          <article className="card col-12 therapy-history-card">
+            <div className="therapy-history-heading">
+              <div>
+                <h3>Therapy Settings History</h3>
+                <p className="subtle">Reports and PDF export remain limited to the current therapy settings.</p>
+              </div>
+            </div>
+
+            {hasOlderDatedData && !olderHistoryLoaded ? (
+              <div className="older-history-banner">
+                <div>
+                  <strong>
+                    {previousTherapyPeriod
+                      ? "Older therapy data with different settings is available."
+                      : "Older therapy data is available on this device/card."}
+                  </strong>
+                  <span>Loads only the immediately previous settings period, up to 90 days.</span>
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => {
+                    void handleLoadOlderHistory();
+                  }}
+                  disabled={isSourceLoading}
+                >
+                  Load Older History
+                </button>
+              </div>
+            ) : null}
+
+            <div className="therapy-period-list">
+              <section className="therapy-period therapy-period-current">
+                <span className="therapy-period-badge">Current Therapy</span>
+                <h4>{currentTherapyPeriod?.label ?? "Current settings"}</h4>
+                {currentTherapyPeriod ? (
+                  <>
+                    <p>
+                      {formatIsoDateLong(currentTherapyPeriod.startClinicalDayIso)} to{" "}
+                      {formatIsoDateLong(currentTherapyPeriod.endClinicalDayIso)}
+                    </p>
+                    <p className="subtle">{currentTherapyPeriod.daysWithData} days with data available</p>
+                  </>
+                ) : (
+                  <p className="subtle">Current settings are shown in generated reports.</p>
+                )}
+                <div className="actions">
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={() => {
+                      setShowPreviousTherapyReview(false);
+                      if (!hasGeneratedReports) void handleGenerate();
+                    }}
+                    disabled={!canGenerate}
+                  >
+                    {hasGeneratedReports ? "View Current Reports" : "Generate Current Reports"}
+                  </button>
+                  <button type="button" className="btn btn-primary" onClick={triggerDownload} disabled={!activeReport}>
+                    Export Current PDF
+                  </button>
+                </div>
+              </section>
+
+              <section className="therapy-period therapy-period-previous">
+                <span className="therapy-period-badge">Previous Therapy</span>
+                {previousTherapyPeriod?.machine ? (
+                  <>
+                    <h4>{previousTherapyPeriod.label}</h4>
+                    <p>
+                      {formatIsoDateLong(previousTherapyPeriod.startClinicalDayIso)} to{" "}
+                      {formatIsoDateLong(previousTherapyPeriod.endClinicalDayIso)}
+                    </p>
+                    <p className="subtle">{previousTherapyPeriod.daysWithData} days with data available</p>
+                    <p className="review-only-notice">Historical therapy period for review only. Export is unavailable.</p>
+                    <div className="actions">
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        onClick={() => {
+                          void handleReviewPreviousTherapy();
+                        }}
+                        disabled={!canGenerate}
+                      >
+                        Review Previous Period
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <p className="previous-unavailable">
+                    {hasOlderDatedData && !olderHistoryLoaded
+                      ? "Load older history to check the immediately previous settings period."
+                      : "Previous settings unavailable from this device/card."}
+                  </p>
+                )}
+              </section>
+            </div>
+          </article>
+        ) : null}
+
+        {showPreviousTherapyReview && previousTherapyReview ? (
+          <article className="card col-12 previous-review-card">
+            <div className="previous-review-heading">
+              <div>
+                <span className="therapy-period-badge">Previous Therapy Review</span>
+                <h3>{previousTherapyPeriod?.label ?? "Previous therapy settings"}</h3>
+                <p className="subtle">
+                  {previousTherapyReview.dateRangeStart} to {previousTherapyReview.dateRangeEnd}
+                </p>
+              </div>
+              <button type="button" className="btn btn-secondary" disabled>
+                Export unavailable
+              </button>
+            </div>
+            <p className="review-only-notice">Historical therapy period for review only. Export is unavailable.</p>
+            <div className="previous-review-metrics">
+              <div>
+                <span>Average usage</span>
+                <strong>{formatMetric(previousTherapyReview.avgUsageHours, " hrs")}</strong>
+              </div>
+              <div>
+                <span>Compliance</span>
+                <strong>{formatMetric(previousTherapyReview.compliancePercent, "%")}</strong>
+              </div>
+              <div>
+                <span>Average AHI</span>
+                <strong>{formatMetric(previousTherapyReview.avgAhi)}</strong>
+              </div>
+              <div>
+                <span>Average leak</span>
+                <strong>{formatMetric(previousTherapyReview.avgLeak, " L/min")}</strong>
+              </div>
+            </div>
+            <ul className="notes">
+              <li>
+                Days with data: {previousTherapyReview.daysWithData} / {previousTherapyReview.daysInWindow}
+              </li>
+              <li>Therapy mode: {previousTherapyReview.machine.mode ?? "Not available"}</li>
+              {previousTherapyReview.machine.pressure ? <li>Pressure: {previousTherapyReview.machine.pressure}</li> : null}
+              {previousTherapyReview.machine.pressureMin || previousTherapyReview.machine.pressureMax ? (
+                <li>
+                  Pressure range: {previousTherapyReview.machine.pressureMin ?? "Not available"} to{" "}
+                  {previousTherapyReview.machine.pressureMax ?? "Not available"}
+                </li>
+              ) : null}
+              {previousTherapyReview.machine.epap ? <li>EPAP: {previousTherapyReview.machine.epap}</li> : null}
+              {previousTherapyReview.machine.ipap ? <li>IPAP: {previousTherapyReview.machine.ipap}</li> : null}
+            </ul>
+          </article>
+        ) : null}
+
         {status === "ready" || status === "error" ? (
           <article className="card col-12">
             <h3>Status</h3>
@@ -1146,6 +1460,10 @@ export function QuickReportApp() {
 
         {hasGeneratedReports && activeReport ? (
           <article className="card col-12 preview-shell">
+            <div>
+              <span className="therapy-period-badge">Current Therapy Reports</span>
+              <p className="subtle">PDF preview and export are available only for the current therapy settings period.</p>
+            </div>
             <div className="range-tabs" role="tablist" aria-label="Generated report tabs">
               {generatedReportDays.map((days) => (
                 <button

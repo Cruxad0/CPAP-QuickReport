@@ -41,7 +41,8 @@ import {
   PreparedDayBucket,
   PreparedQuickReportSource,
   QuickReportMetrics,
-  SourceFile
+  SourceFile,
+  TherapySettingsPeriod
 } from "@/lib/types";
 
 const MAX_GENERIC_FILES_TO_SCAN = 2500;
@@ -383,6 +384,7 @@ type TherapySettingsRun = {
   label: string;
   startIso: string;
   endIso: string;
+  machine?: QuickReportMetrics["machine"];
 };
 
 function applyRecordTherapySettings(bucket: DayBucket, record: ParsedRecord) {
@@ -393,48 +395,86 @@ function applyRecordTherapySettings(bucket: DayBucket, record: ParsedRecord) {
   if (!bucket.therapySettingsSignature) {
     bucket.therapySettingsSignature = signature;
     bucket.therapySettingsLabel = label;
+    bucket.therapySettingsMachine = record.therapySettingsMachine ? cloneMachineSettings(record.therapySettingsMachine) : null;
     return;
   }
 
-  if (bucket.therapySettingsSignature === signature) return;
+  if (bucket.therapySettingsSignature === signature) {
+    if (!bucket.therapySettingsMachine && record.therapySettingsMachine) {
+      bucket.therapySettingsMachine = cloneMachineSettings(record.therapySettingsMachine);
+    }
+    return;
+  }
 
   const existingLabels = (bucket.therapySettingsLabel ?? "Therapy settings").split(" + ");
   if (!existingLabels.includes(label)) existingLabels.push(label);
   bucket.therapySettingsSignature = `mixed:${[bucket.therapySettingsSignature, signature].sort().join("|")}`;
   bucket.therapySettingsLabel = existingLabels.join(" + ");
+  bucket.therapySettingsMachine = null;
 }
 
-function therapySettingsEntries(dayMap: Map<string, DayBucket>): Array<{ day: string; signature: string; label: string }> {
-  return [...dayMap.entries()]
-    .map(([day, bucket]) => {
-      const signature = bucket.therapySettingsSignature?.trim();
-      if (!signature) return null;
-      return {
-        day,
-        signature,
-        label: bucket.therapySettingsLabel?.trim() || "Therapy settings"
-      };
-    })
-    .filter((entry): entry is { day: string; signature: string; label: string } => entry !== null)
-    .sort((a, b) => a.day.localeCompare(b.day));
+function therapySettingsEntries(
+  dayMap: Map<string, DayBucket>
+): Array<{ day: string; signature: string; label: string; machine?: QuickReportMetrics["machine"] }> {
+  const entries: Array<{ day: string; signature: string; label: string; machine?: QuickReportMetrics["machine"] }> = [];
+  for (const [day, bucket] of dayMap.entries()) {
+    const signature = bucket.therapySettingsSignature?.trim();
+    if (!signature) continue;
+    entries.push({
+      day,
+      signature,
+      label: bucket.therapySettingsLabel?.trim() || "Therapy settings",
+      machine: bucket.therapySettingsMachine ? cloneMachineSettings(bucket.therapySettingsMachine) : undefined
+    });
+  }
+  return entries.sort((a, b) => a.day.localeCompare(b.day));
 }
 
-function buildTherapySettingsRuns(entries: Array<{ day: string; signature: string; label: string }>): TherapySettingsRun[] {
+function buildTherapySettingsRuns(
+  entries: Array<{ day: string; signature: string; label: string; machine?: QuickReportMetrics["machine"] }>
+): TherapySettingsRun[] {
   const runs: TherapySettingsRun[] = [];
   for (const entry of entries) {
     const last = runs.at(-1);
     if (last && last.signature === entry.signature) {
       last.endIso = entry.day;
+      if (!last.machine && entry.machine) last.machine = cloneMachineSettings(entry.machine);
       continue;
     }
     runs.push({
       signature: entry.signature,
       label: entry.label,
       startIso: entry.day,
-      endIso: entry.day
+      endIso: entry.day,
+      machine: entry.machine ? cloneMachineSettings(entry.machine) : undefined
     });
   }
   return runs;
+}
+
+function addIsoCalendarDays(isoDay: string, days: number): string {
+  const date = new Date(`${isoDay}T00:00:00Z`);
+  if (Number.isNaN(date.getTime())) return isoDay;
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function buildTherapySettingsPeriods(dayMap: Map<string, DayBucket>, maxPeriodDays = 90): TherapySettingsPeriod[] {
+  const runs = buildTherapySettingsRuns(therapySettingsEntries(dayMap)).slice(-2);
+  return runs.map((run, idx) => {
+    const cappedStartIso = addIsoCalendarDays(run.endIso, -(maxPeriodDays - 1));
+    const startClinicalDayIso = run.startIso > cappedStartIso ? run.startIso : cappedStartIso;
+    const daysWithData = [...dayMap.keys()].filter((day) => day >= startClinicalDayIso && day <= run.endIso).length;
+    return {
+      kind: idx === runs.length - 1 ? "current" : "previous",
+      signature: run.signature,
+      label: run.label,
+      startClinicalDayIso,
+      endClinicalDayIso: run.endIso,
+      daysWithData,
+      machine: run.machine ? cloneMachineSettings(run.machine) : undefined
+    };
+  });
 }
 
 function summarizeTherapySettingsRuns(runs: TherapySettingsRun[], maxRuns = 4): string {
@@ -1467,7 +1507,8 @@ function parseResventStatText(text: string, fallbackDate: Date): ParsedRecord | 
     epapAvg: isReportPressureMetric(epapAvg) ? epapAvg : undefined,
     epap95th: isReportPressureMetric(epap95th) ? epap95th : undefined,
     therapySettingsSignature: therapySettings?.signature,
-    therapySettingsLabel: therapySettings?.label
+    therapySettingsLabel: therapySettings?.label,
+    therapySettingsMachine: therapySettings?.machine
   };
 }
 
@@ -1731,7 +1772,8 @@ function parseGenericDailyKeyValueRecord(text: string, fallbackDate: Date): Pars
     epapAvg: isReportPressureMetric(epapAvg) ? epapAvg : undefined,
     epap95th: isReportPressureMetric(epap95th) ? epap95th : undefined,
     therapySettingsSignature: therapySettings?.signature,
-    therapySettingsLabel: therapySettings?.label
+    therapySettingsLabel: therapySettings?.label,
+    therapySettingsMachine: therapySettings?.machine
   };
 }
 
@@ -1811,7 +1853,8 @@ function tryParseDelimited(text: string): ParsedRecord[] {
       epapAvg: epapAvgIdx >= 0 ? normalizePressureNumber(safeNumber(row[epapAvgIdx])) : undefined,
       epap95th: epap95Idx >= 0 ? normalizePressureNumber(safeNumber(row[epap95Idx])) : undefined,
       therapySettingsSignature: therapySettings?.signature,
-      therapySettingsLabel: therapySettings?.label
+      therapySettingsLabel: therapySettings?.label,
+      therapySettingsMachine: therapySettings?.machine
     });
   }
 
@@ -2268,7 +2311,8 @@ function createEmptyDayBucket(): DayBucket {
     respiratoryRateMin: null,
     respiratoryRateBins: {},
     therapySettingsSignature: null,
-    therapySettingsLabel: null
+    therapySettingsLabel: null,
+    therapySettingsMachine: null
   };
 }
 
@@ -3316,6 +3360,7 @@ async function prepareQuickReportSourceInternal(request: PrepareQuickReportSourc
     historyStartClinicalDayIso: familyParserContext.historyStartClinicalDayIso,
     latestClinicalDayIso: toIsoDate(latest),
     maxLookbackDays: normalizedLookbackDays,
+    therapySettingsPeriods: buildTherapySettingsPeriods(dayMap),
     dayBuckets: Object.fromEntries(dayMap.entries())
   };
 }
@@ -3328,11 +3373,27 @@ export function buildQuickReportMetricsFromPreparedSource(
   prepared: PreparedQuickReportSource,
   request: BuildQuickReportMetricsFromPreparedRequest
 ): QuickReportMetrics {
-  const { patientName, dateOfBirthIso, physicianName, lookbackDays, windowEndClinicalDayIso, onProgress } = request;
+  const { patientName, dateOfBirthIso, physicianName, lookbackDays, windowEndClinicalDayIso, therapyPeriodKind = "current", onProgress } = request;
   const normalizedLookbackDays = Math.min(normalizeLookbackDays(lookbackDays), prepared.maxLookbackDays);
-  const warnings = [...prepared.warnings];
+  const therapySettingsPeriods =
+    prepared.therapySettingsPeriods ??
+    buildTherapySettingsPeriods(new Map(Object.entries(prepared.dayBuckets).map(([day, bucket]) => [day, { ...bucket }])));
+  const selectedTherapyPeriod = therapySettingsPeriods.find((period) => period.kind === therapyPeriodKind);
+  if (therapyPeriodKind === "previous" && (!selectedTherapyPeriod || !selectedTherapyPeriod.machine)) {
+    throw new Error("Previous settings unavailable from this device/card.");
+  }
+  const warnings =
+    therapyPeriodKind === "previous"
+      ? prepared.warnings.filter((warning) => !/^Therapy settings changed during\b/.test(warning))
+      : [...prepared.warnings];
   const now = new Date();
-  const machine = cloneMachineSettings(prepared.machine);
+  const machine =
+    therapyPeriodKind === "previous" && selectedTherapyPeriod?.machine
+      ? {
+          ...(prepared.machine.device ? { device: prepared.machine.device } : {}),
+          ...cloneMachineSettings(selectedTherapyPeriod.machine)
+        }
+      : cloneMachineSettings(prepared.machine);
   const sourceTimeZoneOffsetMinutes = prepared.sourceTimeZoneOffsetMinutes ?? null;
 
   emit(onProgress, { phase: "compute", detail: `Computing ${normalizedLookbackDays}-day metrics...`, percent: 82 });
@@ -3374,8 +3435,12 @@ export function buildQuickReportMetricsFromPreparedSource(
     };
   };
 
-  const defaultWindow = windowEndClinicalDayIso
-    ? resolveWindowFromClinicalEndIso(windowEndClinicalDayIso, normalizedLookbackDays)
+  const resolvedWindowEndClinicalDayIso =
+    therapyPeriodKind === "previous" && selectedTherapyPeriod
+      ? addIsoCalendarDays(selectedTherapyPeriod.endClinicalDayIso, 1)
+      : windowEndClinicalDayIso;
+  const defaultWindow = resolvedWindowEndClinicalDayIso
+    ? resolveWindowFromClinicalEndIso(resolvedWindowEndClinicalDayIso, normalizedLookbackDays)
     : resolveRecentWindow(latest, normalizedLookbackDays, sourceTimeZoneOffsetMinutes);
   let { windowStartIso, windowEndIso, effectiveWindowStartIso, dayMap } = buildWindowSelection(defaultWindow);
 
@@ -3394,6 +3459,10 @@ export function buildQuickReportMetricsFromPreparedSource(
   if (therapySettingsWindowGuard.effectiveWindowStartIso) {
     dayMap = therapySettingsWindowGuard.dayMap;
     effectiveWindowStartIso = therapySettingsWindowGuard.effectiveWindowStartIso;
+  }
+
+  if (therapyPeriodKind === "previous") {
+    warnings.push("Historical therapy period for review only. Export is unavailable.");
   }
 
   const summaryAggregationPolicy = getReportSummaryAggregationPolicy(prepared.selectedLoader);
