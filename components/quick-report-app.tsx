@@ -396,6 +396,11 @@ export function QuickReportApp() {
   const hasLoadedPreviousTherapy = olderHistoryLoaded && previousTherapyPeriod !== null;
   const dashboardMetrics = showPreviousTherapyReview ? previousTherapyReview : activeMetrics;
   const dashboardPeriod = showPreviousTherapyReview ? previousTherapyPeriod : currentTherapyPeriod;
+  const dashboardSourceLatestDayLabel = showPreviousTherapyReview
+    ? previousTherapyPeriod
+      ? formatIsoDateLong(previousTherapyPeriod.endClinicalDayIso)
+      : null
+    : loadedSourceLatestClinicalDayLabel;
   const dashboardLatestClinicalDayIso =
     dashboardPeriod?.endClinicalDayIso ?? (!showPreviousTherapyReview ? loadedSourceLatestClinicalDayIso : null);
   const dashboardDataAge = dashboardLatestClinicalDayIso ? daysSinceIsoDate(dashboardLatestClinicalDayIso) : null;
@@ -1023,13 +1028,16 @@ export function QuickReportApp() {
               ><UiIcon name="history" size={20} /> Previous Data Overview</button>
               ) : null}
             </div>
-            {!showPreviousTherapyReview ? (
-              <div className="therapy-overview-toolbar">
-                <div className="therapy-overview-source">
-                  <UiIcon name="device" size={27} />
-                  <span><small>Device/card</small><strong>{loadedSourceLoader ?? "No device/card selected"}</strong><em>{loadedSourceLatestClinicalDayLabel ? `Last data: ${loadedSourceLatestClinicalDayLabel}` : "Select an SD-card to load therapy data"}</em></span>
-                </div>
-                {loadedSourceLoader ? (
+            <div className="therapy-overview-toolbar">
+              <div className="therapy-overview-source">
+                <UiIcon name="device" size={27} />
+                <span>
+                  <small>Device/card</small>
+                  <strong>{loadedSourceLoader ?? "No device/card selected"}</strong>
+                  <em>{dashboardSourceLatestDayLabel ? `Last data: ${dashboardSourceLatestDayLabel}` : "Select an SD-card to load therapy data"}</em>
+                </span>
+              </div>
+              {!showPreviousTherapyReview && loadedSourceLoader ? (
                   <button
                     type="button"
                     className={`btn btn-primary therapy-overview-generate ${canGenerate && !hasGeneratedReports ? "therapy-overview-generate-ready" : ""}`}
@@ -1038,9 +1046,8 @@ export function QuickReportApp() {
                   >
                     <UiIcon name="report" size={20} /> Analyze Data and Generate Report
                   </button>
-                ) : null}
-              </div>
-            ) : null}
+              ) : null}
+            </div>
             <div className="previous-review-metrics">
               <div className="review-metric review-metric-usage">
                 <span className="review-metric-icon"><UiIcon name="clock" size={33} /></span>
