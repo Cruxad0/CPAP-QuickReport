@@ -1441,7 +1441,8 @@ main {
   font-weight: 400;
 }
 
-.review-only-notice svg {
+.review-only-notice svg,
+.previous-unavailable svg {
   flex: 0 0 auto;
   color: #ad6503;
 }

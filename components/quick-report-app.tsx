@@ -414,6 +414,7 @@ export function QuickReportApp() {
     () => therapySettingsPeriods.find((period) => period.kind === "previous") ?? null,
     [therapySettingsPeriods]
   );
+  const hasLoadedPreviousTherapy = olderHistoryLoaded && previousTherapyPeriod !== null;
   const dashboardMetrics = showPreviousTherapyReview ? previousTherapyReview : activeMetrics;
   const dashboardPeriod = showPreviousTherapyReview ? previousTherapyPeriod : currentTherapyPeriod;
 
@@ -906,7 +907,15 @@ export function QuickReportApp() {
   };
 
   const handleReviewPreviousTherapy = async () => {
-    if (!canGenerate || !previousTherapyPeriod) return;
+    if (!previousTherapyPeriod || isSourceLoading || status === "working") return;
+
+    setShowPreviousTherapyReview(true);
+    if (!previousTherapyPeriod.machine) {
+      setPreviousTherapyReview(null);
+      setStatus(hasGeneratedReports ? "ready" : "idle");
+      setStatusMessage("Previous settings unavailable from this device/card.");
+      return;
+    }
 
     setStatus("working");
     setErrors([]);
@@ -1074,7 +1083,7 @@ export function QuickReportApp() {
           {errors.length > 0 ? <p className="setup-error">{errors[0]}</p> : null}
         </section>
 
-            {hasOlderDatedData && !olderHistoryLoaded || previousTherapyPeriod?.machine ? (
+            {(hasOlderDatedData && !olderHistoryLoaded) || olderHistoryLoaded ? (
             <div className="therapy-period-list">
               {hasOlderDatedData && !olderHistoryLoaded ? (
                 <div className="older-history-banner">
@@ -1100,7 +1109,7 @@ export function QuickReportApp() {
                 </div>
               ) : null}
 
-              {previousTherapyPeriod?.machine ? (
+              {hasLoadedPreviousTherapy && previousTherapyPeriod ? (
               <section className="therapy-period therapy-period-previous">
                 <div className="therapy-period-identity">
                   <span className="therapy-period-badge"><UiIcon name="history" size={17} /> Previous Therapy</span>
@@ -1118,7 +1127,7 @@ export function QuickReportApp() {
                         onClick={() => {
                           void handleReviewPreviousTherapy();
                         }}
-                        disabled={!canGenerate}
+                        disabled={isDataSourceLoading}
                       >
                         <UiIcon name="eye" size={21} />
                         Review Previous Period
@@ -1127,6 +1136,13 @@ export function QuickReportApp() {
                     </div>
               </section>
               ) : null}
+
+              {olderHistoryLoaded && !previousTherapyPeriod ? (
+                <p className="previous-unavailable">
+                  <UiIcon name="info" size={20} />
+                  <span><strong>Previous settings unavailable from this device/card.</strong><br />No immediately previous therapy settings period was found in the loaded history.</span>
+                </p>
+              ) : null}
             </div>
             ) : null}
           </article>
@@ -1134,7 +1150,7 @@ export function QuickReportApp() {
           <article className="card previous-review-card">
             <div className="review-tabs">
               <button type="button" className={!showPreviousTherapyReview ? "review-tab-active" : ""} onClick={() => setShowPreviousTherapyReview(false)}><UiIcon name="report" size={20} /> Therapy Overview</button>
-              {previousTherapyPeriod?.machine ? (
+              {hasLoadedPreviousTherapy ? (
               <button
                 type="button"
                 className={showPreviousTherapyReview ? "review-tab-active" : ""}
@@ -1184,7 +1200,15 @@ export function QuickReportApp() {
             <div className={`review-detail-row ${showPreviousTherapyReview ? "" : "review-detail-row-overview"}`}>
               <div><UiIcon name="calendar" size={27} /><span><small>Date Range</small><strong>{dashboardMetrics ? `${dashboardMetrics.dateRangeStart} – ${dashboardMetrics.dateRangeEnd}` : "No report selected"}</strong><em>{dashboardMetrics ? `${dashboardMetrics.daysWithData} days with data available` : "Generate or review a report"}</em></span></div>
               <div><UiIcon name="gear" size={27} /><span><small>Therapy Settings</small><strong>{dashboardPeriod?.label ?? "Not available"}</strong><em>{dashboardMetrics?.machine.pressure ? `Fixed pressure ${dashboardMetrics.machine.pressure}` : "Therapy settings summary"}</em></span></div>
-              {showPreviousTherapyReview ? <p className="review-only-notice"><UiIcon name="info" size={20} /><span><strong>Review only.</strong><br />Historical therapy period for review only.<br />Export is unavailable.</span></p> : null}
+              {showPreviousTherapyReview ? (
+                <p className="review-only-notice">
+                  <UiIcon name="info" size={20} />
+                  <span>
+                    <strong>{previousTherapyPeriod?.machine ? "Review only." : "Previous settings unavailable from this device/card."}</strong>
+                    <br />Historical therapy period for review only.<br />Export is unavailable.
+                  </span>
+                </p>
+              ) : null}
             </div>
           </article>
 
