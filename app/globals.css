@@ -530,8 +530,7 @@ textarea {
   color: #684f00;
 }
 
-.review-only-notice,
-.previous-unavailable {
+.review-only-notice {
   margin: 0.75rem 0 0;
   padding: 0.65rem 0.75rem;
   border-radius: 9px;
@@ -1427,8 +1426,7 @@ main {
   background: linear-gradient(180deg, #d98a0b 0%, #b86b00 100%);
 }
 
-.review-only-notice,
-.previous-unavailable {
+.review-only-notice {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -1441,8 +1439,7 @@ main {
   font-weight: 400;
 }
 
-.review-only-notice svg,
-.previous-unavailable svg {
+.review-only-notice svg {
   flex: 0 0 auto;
   color: #ad6503;
 }

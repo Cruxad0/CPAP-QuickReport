@@ -6,7 +6,11 @@ import test from "node:test";
 import { buildQuickReportMetricsFromPreparedSource, prepareQuickReportSource } from "../lib/parser";
 import { leakMetricRows } from "../lib/pdf";
 import { buildReportArtifactsFromPreparedSource } from "../lib/report-orchestrator";
-import { filterSourceFilesToRecentWindow, IMPORT_LOOKBACK_DAYS } from "../lib/source-files";
+import {
+  filterSourceFilesToRecentWindow,
+  IMPORT_LOOKBACK_DAYS,
+  OLDER_HISTORY_IMPORT_LOOKBACK_DAYS
+} from "../lib/source-files";
 import type { PreparedQuickReportSource } from "../lib/types";
 import { createSourceFilesFromDirectory } from "./helpers/fs-source-files";
 
@@ -47,6 +51,17 @@ async function loadFilteredFixture(root: string, lookbackDays = 90) {
     windowEndClinicalDayIso: nextClinicalDayIso(prepared.latestClinicalDayIso)
   });
   return { filtered, prepared, metrics };
+}
+
+async function loadBoundedTherapyHistoryFixture(root: string) {
+  const files = await createSourceFilesFromDirectory(root);
+  const filtered = filterSourceFilesToRecentWindow(files, OLDER_HISTORY_IMPORT_LOOKBACK_DAYS);
+  const prepared = await prepareQuickReportSource({
+    sourceKind: "folder",
+    files: filtered.files,
+    lookbackDays: OLDER_HISTORY_IMPORT_LOOKBACK_DAYS
+  });
+  return { filtered, prepared };
 }
 
 async function assertGeneratesSevenDayReport(prepared: PreparedQuickReportSource) {
@@ -415,6 +430,13 @@ maybeLocalAirSense10ShortTest("filtered AirSense 10 summary coverage generates a
   assert.ok(result.reports.every((report) => report.blob.size > 0));
 });
 
+maybeLocalAirSense10ShortTest("older dated files without a settings change do not offer previous therapy", async () => {
+  const { filtered, prepared } = await loadBoundedTherapyHistoryFixture(LOCAL_RESMED_AIRSENSE10_SHORT_ROOT);
+
+  assert.equal(filtered.hasOlderDatedData, true);
+  assert.equal(prepared.therapySettingsPeriods?.some((period) => period.kind === "previous" && period.machine), false);
+});
+
 maybeLocalAirSense11CpapTest("filtered AirSense 11 CPAP card preserves its recent pressure change and report", async () => {
   const { prepared, metrics } = await loadFilteredFixture(LOCAL_RESMED_AIRSENSE11_CPAP_ROOT);
   assert.equal(prepared.selectedLoader, "ResMed");
@@ -448,6 +470,15 @@ maybeLocalAirSense11CpapTest("filtered AirSense 11 CPAP card preserves its recen
   });
   assert.deepEqual(result.reports.map((report) => report.days), [7]);
   assert.ok(result.reports[0].blob.size > 0);
+});
+
+maybeLocalAirSense11CpapTest("bounded history offers only a detected previous settings generation", async () => {
+  const { prepared } = await loadBoundedTherapyHistoryFixture(LOCAL_RESMED_AIRSENSE11_CPAP_ROOT);
+  const previous = prepared.therapySettingsPeriods?.find((period) => period.kind === "previous" && period.machine);
+
+  assert.equal(previous?.label, "CPAP 10 cmH2O");
+  assert.ok(previous && previous.daysWithData > 0 && previous.daysWithData <= 90);
+  assert.equal(prepared.therapySettingsPeriods?.find((period) => period.kind === "current")?.label, "CPAP 11 cmH2O");
 });
 
 maybeLocalResMedCpapTest("local ResMed CPAP sample treats 95th leak as valid leak evidence", async () => {

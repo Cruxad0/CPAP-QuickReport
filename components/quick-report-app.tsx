@@ -5,9 +5,9 @@ import { flushSync } from "react-dom";
 import { enumerateDeferredFolderEntries, pickDirectoryHandle, supportsDirectoryPicker } from "@/lib/directory-picker";
 import { ReportWorkerClient } from "@/lib/report-worker-client";
 import { REPORT_RANGE_OPTIONS, type ReportRangeDays } from "@/lib/report-orchestrator";
-import { bytesToLabel, IMPORT_LOOKBACK_DAYS, OLDER_HISTORY_IMPORT_LOOKBACK_DAYS } from "@/lib/source-files";
+import { OLDER_HISTORY_IMPORT_LOOKBACK_DAYS } from "@/lib/source-files";
 import { daysSinceIsoDate, staleDataSeverity } from "@/lib/stale-data";
-import { ParseProgress, QuickReportMetrics, SourceFileSummary, TherapySettingsPeriod } from "@/lib/types";
+import { ParseProgress, QuickReportMetrics, TherapySettingsPeriod } from "@/lib/types";
 
 const SOURCE_SELECTION_CANCEL_TIMEOUT_MS = 20000;
 const CARD_READER_PRODUCTS = [
@@ -306,7 +306,6 @@ export function QuickReportApp() {
   const folderInputRef = useRef<HTMLInputElement>(null);
   const zipInputRef = useRef<HTMLInputElement>(null);
   const headerInputRef = useRef<HTMLInputElement>(null);
-  const selectedDirectoryHandleRef = useRef<Awaited<ReturnType<typeof pickDirectoryHandle>> | null>(null);
   const workerClientRef = useRef<ReportWorkerClient | null>(null);
   const sourceSelectionAttemptRef = useRef(0);
   const parseProgressRafRef = useRef<number | null>(null);
@@ -315,14 +314,10 @@ export function QuickReportApp() {
   const [patientName, setPatientName] = useState("");
   const [dateOfBirthInput, setDateOfBirthInput] = useState("");
   const [physicianName, setPhysicianName] = useState("");
-  const [sourceFiles, setSourceFiles] = useState<SourceFileSummary[]>([]);
   const [sourceFileCount, setSourceFileCount] = useState(0);
-  const [sourceFileBytes, setSourceFileBytes] = useState(0);
   const [loadedSourceLoader, setLoadedSourceLoader] = useState<string | null>(null);
   const [loadedSourceLatestClinicalDayIso, setLoadedSourceLatestClinicalDayIso] = useState<string | null>(null);
   const [loadedSourceWarnings, setLoadedSourceWarnings] = useState<string[]>([]);
-  const [loadedSourceKind, setLoadedSourceKind] = useState<"folder" | "zip" | null>(null);
-  const [hasOlderDatedData, setHasOlderDatedData] = useState(false);
   const [olderHistoryLoaded, setOlderHistoryLoaded] = useState(false);
   const [therapySettingsPeriods, setTherapySettingsPeriods] = useState<TherapySettingsPeriod[]>([]);
   const [previousTherapyReview, setPreviousTherapyReview] = useState<QuickReportMetrics | null>(null);
@@ -380,10 +375,6 @@ export function QuickReportApp() {
     };
   }, [generatedReports]);
 
-  const selectedCountLabel = useMemo(() => {
-    if (sourceFileCount === 0) return "No files selected";
-    return `${sourceFileCount} files selected (${bytesToLabel(sourceFileBytes)})`;
-  }, [sourceFileBytes, sourceFileCount]);
   const loadedSourceLatestClinicalDayLabel = useMemo(
     () => (loadedSourceLatestClinicalDayIso ? formatIsoDateLong(loadedSourceLatestClinicalDayIso) : null),
     [loadedSourceLatestClinicalDayIso]
@@ -411,7 +402,7 @@ export function QuickReportApp() {
     [therapySettingsPeriods]
   );
   const previousTherapyPeriod = useMemo(
-    () => therapySettingsPeriods.find((period) => period.kind === "previous") ?? null,
+    () => therapySettingsPeriods.find((period) => period.kind === "previous" && period.machine) ?? null,
     [therapySettingsPeriods]
   );
   const hasLoadedPreviousTherapy = olderHistoryLoaded && previousTherapyPeriod !== null;
@@ -530,12 +521,9 @@ export function QuickReportApp() {
     setIsSourceLoading(false);
     setPendingSourceSelection(null);
     setSourceFileCount(0);
-    setSourceFileBytes(0);
     setLoadedSourceLoader(null);
     setLoadedSourceLatestClinicalDayIso(null);
     setLoadedSourceWarnings([]);
-    setLoadedSourceKind(null);
-    setHasOlderDatedData(false);
     setOlderHistoryLoaded(false);
     setTherapySettingsPeriods([]);
     setPreviousTherapyReview(null);
@@ -558,12 +546,9 @@ export function QuickReportApp() {
       await workerClientRef.current?.reset();
 
       resetResultState();
-      setSourceFiles([]);
       setSourceFileCount(0);
-      setSourceFileBytes(0);
       setPatientName("");
       setDateOfBirthInput("");
-      selectedDirectoryHandleRef.current = null;
       clearSourceInputs();
       setParseProgressImmediate({ phase: "idle", detail: "Idle", percent: 0 });
       setStatus("idle");
@@ -582,7 +567,6 @@ export function QuickReportApp() {
   const handleFolderSelection: React.ChangeEventHandler<HTMLInputElement> = async (event) => {
     sourceSelectionAttemptRef.current += 1;
     setPendingSourceSelection(null);
-    selectedDirectoryHandleRef.current = null;
     const files = event.target.files;
     if (!files || files.length === 0) {
       setIsSourceLoading(false);
@@ -605,19 +589,15 @@ export function QuickReportApp() {
       const client = workerClientRef.current;
       if (!client) throw new Error("Background worker is not available.");
       const loaded = await client.loadFolder(files, {
-        importLookbackDays: IMPORT_LOOKBACK_DAYS,
-        parseLookbackDays: REPORT_RANGE_OPTIONS[0],
+        importLookbackDays: OLDER_HISTORY_IMPORT_LOOKBACK_DAYS,
+        parseLookbackDays: OLDER_HISTORY_IMPORT_LOOKBACK_DAYS,
         onProgress: (progress) => queueParseProgress(progress)
       });
 
-      setSourceFiles(loaded.files);
       setSourceFileCount(loaded.totalFileCount);
-      setSourceFileBytes(loaded.totalBytes);
       setLoadedSourceLoader(loaded.selectedLoader);
       setLoadedSourceLatestClinicalDayIso(loaded.latestClinicalDayIso);
       setLoadedSourceWarnings(loaded.warnings);
-      setLoadedSourceKind(loaded.sourceKind);
-      setHasOlderDatedData(loaded.hasOlderDatedData);
       setOlderHistoryLoaded(false);
       setTherapySettingsPeriods(loaded.therapySettingsPeriods);
       setPreviousTherapyReview(null);
@@ -657,15 +637,14 @@ export function QuickReportApp() {
         setLoadedSourceLatestClinicalDayIso(null);
         setLoadedSourceWarnings([]);
       });
-      selectedDirectoryHandleRef.current = rootHandle;
       const client = workerClientRef.current;
       if (!client) throw new Error("Background worker is not available.");
 
       let loaded;
       try {
         loaded = await client.loadFolderHandle(rootHandle, {
-          importLookbackDays: IMPORT_LOOKBACK_DAYS,
-          parseLookbackDays: REPORT_RANGE_OPTIONS[0],
+          importLookbackDays: OLDER_HISTORY_IMPORT_LOOKBACK_DAYS,
+          parseLookbackDays: OLDER_HISTORY_IMPORT_LOOKBACK_DAYS,
           onProgress: (progress) => queueParseProgress(progress)
         });
       } catch (error) {
@@ -673,7 +652,7 @@ export function QuickReportApp() {
         if (!/directory handle transfer/i.test(message)) {
           throw error;
         }
-        const enumeration = await enumerateDeferredFolderEntries(rootHandle, IMPORT_LOOKBACK_DAYS, (progress) =>
+        const enumeration = await enumerateDeferredFolderEntries(rootHandle, OLDER_HISTORY_IMPORT_LOOKBACK_DAYS, (progress) =>
           queueParseProgress(progress)
         );
         if (enumeration.entries.length === 0) {
@@ -688,21 +667,17 @@ export function QuickReportApp() {
         }
 
         loaded = await client.loadFolderEntries(enumeration.entries, {
-          importLookbackDays: IMPORT_LOOKBACK_DAYS,
-          parseLookbackDays: REPORT_RANGE_OPTIONS[0],
+          importLookbackDays: OLDER_HISTORY_IMPORT_LOOKBACK_DAYS,
+          parseLookbackDays: OLDER_HISTORY_IMPORT_LOOKBACK_DAYS,
           hasOlderDatedData: enumeration.hasOlderDatedData,
           onProgress: (progress) => queueParseProgress(progress)
         });
       }
 
-      setSourceFiles(loaded.files);
       setSourceFileCount(loaded.totalFileCount);
-      setSourceFileBytes(loaded.totalBytes);
       setLoadedSourceLoader(loaded.selectedLoader);
       setLoadedSourceLatestClinicalDayIso(loaded.latestClinicalDayIso);
       setLoadedSourceWarnings(loaded.warnings);
-      setLoadedSourceKind(loaded.sourceKind);
-      setHasOlderDatedData(loaded.hasOlderDatedData);
       setOlderHistoryLoaded(false);
       setTherapySettingsPeriods(loaded.therapySettingsPeriods);
       setPreviousTherapyReview(null);
@@ -749,7 +724,6 @@ export function QuickReportApp() {
   const handleZipSelection: React.ChangeEventHandler<HTMLInputElement> = async (event) => {
     sourceSelectionAttemptRef.current += 1;
     setPendingSourceSelection(null);
-    selectedDirectoryHandleRef.current = null;
     const zipFile = event.target.files?.[0];
     if (!zipFile) {
       setIsSourceLoading(false);
@@ -771,19 +745,15 @@ export function QuickReportApp() {
       const client = workerClientRef.current;
       if (!client) throw new Error("Background worker is not available.");
       const loaded = await client.loadZip(zipFile, {
-        importLookbackDays: IMPORT_LOOKBACK_DAYS,
-        parseLookbackDays: REPORT_RANGE_OPTIONS[0],
+        importLookbackDays: OLDER_HISTORY_IMPORT_LOOKBACK_DAYS,
+        parseLookbackDays: OLDER_HISTORY_IMPORT_LOOKBACK_DAYS,
         onProgress: (progress) => queueParseProgress(progress)
       });
 
-      setSourceFiles(loaded.files);
       setSourceFileCount(loaded.totalFileCount);
-      setSourceFileBytes(loaded.totalBytes);
       setLoadedSourceLoader(loaded.selectedLoader);
       setLoadedSourceLatestClinicalDayIso(loaded.latestClinicalDayIso);
       setLoadedSourceWarnings(loaded.warnings);
-      setLoadedSourceKind(loaded.sourceKind);
-      setHasOlderDatedData(loaded.hasOlderDatedData);
       setOlderHistoryLoaded(false);
       setTherapySettingsPeriods(loaded.therapySettingsPeriods);
       setPreviousTherapyReview(null);
@@ -826,97 +796,21 @@ export function QuickReportApp() {
     if (headerInputRef.current) headerInputRef.current.value = "";
   };
 
-  const handleLoadOlderHistory = async () => {
-    const client = workerClientRef.current;
-    if (!client || isSourceLoading || olderHistoryLoaded) return;
+  const handleLoadOlderHistory = () => {
+    if (isSourceLoading || olderHistoryLoaded || !previousTherapyPeriod) return;
 
-    setIsSourceLoading(true);
-    setStatus("working");
-    setErrors([]);
-    setStatusMessage("Loading the immediately previous therapy settings period...");
-    setParseProgressImmediate({ phase: "scan", detail: "Loading older therapy history...", percent: 1 });
-
-    try {
-      let loaded;
-      const rootHandle = selectedDirectoryHandleRef.current;
-      if (rootHandle) {
-        try {
-          loaded = await client.loadFolderHandle(rootHandle, {
-            importLookbackDays: OLDER_HISTORY_IMPORT_LOOKBACK_DAYS,
-            parseLookbackDays: OLDER_HISTORY_IMPORT_LOOKBACK_DAYS,
-            onProgress: (progress) => queueParseProgress(progress)
-          });
-        } catch (error) {
-          const message = error instanceof Error ? error.message : "Directory handle transfer to worker failed.";
-          if (!/directory handle transfer/i.test(message)) throw error;
-          const enumeration = await enumerateDeferredFolderEntries(
-            rootHandle,
-            OLDER_HISTORY_IMPORT_LOOKBACK_DAYS,
-            (progress) => queueParseProgress(progress)
-          );
-          loaded = await client.loadFolderEntries(enumeration.entries, {
-            importLookbackDays: OLDER_HISTORY_IMPORT_LOOKBACK_DAYS,
-            parseLookbackDays: OLDER_HISTORY_IMPORT_LOOKBACK_DAYS,
-            hasOlderDatedData: enumeration.hasOlderDatedData,
-            onProgress: (progress) => queueParseProgress(progress)
-          });
-        }
-      } else if (loadedSourceKind === "folder" && folderInputRef.current?.files?.length) {
-        loaded = await client.loadFolder(folderInputRef.current.files, {
-          importLookbackDays: OLDER_HISTORY_IMPORT_LOOKBACK_DAYS,
-          parseLookbackDays: OLDER_HISTORY_IMPORT_LOOKBACK_DAYS,
-          onProgress: (progress) => queueParseProgress(progress)
-        });
-      } else if (loadedSourceKind === "zip" && zipInputRef.current?.files?.[0]) {
-        loaded = await client.loadZip(zipInputRef.current.files[0], {
-          importLookbackDays: OLDER_HISTORY_IMPORT_LOOKBACK_DAYS,
-          parseLookbackDays: OLDER_HISTORY_IMPORT_LOOKBACK_DAYS,
-          onProgress: (progress) => queueParseProgress(progress)
-        });
-      } else {
-        throw new Error("The selected device/card is no longer available. Select it again to load older history.");
-      }
-
-      setSourceFiles(loaded.files);
-      setSourceFileCount(loaded.totalFileCount);
-      setSourceFileBytes(loaded.totalBytes);
-      setLoadedSourceLoader(loaded.selectedLoader);
-      setLoadedSourceLatestClinicalDayIso(loaded.latestClinicalDayIso);
-      setLoadedSourceWarnings(loaded.warnings);
-      setHasOlderDatedData(loaded.hasOlderDatedData);
-      setTherapySettingsPeriods(loaded.therapySettingsPeriods);
-      setOlderHistoryLoaded(true);
-      setPreviousTherapyReview(null);
-      setShowPreviousTherapyReview(false);
-      setStatus(hasGeneratedReports ? "ready" : "idle");
-      setStatusMessage(
-        loaded.therapySettingsPeriods.some((period) => period.kind === "previous")
-          ? "Older therapy data with different settings was found."
-          : "Previous settings unavailable from this device/card."
-      );
-      setParseProgressImmediate({ phase: "ready", detail: "Older therapy history checked", percent: 100 });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Could not load older therapy history.";
-      setStatus("error");
-      setErrors([message]);
-      setStatusMessage("Older therapy history load failed.");
-      setParseProgressImmediate({ phase: "error", detail: "Older history load failed", percent: 0 });
-    } finally {
-      setIsSourceLoading(false);
-    }
+    setOlderHistoryLoaded(true);
+    setPreviousTherapyReview(null);
+    setShowPreviousTherapyReview(false);
+    setStatus(hasGeneratedReports ? "ready" : "idle");
+    setStatusMessage("Older therapy data with different settings is ready for review.");
+    setParseProgressImmediate({ phase: "ready", detail: "Older therapy history ready", percent: 100 });
   };
 
   const handleReviewPreviousTherapy = async () => {
-    if (!previousTherapyPeriod || isSourceLoading || status === "working") return;
+    if (!previousTherapyPeriod?.machine || isSourceLoading || status === "working") return;
 
     setShowPreviousTherapyReview(true);
-    if (!previousTherapyPeriod.machine) {
-      setPreviousTherapyReview(null);
-      setStatus(hasGeneratedReports ? "ready" : "idle");
-      setStatusMessage("Previous settings unavailable from this device/card.");
-      return;
-    }
-
     setStatus("working");
     setErrors([]);
     setStatusMessage("Preparing previous therapy period review...");
@@ -1083,25 +977,19 @@ export function QuickReportApp() {
           {errors.length > 0 ? <p className="setup-error">{errors[0]}</p> : null}
         </section>
 
-            {(hasOlderDatedData && !olderHistoryLoaded) || olderHistoryLoaded ? (
+            {previousTherapyPeriod ? (
             <div className="therapy-period-list">
-              {hasOlderDatedData && !olderHistoryLoaded ? (
+              {!olderHistoryLoaded ? (
                 <div className="older-history-banner">
                   <span className="banner-icon"><UiIcon name="info" size={22} /></span>
                   <div>
-                    <strong>
-                      {previousTherapyPeriod
-                        ? "Older therapy data with different settings is available."
-                        : "Older therapy data is available on this device/card."}
-                    </strong>
+                    <strong>Older therapy data with different settings is available.</strong>
                     <span>This data uses therapy settings older than the current settings. Loads only the immediately previous settings period, up to 90 days.</span>
                   </div>
                   <button
                     type="button"
                     className="btn btn-primary"
-                    onClick={() => {
-                      void handleLoadOlderHistory();
-                    }}
+                    onClick={handleLoadOlderHistory}
                     disabled={isSourceLoading}
                   >
                     <UiIcon name="download" size={21} /> Load Older History
@@ -1135,13 +1023,6 @@ export function QuickReportApp() {
                       <p className="review-only-notice"><UiIcon name="warning" size={20} /><span>Historical therapy period for review only.<br />Export is unavailable.</span></p>
                     </div>
               </section>
-              ) : null}
-
-              {olderHistoryLoaded && !previousTherapyPeriod ? (
-                <p className="previous-unavailable">
-                  <UiIcon name="info" size={20} />
-                  <span><strong>Previous settings unavailable from this device/card.</strong><br />No immediately previous therapy settings period was found in the loaded history.</span>
-                </p>
               ) : null}
             </div>
             ) : null}
@@ -1204,7 +1085,7 @@ export function QuickReportApp() {
                 <p className="review-only-notice">
                   <UiIcon name="info" size={20} />
                   <span>
-                    <strong>{previousTherapyPeriod?.machine ? "Review only." : "Previous settings unavailable from this device/card."}</strong>
+                    <strong>Review only.</strong>
                     <br />Historical therapy period for review only.<br />Export is unavailable.
                   </span>
                 </p>
