@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "NIMV Clinician QuickReport",
-  description: "Local-first NIMV 90/60/30/7-day report generation for clinical handouts",
+  title: "CPAP Clinician QuickReport",
+  description: "Local-first CPAP therapy report generation and settings history review",
   icons: {
     icon: "/favicon.svg",
     shortcut: "/favicon.svg",

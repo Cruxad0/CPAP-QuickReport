@@ -917,3 +917,691 @@ textarea {
     max-height: 68px;
   }
 }
+
+/* Clinician dashboard redesign */
+:root {
+  --bg: #f1f7fc;
+  --surface: #ffffff;
+  --ink: #10294d;
+  --muted: #49627e;
+  --line: #cad6e2;
+  --brand: #0758b8;
+  --brand-2: #0872dc;
+  --navy: #09284d;
+  --teal: #087f82;
+  --amber: #bd6b00;
+  --amber-soft: #fff9ef;
+}
+
+html,
+body {
+  font-family: "Carlito", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  color: var(--ink);
+  background:
+    radial-gradient(circle at 50% 0%, rgba(255, 255, 255, 0.96), rgba(241, 247, 252, 0.9) 42%, rgba(232, 243, 251, 0.95) 100%),
+    #f1f7fc;
+}
+
+body {
+  min-width: 320px;
+}
+
+.app-bar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: grid;
+  grid-template-columns: 52px 1fr 52px;
+  align-items: center;
+  min-height: 58px;
+  padding: 0 18px;
+  color: #fff;
+  background: linear-gradient(100deg, #0b315d 0%, #08264a 55%, #061f3d 100%);
+  box-shadow: 0 2px 8px rgba(7, 32, 61, 0.22);
+}
+
+.app-bar strong {
+  justify-self: center;
+  font-size: clamp(1.18rem, 2vw, 1.58rem);
+  letter-spacing: 0.01em;
+}
+
+.app-bar-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  color: #fff;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+}
+
+.app-bar-icon:last-child {
+  justify-self: end;
+}
+
+.app-bar-icon:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+main {
+  width: min(1260px, calc(100% - 32px));
+  margin: 14px auto 32px;
+}
+
+.hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 14px 20px;
+  border: 1px solid #c8d4df;
+  border-radius: 7px;
+  box-shadow: 0 2px 7px rgba(9, 40, 77, 0.1);
+}
+
+.hero-title {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+}
+
+.hero-title-icon,
+.section-heading-icon {
+  display: inline-flex;
+  color: #0758b8;
+}
+
+.hero h1 {
+  color: #10294d;
+  font-size: clamp(1.3rem, 2vw, 1.72rem);
+}
+
+.hero-title p,
+.hero-privacy {
+  margin: 3px 0 0;
+  color: #526a84;
+  font-size: 0.9rem;
+}
+
+.hero-privacy {
+  max-width: 390px;
+  margin: 0;
+  text-align: right;
+}
+
+.hero-privacy a {
+  color: #0758b8;
+  font-weight: 700;
+}
+
+.grid {
+  margin-top: 12px;
+  gap: 12px;
+}
+
+.card {
+  padding: 16px 18px;
+  border: 1px solid #c8d4df;
+  border-radius: 7px;
+  box-shadow: 0 2px 7px rgba(9, 40, 77, 0.09);
+}
+
+.card h3 {
+  margin-top: 0;
+  color: #10294d;
+}
+
+.card h3::after {
+  content: "";
+  display: block;
+  width: 34px;
+  margin-top: 7px;
+  border-bottom: 2px solid #0a68c9;
+}
+
+.therapy-history-card h2,
+.previous-review-card h3 {
+  margin: 0;
+}
+
+.therapy-history-card h2 {
+  font-size: clamp(1.45rem, 2.4vw, 2rem);
+}
+
+.therapy-history-card {
+  padding: 18px 20px 14px;
+}
+
+.therapy-history-heading {
+  align-items: center;
+  justify-content: flex-start;
+  gap: 12px;
+  padding: 0 4px 12px;
+}
+
+.therapy-history-heading p {
+  margin: 3px 0 0;
+  color: #58708a;
+  font-size: 0.87rem;
+}
+
+.therapy-period-list {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+  margin-top: 0;
+}
+
+.therapy-period {
+  display: grid;
+  grid-template-columns: 180px minmax(260px, 1fr) minmax(330px, 0.95fr);
+  align-items: center;
+  gap: 22px;
+  min-height: 174px;
+  padding: 15px 24px;
+  border: 1px solid #ccd7e1;
+  border-radius: 7px;
+  background: linear-gradient(100deg, #fff 0%, #fff 70%, #fbfdff 100%);
+  box-shadow: 0 2px 5px rgba(9, 40, 77, 0.08);
+}
+
+.therapy-period-current {
+  border-color: #c6d3df;
+}
+
+.therapy-period-previous {
+  border-color: #d5d9dd;
+  background: linear-gradient(100deg, #fff 0%, #fff 68%, #fffbf4 100%);
+}
+
+.therapy-period-identity {
+  display: grid;
+  align-self: stretch;
+  align-content: space-between;
+  justify-items: start;
+  min-width: 0;
+}
+
+.therapy-period-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 11px;
+  border-radius: 6px;
+  color: #fff;
+  background: linear-gradient(180deg, #0c9c9d 0%, #047176 100%);
+  box-shadow: 0 2px 5px rgba(4, 113, 118, 0.22);
+  font-size: 0.8rem;
+  letter-spacing: 0.01em;
+}
+
+.therapy-period-previous .therapy-period-badge,
+.previous-review-card .therapy-period-badge {
+  color: #fff;
+  background: linear-gradient(180deg, #df8a0b 0%, #b86500 100%);
+  box-shadow: 0 2px 5px rgba(184, 101, 0, 0.2);
+}
+
+.therapy-device-icon {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 104px;
+  height: 104px;
+  margin-left: 14px;
+  color: #087b80;
+  border: 1px solid #84c1c4;
+  border-radius: 50%;
+  background: radial-gradient(circle, #fff 0%, #f1fbfb 72%, #e9f6f6 100%);
+}
+
+.therapy-device-icon i {
+  position: absolute;
+  right: 4px;
+  bottom: 17px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  color: #fff;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: #087b80;
+}
+
+.therapy-period-previous .therapy-device-icon {
+  color: #b86b06;
+  border-color: #efbf79;
+  background: radial-gradient(circle, #fff 0%, #fffaf0 72%, #fff5e4 100%);
+}
+
+.therapy-period-previous .therapy-device-icon i {
+  background: #b86b06;
+}
+
+.therapy-period-details {
+  min-width: 0;
+  padding-left: 24px;
+  border-left: 1px solid #d8e0e7;
+}
+
+.therapy-period h4 {
+  margin: 0 0 13px;
+  color: #10294d;
+  font-size: clamp(1.35rem, 2.4vw, 1.95rem);
+}
+
+.therapy-period-details p {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  margin: 8px 0;
+  color: #263e5c;
+  font-size: 1rem;
+}
+
+.therapy-period-details p svg {
+  flex: 0 0 auto;
+  color: #0758b8;
+}
+
+.therapy-period-unavailable {
+  grid-column: span 2;
+}
+
+.therapy-period-actions {
+  display: grid;
+  gap: 12px;
+}
+
+.therapy-period-actions .btn {
+  min-height: 53px;
+  justify-content: center;
+  font-size: 1rem;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  border-radius: 6px;
+  padding: 0.62rem 1rem;
+}
+
+.btn-primary {
+  border-color: #0758b8;
+  background: linear-gradient(180deg, #0b70dc 0%, #075bc1 100%);
+  box-shadow: 0 2px 4px rgba(7, 88, 184, 0.18);
+}
+
+.btn-secondary {
+  border-color: #bdc8d2;
+  background: #f8fafc;
+  color: #173658;
+}
+
+.btn-outline-current,
+.btn-outline-previous {
+  border-color: #0866d0;
+  background: #fff;
+  color: #0758b8;
+}
+
+.btn-outline-previous {
+  border-color: #ca790f;
+  color: #985807;
+}
+
+.btn:hover:not(:disabled) {
+  filter: brightness(0.97);
+  transform: translateY(-1px);
+}
+
+.older-history-banner {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 15px;
+  margin: 4px 8px 0;
+  padding: 13px 16px;
+  border: 1px solid #0870dc;
+  border-radius: 8px;
+  background: linear-gradient(90deg, #f9fcff, #f5faff);
+}
+
+.older-history-banner .banner-icon {
+  display: inline-flex;
+  padding: 3px;
+  color: #fff;
+  border-radius: 50%;
+  background: #0965c8;
+}
+
+.older-history-banner strong {
+  color: #10294d;
+  font-size: 1rem;
+}
+
+.older-history-banner span {
+  color: #4d6680;
+}
+
+.older-history-banner .btn {
+  min-width: 210px;
+  justify-content: center;
+}
+
+.review-only-notice,
+.previous-unavailable {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid #e1a143;
+  border-radius: 6px;
+  color: #4b3b25;
+  background: #fffaf1;
+  font-weight: 400;
+}
+
+.review-only-notice svg {
+  flex: 0 0 auto;
+  color: #ad6503;
+}
+
+.previous-review-card {
+  padding: 0 18px 14px;
+  border-color: #c8d4df;
+  background: #fff;
+}
+
+.review-tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  min-height: 62px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid #d7e0e8;
+}
+
+.review-tabs > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 215px;
+  padding: 0 24px;
+  color: #294e78;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  background: #fff;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.review-tabs > button:hover,
+.review-tabs > .review-tab-active {
+  color: #0758b8;
+  border-bottom-color: #096ad3;
+  background: linear-gradient(180deg, #fff, #f5f9fd);
+}
+
+.review-export-disabled {
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  margin: 8px 0 6px auto;
+}
+
+.review-export-disabled .btn {
+  padding-top: 0.5rem;
+  padding-bottom: 0.5rem;
+}
+
+.review-export-disabled small {
+  color: #6c7b8d;
+}
+
+.previous-review-metrics {
+  gap: 18px;
+  margin-top: 0;
+}
+
+.previous-review-metrics .review-metric {
+  display: flex;
+  grid-template-columns: none;
+  align-items: center;
+  gap: 16px;
+  min-height: 106px;
+  padding: 13px 16px;
+  border: 1px solid #ccd7e2;
+  border-radius: 7px;
+  box-shadow: 0 1px 3px rgba(9, 40, 77, 0.05);
+}
+
+.review-metric-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  height: 64px;
+  flex: 0 0 auto;
+  color: #0966c9;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  background: #f2f8ff;
+}
+
+.review-metric-compliance .review-metric-icon {
+  color: #087d61;
+  background: #f0faf6;
+}
+
+.review-metric-ahi .review-metric-icon {
+  color: #6351b8;
+  background: #f7f5ff;
+}
+
+.review-metric-leak .review-metric-icon {
+  color: #0966c9;
+}
+
+.review-metric > span:last-child {
+  display: grid;
+  gap: 1px;
+}
+
+.previous-review-metrics .review-metric small,
+.review-detail-row small {
+  color: #18304f;
+  font-size: 0.83rem;
+  font-weight: 700;
+}
+
+.previous-review-metrics .review-metric strong {
+  color: #10294d;
+  font-size: 1.55rem;
+  line-height: 1;
+}
+
+.review-metric em,
+.review-detail-row em {
+  color: #4d6680;
+  font-size: 0.75rem;
+  font-style: normal;
+}
+
+.review-detail-row {
+  display: grid;
+  grid-template-columns: 1.1fr 1.3fr 1fr;
+  align-items: stretch;
+  margin-top: 14px;
+  border: 1px solid #ccd7e2;
+  border-radius: 7px;
+}
+
+.review-detail-row > div {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 14px 20px;
+  color: #0758b8;
+}
+
+.review-detail-row > div + div {
+  border-left: 1px solid #d9e1e8;
+}
+
+.review-detail-row > div span {
+  display: grid;
+  gap: 6px;
+}
+
+.review-detail-row strong {
+  color: #10294d;
+  font-size: 1.05rem;
+}
+
+.review-detail-row .review-only-notice {
+  margin: 11px;
+}
+
+.range-tabs {
+  border-radius: 6px;
+}
+
+.range-tab {
+  border-radius: 4px;
+}
+
+.input,
+.date-input {
+  border-radius: 6px;
+}
+
+.progress-track {
+  height: 8px;
+}
+
+.preview-frame {
+  border-radius: 6px;
+}
+
+@media (max-width: 1050px) {
+  .therapy-period {
+    grid-template-columns: 160px 1fr;
+  }
+
+  .therapy-period-actions {
+    grid-column: 1 / -1;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .previous-period-actions {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .review-detail-row {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .review-detail-row .review-only-notice {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 760px) {
+  .app-bar {
+    padding: 0 8px;
+  }
+
+  main {
+    width: min(100% - 18px, 1260px);
+    margin-top: 9px;
+  }
+
+  .hero {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .hero-privacy {
+    text-align: left;
+  }
+
+  .therapy-history-card {
+    padding: 14px 10px 10px;
+  }
+
+  .therapy-period {
+    grid-template-columns: 1fr;
+    gap: 15px;
+    padding: 14px;
+  }
+
+  .therapy-period-identity {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .therapy-device-icon {
+    width: 74px;
+    height: 74px;
+    margin: 0;
+  }
+
+  .therapy-period-details,
+  .therapy-period-unavailable {
+    grid-column: auto;
+    padding: 0;
+    border: 0;
+  }
+
+  .therapy-period-actions,
+  .previous-period-actions {
+    grid-column: auto;
+    grid-template-columns: 1fr;
+  }
+
+  .older-history-banner {
+    grid-template-columns: auto 1fr;
+    margin-right: 0;
+    margin-left: 0;
+  }
+
+  .older-history-banner .btn {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+
+  .review-tabs > button {
+    min-width: 0;
+    padding: 0 12px;
+  }
+
+  .review-export-disabled {
+    display: none;
+  }
+
+  .previous-review-metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .review-detail-row {
+    grid-template-columns: 1fr;
+  }
+
+  .review-detail-row > div + div {
+    border-top: 1px solid #d9e1e8;
+    border-left: 0;
+  }
+}

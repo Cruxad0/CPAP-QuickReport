@@ -139,6 +139,76 @@ function formatMetric(value: number | null | undefined, suffix = ""): string {
   return typeof value === "number" && Number.isFinite(value) ? `${Number(value.toFixed(1))}${suffix}` : "Not available";
 }
 
+type UiIconName =
+  | "activity"
+  | "calendar"
+  | "check"
+  | "clock"
+  | "database"
+  | "device"
+  | "document"
+  | "download"
+  | "drop"
+  | "eye"
+  | "gear"
+  | "help"
+  | "history"
+  | "info"
+  | "menu"
+  | "report"
+  | "warning";
+
+function UiIcon({ name, size = 24 }: { name: UiIconName; size?: number }) {
+  const common = {
+    width: size,
+    height: size,
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: 1.9,
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+    "aria-hidden": true
+  };
+
+  switch (name) {
+    case "menu":
+      return <svg {...common}><path d="M4 6h16M4 12h16M4 18h16" /></svg>;
+    case "help":
+      return <svg {...common}><circle cx="12" cy="12" r="9" /><path d="M9.7 9a2.5 2.5 0 1 1 3.8 2.1c-1 .6-1.5 1.1-1.5 2.4M12 17h.01" /></svg>;
+    case "clock":
+      return <svg {...common}><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>;
+    case "history":
+      return <svg {...common}><path d="M4 11a8 8 0 1 0 2.3-5.7L4 7.5" /><path d="M4 3v4.5h4.5M12 7v5l3 2" /></svg>;
+    case "check":
+      return <svg {...common}><circle cx="12" cy="12" r="9" /><path d="m8 12 2.6 2.6L16.5 9" /></svg>;
+    case "device":
+      return <svg {...common}><rect x="3" y="5" width="15" height="12" rx="2" /><path d="M7 9h7v4H7zM7 15h.01M11 15h.01M18 12h2a2 2 0 0 1 2 2v3" /></svg>;
+    case "calendar":
+      return <svg {...common}><rect x="4" y="5" width="16" height="15" rx="2" /><path d="M8 3v4M16 3v4M4 9h16M8 13h.01M12 13h.01M16 13h.01M8 17h.01M12 17h.01" /></svg>;
+    case "database":
+      return <svg {...common}><ellipse cx="12" cy="5" rx="7" ry="3" /><path d="M5 5v6c0 1.7 3.1 3 7 3s7-1.3 7-3V5M5 11v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6" /></svg>;
+    case "report":
+      return <svg {...common}><path d="M4 19V5M4 19h16M8 16v-5M12 16V8M16 16V4" /></svg>;
+    case "document":
+      return <svg {...common}><path d="M7 3h7l4 4v14H7zM14 3v5h4M10 12h5M10 16h5" /></svg>;
+    case "download":
+      return <svg {...common}><path d="M12 3v12m0 0-4-4m4 4 4-4M5 16v4h14v-4" /></svg>;
+    case "eye":
+      return <svg {...common}><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z" /><circle cx="12" cy="12" r="2.5" /></svg>;
+    case "warning":
+      return <svg {...common}><path d="m12 3 9 17H3L12 3Z" /><path d="M12 9v5M12 17h.01" /></svg>;
+    case "info":
+      return <svg {...common}><circle cx="12" cy="12" r="9" /><path d="M12 11v6M12 7h.01" /></svg>;
+    case "activity":
+      return <svg {...common}><path d="M3 12h4l2-6 4 12 2-6h6" /></svg>;
+    case "drop":
+      return <svg {...common}><path d="M12 3s6 6.2 6 11a6 6 0 0 1-12 0c0-4.8 6-11 6-11Z" /></svg>;
+    case "gear":
+      return <svg {...common}><circle cx="12" cy="12" r="3" /><path d="M19 14.5 21 16l-2 3.5-2.4-1a8 8 0 0 1-2.6 1.5L13.7 23h-4l-.3-3a8 8 0 0 1-2.6-1.5l-2.4 1L2.5 16l2-1.5a8 8 0 0 1 0-3L2.5 10l2-3.5 2.4 1A8 8 0 0 1 9.4 6l.3-3h4l.3 3a8 8 0 0 1 2.6 1.5l2.4-1 2 3.5-2 1.5a8 8 0 0 1 0 3Z" /></svg>;
+  }
+}
+
 function isMixedDataWarning(warning: string): boolean {
   return /^(?:Mixed device data detected|Multiple device layouts detected)\./.test(warning);
 }
@@ -1029,21 +1099,41 @@ export function QuickReportApp() {
   };
 
   return (
-    <main>
-      <section className="hero">
-        <h1>NIMV Clinician QuickReport</h1>
-        <p>Create a 90/60/30/7-day NIMV PDF report in a few steps. Data is processed locally and never stored.</p>
-        <p className="subtle">
-          Powered by{" "}
-          <a href="https://notespecialist.com" target="_blank" rel="noopener noreferrer">
-            NoteSpecialist.com
-          </a>
-          {", "}an AI-powered clinical documentation tool.
-        </p>
-      </section>
+    <>
+      <header className="app-bar">
+        <button type="button" className="app-bar-icon" aria-label="Go to top" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}>
+          <UiIcon name="menu" size={25} />
+        </button>
+        <strong>CPAP Clinician QuickReport</strong>
+        <button
+          type="button"
+          className="app-bar-icon"
+          aria-label="Help"
+          onClick={() => document.getElementById("how-to-use")?.scrollIntoView({ behavior: "smooth" })}
+        >
+          <UiIcon name="help" size={25} />
+        </button>
+      </header>
+      <main>
+        <section className="hero">
+          <div className="hero-title">
+            <span className="hero-title-icon"><UiIcon name="report" size={27} /></span>
+            <div>
+              <h1>CPAP Clinician QuickReport</h1>
+              <p>Create current therapy reports and review the immediately previous settings period.</p>
+            </div>
+          </div>
+          <p className="hero-privacy">
+            Data is processed locally and never stored. Powered by{" "}
+            <a href="https://notespecialist.com" target="_blank" rel="noopener noreferrer">
+              NoteSpecialist.com
+            </a>
+            .
+          </p>
+        </section>
 
-      <section className="grid">
-        <article className="card col-12">
+        <section className="grid">
+        <article id="how-to-use" className="card col-12">
           <h3>How-To Use</h3>
           <ol className="usage-steps">
             <li>Enter the patient name and date of birth.</li>
@@ -1182,7 +1272,7 @@ export function QuickReportApp() {
         <article className={`card col-8 ${isDataSourceLoading ? "card-loading" : ""}`} aria-busy={isDataSourceLoading}>
           {isDataSourceLoading ? <div className="loading-overlay">{dataSourceOverlayText}</div> : null}
           <h3>Data Source</h3>
-          <p className="subtle">Choose the SD-card root folder. Do not select a subfolder. The webapp initially keeps only the most recent 90 days NIMV data locally in browser.</p>
+          <p className="subtle">Choose the SD-card root folder. Do not select a subfolder. The webapp initially keeps only the most recent 90 days of therapy data locally in the browser.</p>
 
           <div className="actions">
             <button
@@ -1265,98 +1355,110 @@ export function QuickReportApp() {
         {loadedSourceLoader ? (
           <article className="card col-12 therapy-history-card">
             <div className="therapy-history-heading">
+              <span className="section-heading-icon"><UiIcon name="clock" size={27} /></span>
               <div>
-                <h3>Therapy Settings History</h3>
-                <p className="subtle">Reports and PDF export remain limited to the current therapy settings.</p>
+                <h2>Therapy Settings History</h2>
+                <p>Reports and PDF export remain limited to the current therapy settings.</p>
               </div>
             </div>
 
-            {hasOlderDatedData && !olderHistoryLoaded ? (
-              <div className="older-history-banner">
-                <div>
-                  <strong>
-                    {previousTherapyPeriod
-                      ? "Older therapy data with different settings is available."
-                      : "Older therapy data is available on this device/card."}
-                  </strong>
-                  <span>Loads only the immediately previous settings period, up to 90 days.</span>
-                </div>
-                <button
-                  type="button"
-                  className="btn btn-secondary"
-                  onClick={() => {
-                    void handleLoadOlderHistory();
-                  }}
-                  disabled={isSourceLoading}
-                >
-                  Load Older History
-                </button>
-              </div>
-            ) : null}
-
             <div className="therapy-period-list">
               <section className="therapy-period therapy-period-current">
-                <span className="therapy-period-badge">Current Therapy</span>
-                <h4>{currentTherapyPeriod?.label ?? "Current settings"}</h4>
-                {currentTherapyPeriod ? (
-                  <>
-                    <p>
-                      {formatIsoDateLong(currentTherapyPeriod.startClinicalDayIso)} to{" "}
-                      {formatIsoDateLong(currentTherapyPeriod.endClinicalDayIso)}
-                    </p>
-                    <p className="subtle">{currentTherapyPeriod.daysWithData} days with data available</p>
-                  </>
-                ) : (
-                  <p className="subtle">Current settings are shown in generated reports.</p>
-                )}
-                <div className="actions">
+                <div className="therapy-period-identity">
+                  <span className="therapy-period-badge"><UiIcon name="check" size={17} /> Current Therapy</span>
+                  <span className="therapy-device-icon"><UiIcon name="device" size={45} /><i><UiIcon name="check" size={15} /></i></span>
+                </div>
+                <div className="therapy-period-details">
+                  <h4>{currentTherapyPeriod?.label ?? "Current settings"}</h4>
+                  {currentTherapyPeriod ? (
+                    <>
+                      <p><UiIcon name="calendar" size={20} /> {formatIsoDateLong(currentTherapyPeriod.startClinicalDayIso)} – {formatIsoDateLong(currentTherapyPeriod.endClinicalDayIso)}</p>
+                      <p><UiIcon name="database" size={20} /> {currentTherapyPeriod.daysWithData} days with data available</p>
+                    </>
+                  ) : (
+                    <p>Current settings are shown in generated reports.</p>
+                  )}
+                </div>
+                <div className="therapy-period-actions">
                   <button
                     type="button"
-                    className="btn btn-secondary"
+                    className="btn btn-outline-current"
                     onClick={() => {
                       setShowPreviousTherapyReview(false);
                       if (!hasGeneratedReports) void handleGenerate();
                     }}
                     disabled={!canGenerate}
                   >
+                    <UiIcon name="report" size={21} />
                     {hasGeneratedReports ? "View Current Reports" : "Generate Current Reports"}
                   </button>
                   <button type="button" className="btn btn-primary" onClick={triggerDownload} disabled={!activeReport}>
+                    <UiIcon name="document" size={21} />
                     Export Current PDF
                   </button>
                 </div>
               </section>
 
+              {hasOlderDatedData && !olderHistoryLoaded ? (
+                <div className="older-history-banner">
+                  <span className="banner-icon"><UiIcon name="info" size={22} /></span>
+                  <div>
+                    <strong>
+                      {previousTherapyPeriod
+                        ? "Older therapy data with different settings is available."
+                        : "Older therapy data is available on this device/card."}
+                    </strong>
+                    <span>Loads only the immediately previous settings period, up to 90 days.</span>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={() => {
+                      void handleLoadOlderHistory();
+                    }}
+                    disabled={isSourceLoading}
+                  >
+                    <UiIcon name="download" size={21} /> Load Older History
+                  </button>
+                </div>
+              ) : null}
+
               <section className="therapy-period therapy-period-previous">
-                <span className="therapy-period-badge">Previous Therapy</span>
+                <div className="therapy-period-identity">
+                  <span className="therapy-period-badge"><UiIcon name="history" size={17} /> Previous Therapy</span>
+                  <span className="therapy-device-icon"><UiIcon name="device" size={45} /><i><UiIcon name="history" size={15} /></i></span>
+                </div>
                 {previousTherapyPeriod?.machine ? (
                   <>
-                    <h4>{previousTherapyPeriod.label}</h4>
-                    <p>
-                      {formatIsoDateLong(previousTherapyPeriod.startClinicalDayIso)} to{" "}
-                      {formatIsoDateLong(previousTherapyPeriod.endClinicalDayIso)}
-                    </p>
-                    <p className="subtle">{previousTherapyPeriod.daysWithData} days with data available</p>
-                    <p className="review-only-notice">Historical therapy period for review only. Export is unavailable.</p>
-                    <div className="actions">
+                    <div className="therapy-period-details">
+                      <h4>{previousTherapyPeriod.label}</h4>
+                      <p><UiIcon name="calendar" size={20} /> {formatIsoDateLong(previousTherapyPeriod.startClinicalDayIso)} – {formatIsoDateLong(previousTherapyPeriod.endClinicalDayIso)}</p>
+                      <p><UiIcon name="database" size={20} /> {previousTherapyPeriod.daysWithData} days with data available</p>
+                    </div>
+                    <div className="therapy-period-actions previous-period-actions">
                       <button
                         type="button"
-                        className="btn btn-secondary"
+                        className="btn btn-outline-previous"
                         onClick={() => {
                           void handleReviewPreviousTherapy();
                         }}
                         disabled={!canGenerate}
                       >
+                        <UiIcon name="eye" size={21} />
                         Review Previous Period
                       </button>
+                      <p className="review-only-notice"><UiIcon name="warning" size={20} /><span>Historical therapy period for review only.<br />Export is unavailable.</span></p>
                     </div>
                   </>
                 ) : (
-                  <p className="previous-unavailable">
-                    {hasOlderDatedData && !olderHistoryLoaded
-                      ? "Load older history to check the immediately previous settings period."
-                      : "Previous settings unavailable from this device/card."}
-                  </p>
+                  <div className="therapy-period-details therapy-period-unavailable">
+                    <h4>Previous settings</h4>
+                    <p className="previous-unavailable">
+                      {hasOlderDatedData && !olderHistoryLoaded
+                        ? "Load older history to check the immediately previous settings period."
+                        : "Previous settings unavailable from this device/card."}
+                    </p>
+                  </div>
                 )}
               </section>
             </div>
@@ -1365,52 +1467,34 @@ export function QuickReportApp() {
 
         {showPreviousTherapyReview && previousTherapyReview ? (
           <article className="card col-12 previous-review-card">
-            <div className="previous-review-heading">
-              <div>
-                <span className="therapy-period-badge">Previous Therapy Review</span>
-                <h3>{previousTherapyPeriod?.label ?? "Previous therapy settings"}</h3>
-                <p className="subtle">
-                  {previousTherapyReview.dateRangeStart} to {previousTherapyReview.dateRangeEnd}
-                </p>
-              </div>
-              <button type="button" className="btn btn-secondary" disabled>
-                Export unavailable
-              </button>
+            <div className="review-tabs">
+              <button type="button" onClick={() => setShowPreviousTherapyReview(false)}><UiIcon name="report" size={20} /> Current Therapy</button>
+              <button type="button" className="review-tab-active"><UiIcon name="history" size={20} /> Previous Therapy</button>
+              <span className="review-export-disabled"><button type="button" className="btn btn-secondary" disabled><UiIcon name="document" size={20} /> Export PDF</button><small>Current therapy only</small></span>
             </div>
-            <p className="review-only-notice">Historical therapy period for review only. Export is unavailable.</p>
             <div className="previous-review-metrics">
-              <div>
-                <span>Average usage</span>
-                <strong>{formatMetric(previousTherapyReview.avgUsageHours, " hrs")}</strong>
+              <div className="review-metric review-metric-usage">
+                <span className="review-metric-icon"><UiIcon name="clock" size={33} /></span>
+                <span><small>Usage</small><strong>{formatMetric(previousTherapyReview.avgUsageHours, " hrs")}</strong><em>nightly average</em></span>
               </div>
-              <div>
-                <span>Compliance</span>
-                <strong>{formatMetric(previousTherapyReview.compliancePercent, "%")}</strong>
+              <div className="review-metric review-metric-compliance">
+                <span className="review-metric-icon"><UiIcon name="check" size={33} /></span>
+                <span><small>Compliance</small><strong>{formatMetric(previousTherapyReview.compliancePercent, "%")}</strong><em>days used ≥ 4 hrs</em></span>
               </div>
-              <div>
-                <span>Average AHI</span>
-                <strong>{formatMetric(previousTherapyReview.avgAhi)}</strong>
+              <div className="review-metric review-metric-ahi">
+                <span className="review-metric-icon"><UiIcon name="activity" size={33} /></span>
+                <span><small>AHI</small><strong>{formatMetric(previousTherapyReview.avgAhi)}</strong><em>events/hr</em></span>
               </div>
-              <div>
-                <span>Average leak</span>
-                <strong>{formatMetric(previousTherapyReview.avgLeak, " L/min")}</strong>
+              <div className="review-metric review-metric-leak">
+                <span className="review-metric-icon"><UiIcon name="drop" size={33} /></span>
+                <span><small>Leak</small><strong>{formatMetric(previousTherapyReview.avgLeak, " L/min")}</strong><em>reported average</em></span>
               </div>
             </div>
-            <ul className="notes">
-              <li>
-                Days with data: {previousTherapyReview.daysWithData} / {previousTherapyReview.daysInWindow}
-              </li>
-              <li>Therapy mode: {previousTherapyReview.machine.mode ?? "Not available"}</li>
-              {previousTherapyReview.machine.pressure ? <li>Pressure: {previousTherapyReview.machine.pressure}</li> : null}
-              {previousTherapyReview.machine.pressureMin || previousTherapyReview.machine.pressureMax ? (
-                <li>
-                  Pressure range: {previousTherapyReview.machine.pressureMin ?? "Not available"} to{" "}
-                  {previousTherapyReview.machine.pressureMax ?? "Not available"}
-                </li>
-              ) : null}
-              {previousTherapyReview.machine.epap ? <li>EPAP: {previousTherapyReview.machine.epap}</li> : null}
-              {previousTherapyReview.machine.ipap ? <li>IPAP: {previousTherapyReview.machine.ipap}</li> : null}
-            </ul>
+            <div className="review-detail-row">
+              <div><UiIcon name="calendar" size={27} /><span><small>Date Range</small><strong>{previousTherapyReview.dateRangeStart} – {previousTherapyReview.dateRangeEnd}</strong><em>{previousTherapyReview.daysWithData} days with data available</em></span></div>
+              <div><UiIcon name="gear" size={27} /><span><small>Therapy Settings</small><strong>{previousTherapyPeriod?.label ?? previousTherapyReview.machine.mode ?? "Not available"}</strong><em>{previousTherapyReview.machine.pressure ? `Fixed pressure ${previousTherapyReview.machine.pressure}` : "Historical settings"}</em></span></div>
+              <p className="review-only-notice"><UiIcon name="info" size={20} /><span><strong>Review only.</strong><br />Historical therapy period for review only.<br />Export is unavailable.</span></p>
+            </div>
           </article>
         ) : null}
 
@@ -1580,7 +1664,8 @@ export function QuickReportApp() {
             </ul>
           </details>
         </article>
-      </section>
-    </main>
+        </section>
+      </main>
+    </>
   );
 }
