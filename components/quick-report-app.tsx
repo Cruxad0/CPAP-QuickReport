@@ -6,7 +6,7 @@ import { enumerateDeferredFolderEntries, pickDirectoryHandle, supportsDirectoryP
 import { ReportWorkerClient } from "@/lib/report-worker-client";
 import { REPORT_RANGE_OPTIONS, type ReportRangeDays } from "@/lib/report-orchestrator";
 import { OLDER_HISTORY_IMPORT_LOOKBACK_DAYS } from "@/lib/source-files";
-import { daysSinceIsoDate, staleDataSeverity } from "@/lib/stale-data";
+import { daysSinceIsoDate, staleDataAgeClassName, staleDataSeverity } from "@/lib/stale-data";
 import { ParseProgress, QuickReportMetrics, TherapySettingsPeriod } from "@/lib/types";
 
 const SOURCE_SELECTION_CANCEL_TIMEOUT_MS = 20000;
@@ -133,10 +133,8 @@ type UiIconName =
   | "drop"
   | "eye"
   | "gear"
-  | "help"
   | "history"
   | "info"
-  | "menu"
   | "report"
   | "warning";
 
@@ -154,10 +152,6 @@ function UiIcon({ name, size = 24 }: { name: UiIconName; size?: number }) {
   };
 
   switch (name) {
-    case "menu":
-      return <svg {...common}><path d="M4 6h16M4 12h16M4 18h16" /></svg>;
-    case "help":
-      return <svg {...common}><circle cx="12" cy="12" r="9" /><path d="M9.7 9a2.5 2.5 0 1 1 3.8 2.1c-1 .6-1.5 1.1-1.5 2.4M12 17h.01" /></svg>;
     case "clock":
       return <svg {...common}><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>;
     case "history":
@@ -379,12 +373,6 @@ export function QuickReportApp() {
     () => (loadedSourceLatestClinicalDayIso ? formatIsoDateLong(loadedSourceLatestClinicalDayIso) : null),
     [loadedSourceLatestClinicalDayIso]
   );
-  const loadedSourceLatestClinicalDayAge = useMemo(
-    () => (loadedSourceLatestClinicalDayIso ? daysSinceIsoDate(loadedSourceLatestClinicalDayIso) : null),
-    [loadedSourceLatestClinicalDayIso]
-  );
-  const loadedSourceStaleSeverity = staleDataSeverity(loadedSourceLatestClinicalDayAge);
-  const staleDataAgeText = loadedSourceStaleSeverity ? `Data is ${loadedSourceLatestClinicalDayAge} days old.` : null;
   const loadedMixedDataWarning = useMemo(
     () => loadedSourceWarnings.find(isMixedDataWarning) ?? null,
     [loadedSourceWarnings]
@@ -408,6 +396,15 @@ export function QuickReportApp() {
   const hasLoadedPreviousTherapy = olderHistoryLoaded && previousTherapyPeriod !== null;
   const dashboardMetrics = showPreviousTherapyReview ? previousTherapyReview : activeMetrics;
   const dashboardPeriod = showPreviousTherapyReview ? previousTherapyPeriod : currentTherapyPeriod;
+  const dashboardLatestClinicalDayIso =
+    dashboardPeriod?.endClinicalDayIso ?? (!showPreviousTherapyReview ? loadedSourceLatestClinicalDayIso : null);
+  const dashboardDataAge = dashboardLatestClinicalDayIso ? daysSinceIsoDate(dashboardLatestClinicalDayIso) : null;
+  const dashboardStaleSeverity = staleDataSeverity(dashboardDataAge);
+  const dashboardStaleAgeClassName = staleDataAgeClassName(dashboardStaleSeverity);
+  const dashboardStaleAgeText =
+    dashboardStaleSeverity && dashboardDataAge !== null
+      ? `Warning: this data is ${dashboardDataAge} day${dashboardDataAge === 1 ? "" : "s"} old.`
+      : null;
 
   const dateOfBirthIso = useMemo(() => normalizeDobInput(dateOfBirthInput), [dateOfBirthInput]);
   const isPatientNameMissing = patientName.trim().length <= 1;
@@ -908,23 +905,7 @@ export function QuickReportApp() {
   return (
     <>
       <header className="app-bar">
-        <button
-          type="button"
-          className="app-bar-icon"
-          aria-label="Go to patient and device details"
-          onClick={() => document.getElementById("setup-panel")?.scrollIntoView({ behavior: "smooth" })}
-        >
-          <UiIcon name="menu" size={25} />
-        </button>
         <strong>CPAP Clinician QuickReport</strong>
-        <button
-          type="button"
-          className="app-bar-icon"
-          aria-label="Help"
-          onClick={() => document.getElementById("setup-panel")?.scrollIntoView({ behavior: "smooth" })}
-        >
-          <UiIcon name="help" size={25} />
-        </button>
       </header>
       <main>
         <section className="dashboard-stack">
@@ -932,7 +913,7 @@ export function QuickReportApp() {
             <div className="therapy-history-heading">
               <span className="section-heading-icon"><UiIcon name="report" size={27} /></span>
               <div>
-                <h2>Therapy Report</h2>
+                <h2>Therapy Data</h2>
               </div>
             </div>
 
@@ -1079,7 +1060,19 @@ export function QuickReportApp() {
               </div>
             </div>
             <div className={`review-detail-row ${showPreviousTherapyReview ? "" : "review-detail-row-overview"}`}>
-              <div><UiIcon name="calendar" size={27} /><span><small>Date Range</small><strong>{dashboardMetrics ? `${dashboardMetrics.dateRangeStart} – ${dashboardMetrics.dateRangeEnd}` : "No report selected"}</strong><em>{dashboardMetrics ? `${dashboardMetrics.daysWithData} days with data available` : "Generate or review a report"}</em></span></div>
+              <div className="review-date-range">
+                <UiIcon name="calendar" size={27} />
+                <span>
+                  <small>Date Range</small>
+                  <strong>{dashboardMetrics ? `${dashboardMetrics.dateRangeStart} – ${dashboardMetrics.dateRangeEnd}` : "No report selected"}</strong>
+                  <em>{dashboardMetrics ? `${dashboardMetrics.daysWithData} days with data available` : "Generate or review a report"}</em>
+                  {dashboardStaleAgeText ? (
+                    <em className={`date-range-age-warning ${dashboardStaleAgeClassName ?? ""}`}>
+                      <UiIcon name="warning" size={16} /> {dashboardStaleAgeText}
+                    </em>
+                  ) : null}
+                </span>
+              </div>
               <div><UiIcon name="gear" size={27} /><span><small>Therapy Settings</small><strong>{dashboardPeriod?.label ?? "Not available"}</strong><em>{dashboardMetrics?.machine.pressure ? `Fixed pressure ${dashboardMetrics.machine.pressure}` : "Therapy settings summary"}</em></span></div>
               {showPreviousTherapyReview ? (
                 <p className="review-only-notice">
