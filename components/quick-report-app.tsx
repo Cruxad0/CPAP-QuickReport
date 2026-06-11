@@ -383,7 +383,6 @@ export function QuickReportApp() {
   const [isSourceLoading, setIsSourceLoading] = useState(false);
   const [pendingSourceSelection, setPendingSourceSelection] = useState<"folder" | "zip" | null>(null);
   const [showCalendarAlt, setShowCalendarAlt] = useState(false);
-  const [showSetupPanel, setShowSetupPanel] = useState(false);
   const [calendarMonth, setCalendarMonth] = useState<number>(new Date().getMonth() + 1);
   const [calendarYear, setCalendarYear] = useState<number>(new Date().getFullYear());
 
@@ -1096,9 +1095,8 @@ export function QuickReportApp() {
         <button
           type="button"
           className="app-bar-icon"
-          aria-label="Open setup"
-          aria-expanded={showSetupPanel}
-          onClick={() => setShowSetupPanel((current) => !current)}
+          aria-label="Go to patient and device details"
+          onClick={() => document.getElementById("setup-panel")?.scrollIntoView({ behavior: "smooth" })}
         >
           <UiIcon name="menu" size={25} />
         </button>
@@ -1107,10 +1105,7 @@ export function QuickReportApp() {
           type="button"
           className="app-bar-icon"
           aria-label="Help"
-          onClick={() => {
-            setShowSetupPanel(true);
-            window.setTimeout(() => document.getElementById("setup-panel")?.scrollIntoView({ behavior: "smooth" }), 0);
-          }}
+          onClick={() => document.getElementById("setup-panel")?.scrollIntoView({ behavior: "smooth" })}
         >
           <UiIcon name="help" size={25} />
         </button>
@@ -1125,12 +1120,10 @@ export function QuickReportApp() {
               </div>
             </div>
 
-        {showSetupPanel ? (
         <section id="setup-panel" className={`dashboard-setup ${isDataSourceLoading ? "card-loading" : ""}`} aria-busy={isDataSourceLoading}>
           {isDataSourceLoading ? <div className="loading-overlay">{dataSourceOverlayText}</div> : null}
           <div className="setup-heading">
             <div><strong>Patient &amp; Device Details</strong><span>Complete these fields to generate the therapy report.</span></div>
-            <button type="button" className="setup-close" onClick={() => setShowSetupPanel(false)}>Close</button>
           </div>
           <div className="setup-fields">
             <label htmlFor="patientName"><span>Patient name {isPatientNameMissing ? "*" : ""}</span><input id="patientName" className="input" value={patientName} onChange={(e) => setPatientName(e.target.value)} placeholder="First Last" autoComplete="off" /></label>
@@ -1187,7 +1180,6 @@ export function QuickReportApp() {
           </div>
           {errors.length > 0 ? <p className="setup-error">{errors[0]}</p> : null}
         </section>
-        ) : null}
 
             <div className="therapy-period-list">
               <section className="therapy-period therapy-period-current">
@@ -1215,7 +1207,7 @@ export function QuickReportApp() {
                     className="btn btn-outline-current"
                     onClick={() => {
                       if (!loadedSourceLoader) {
-                        setShowSetupPanel(true);
+                        void handleFolderButtonClick();
                         return;
                       }
                       setShowPreviousTherapyReview(false);

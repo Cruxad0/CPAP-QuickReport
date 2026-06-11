@@ -1018,7 +1018,7 @@ main {
 }
 
 .setup-heading {
-  grid-template-columns: 1fr auto;
+  grid-template-columns: 1fr;
   margin-bottom: 10px;
 }
 
@@ -1036,15 +1036,6 @@ main {
 .setup-source-status small {
   color: #60758b;
   font-size: 0.8rem;
-}
-
-.setup-close {
-  padding: 5px 9px;
-  color: #0758b8;
-  border: 1px solid #9fc3e7;
-  border-radius: 5px;
-  background: #fff;
-  cursor: pointer;
 }
 
 .setup-fields {
