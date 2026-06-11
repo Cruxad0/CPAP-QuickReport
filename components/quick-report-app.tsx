@@ -1202,22 +1202,20 @@ export function QuickReportApp() {
                   )}
                 </div>
                 <div className="therapy-period-actions">
-                  <button
-                    type="button"
-                    className="btn btn-outline-current"
-                    onClick={() => {
-                      if (!loadedSourceLoader) {
-                        void handleFolderButtonClick();
-                        return;
-                      }
-                      setShowPreviousTherapyReview(false);
-                      if (!hasGeneratedReports) void handleGenerate();
-                    }}
-                    disabled={Boolean(loadedSourceLoader) && !canGenerate}
-                  >
-                    <UiIcon name={loadedSourceLoader ? "report" : "database"} size={21} />
-                    {!loadedSourceLoader ? "Select Device / Card" : hasGeneratedReports ? "View Current Reports" : "Generate Current Reports"}
-                  </button>
+                  {loadedSourceLoader ? (
+                    <button
+                      type="button"
+                      className="btn btn-outline-current"
+                      onClick={() => {
+                        setShowPreviousTherapyReview(false);
+                        if (!hasGeneratedReports) void handleGenerate();
+                      }}
+                      disabled={!canGenerate}
+                    >
+                      <UiIcon name="report" size={21} />
+                      {hasGeneratedReports ? "View Current Reports" : "Generate Current Reports"}
+                    </button>
+                  ) : null}
                   <button type="button" className="btn btn-primary" onClick={triggerDownload} disabled={!activeReport}>
                     <UiIcon name="document" size={21} />
                     Export Current PDF
