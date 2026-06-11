@@ -993,6 +993,141 @@ main {
   margin: 14px auto 32px;
 }
 
+.dashboard-stack {
+  display: grid;
+  gap: 10px;
+}
+
+.dashboard-setup {
+  position: relative;
+  margin-bottom: 10px;
+  padding: 15px 18px 12px;
+  border: 1px solid #c5d2df;
+  border-radius: 7px;
+  background: #fff;
+  box-shadow: 0 2px 7px rgba(9, 40, 77, 0.1);
+}
+
+.setup-heading,
+.setup-fields,
+.setup-actions,
+.setup-more-grid {
+  display: grid;
+  align-items: center;
+  gap: 12px;
+}
+
+.setup-heading {
+  grid-template-columns: 1fr auto;
+  margin-bottom: 12px;
+}
+
+.setup-heading div {
+  display: grid;
+  gap: 2px;
+}
+
+.setup-heading strong {
+  color: #10294d;
+  font-size: 1.05rem;
+}
+
+.setup-heading span,
+.setup-source-status small {
+  color: #60758b;
+  font-size: 0.8rem;
+}
+
+.setup-close {
+  padding: 4px 8px;
+  color: #49627e;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.setup-fields {
+  grid-template-columns: repeat(3, minmax(150px, 1fr)) minmax(220px, 1.3fr);
+}
+
+.setup-fields label,
+.setup-more-grid label {
+  margin: 0;
+}
+
+.setup-fields label > span,
+.setup-more-grid label > span,
+.setup-source-status > span {
+  display: block;
+  margin-bottom: 4px;
+  color: #4b6479;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.setup-source-status {
+  display: grid;
+  align-content: center;
+  min-height: 58px;
+  padding: 7px 10px;
+  border: 1px solid #c6d3df;
+  border-radius: 6px;
+  background: #f8fbfe;
+}
+
+.setup-source-status strong {
+  overflow: hidden;
+  color: #10294d;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.setup-actions {
+  grid-template-columns: repeat(4, max-content);
+  margin-top: 12px;
+}
+
+.setup-more {
+  margin-top: 10px;
+  border-top: 1px solid #e0e7ed;
+}
+
+.setup-more summary {
+  padding: 9px 0 2px;
+  color: #4d6680;
+  font-size: 0.8rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.setup-more-grid {
+  grid-template-columns: 1fr 1.3fr 1.3fr;
+  align-items: start;
+  margin-top: 8px;
+}
+
+.setup-more-grid p {
+  margin: 4px 0 0;
+  color: #526a84;
+  font-size: 0.8rem;
+}
+
+.dashboard-setup .progress-wrap {
+  margin-top: 8px;
+}
+
+.dashboard-setup .phase {
+  margin-top: 3px;
+  font-size: 0.78rem;
+}
+
+.setup-error {
+  margin: 7px 0 0;
+  color: #a11c1c;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
 .hero {
   display: flex;
   align-items: center;
@@ -1323,6 +1458,17 @@ main {
   background: #fff;
 }
 
+.dashboard-export-actions {
+  display: grid;
+  align-content: center;
+  gap: 8px;
+  padding: 11px;
+}
+
+.dashboard-export-actions .btn {
+  justify-content: center;
+}
+
 .review-tabs {
   display: flex;
   align-items: stretch;
@@ -1495,6 +1641,18 @@ main {
 }
 
 @media (max-width: 1050px) {
+  .setup-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .setup-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .setup-actions .btn {
+    justify-content: center;
+  }
+
   .therapy-period {
     grid-template-columns: 160px 1fr;
   }
@@ -1525,6 +1683,16 @@ main {
   main {
     width: min(100% - 18px, 1260px);
     margin-top: 9px;
+  }
+
+  .dashboard-setup {
+    padding: 13px 12px 10px;
+  }
+
+  .setup-fields,
+  .setup-actions,
+  .setup-more-grid {
+    grid-template-columns: 1fr;
   }
 
   .hero {

@@ -6,7 +6,7 @@ import { enumerateDeferredFolderEntries, pickDirectoryHandle, supportsDirectoryP
 import { ReportWorkerClient } from "@/lib/report-worker-client";
 import { REPORT_RANGE_OPTIONS, type ReportRangeDays } from "@/lib/report-orchestrator";
 import { bytesToLabel, IMPORT_LOOKBACK_DAYS, OLDER_HISTORY_IMPORT_LOOKBACK_DAYS } from "@/lib/source-files";
-import { daysSinceIsoDate, staleDataAgeClassName, staleDataSeverity } from "@/lib/stale-data";
+import { daysSinceIsoDate, staleDataSeverity } from "@/lib/stale-data";
 import { ParseProgress, QuickReportMetrics, SourceFileSummary, TherapySettingsPeriod } from "@/lib/types";
 
 const MONTH_LABELS = [
@@ -213,10 +213,6 @@ function isMixedDataWarning(warning: string): boolean {
   return /^(?:Mixed device data detected|Multiple device layouts detected)\./.test(warning);
 }
 
-function isTherapyChangeWarning(warning: string): boolean {
-  return /^Therapy settings changed within\b/.test(warning);
-}
-
 function toUsDate(year: number, month: number, day: number): string {
   return `${String(month).padStart(2, "0")}/${String(day).padStart(2, "0")}/${String(year).padStart(4, "0")}`;
 }
@@ -387,6 +383,7 @@ export function QuickReportApp() {
   const [isSourceLoading, setIsSourceLoading] = useState(false);
   const [pendingSourceSelection, setPendingSourceSelection] = useState<"folder" | "zip" | null>(null);
   const [showCalendarAlt, setShowCalendarAlt] = useState(false);
+  const [showSetupPanel, setShowSetupPanel] = useState(false);
   const [calendarMonth, setCalendarMonth] = useState<number>(new Date().getMonth() + 1);
   const [calendarYear, setCalendarYear] = useState<number>(new Date().getFullYear());
 
@@ -440,13 +437,8 @@ export function QuickReportApp() {
   );
   const loadedSourceStaleSeverity = staleDataSeverity(loadedSourceLatestClinicalDayAge);
   const staleDataAgeText = loadedSourceStaleSeverity ? `Data is ${loadedSourceLatestClinicalDayAge} days old.` : null;
-  const staleDataAgeClass = staleDataAgeClassName(loadedSourceStaleSeverity);
   const loadedMixedDataWarning = useMemo(
     () => loadedSourceWarnings.find(isMixedDataWarning) ?? null,
-    [loadedSourceWarnings]
-  );
-  const loadedTherapyChangeWarning = useMemo(
-    () => loadedSourceWarnings.find(isTherapyChangeWarning) ?? null,
     [loadedSourceWarnings]
   );
   const generatedReportDays = useMemo(
@@ -456,8 +448,6 @@ export function QuickReportApp() {
   const resolvedActiveReportDays = generatedReports[activeReportDays] ? activeReportDays : (generatedReportDays[0] ?? null);
   const activeReport = resolvedActiveReportDays ? generatedReports[resolvedActiveReportDays] ?? null : null;
   const activeMetrics = activeReport?.metrics ?? null;
-  const activeTherapyChangeWarning = activeMetrics?.warnings.find(isTherapyChangeWarning) ?? null;
-  const displayedTherapyChangeWarning = activeTherapyChangeWarning ?? loadedTherapyChangeWarning;
   const hasGeneratedReports = generatedReportDays.length > 0;
   const currentTherapyPeriod = useMemo(
     () => therapySettingsPeriods.find((period) => period.kind === "current") ?? null,
@@ -467,6 +457,8 @@ export function QuickReportApp() {
     () => therapySettingsPeriods.find((period) => period.kind === "previous") ?? null,
     [therapySettingsPeriods]
   );
+  const dashboardMetrics = showPreviousTherapyReview ? previousTherapyReview : activeMetrics;
+  const dashboardPeriod = showPreviousTherapyReview ? previousTherapyPeriod : currentTherapyPeriod;
 
   const dateOfBirthIso = useMemo(() => normalizeDobInput(dateOfBirthInput), [dateOfBirthInput]);
   const isPatientNameMissing = patientName.trim().length <= 1;
@@ -1101,7 +1093,13 @@ export function QuickReportApp() {
   return (
     <>
       <header className="app-bar">
-        <button type="button" className="app-bar-icon" aria-label="Go to top" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}>
+        <button
+          type="button"
+          className="app-bar-icon"
+          aria-label="Open setup"
+          aria-expanded={showSetupPanel}
+          onClick={() => setShowSetupPanel((current) => !current)}
+        >
           <UiIcon name="menu" size={25} />
         </button>
         <strong>CPAP Clinician QuickReport</strong>
@@ -1109,256 +1107,85 @@ export function QuickReportApp() {
           type="button"
           className="app-bar-icon"
           aria-label="Help"
-          onClick={() => document.getElementById("how-to-use")?.scrollIntoView({ behavior: "smooth" })}
+          onClick={() => {
+            setShowSetupPanel(true);
+            window.setTimeout(() => document.getElementById("setup-panel")?.scrollIntoView({ behavior: "smooth" }), 0);
+          }}
         >
           <UiIcon name="help" size={25} />
         </button>
       </header>
       <main>
-        <section className="hero">
-          <div className="hero-title">
-            <span className="hero-title-icon"><UiIcon name="report" size={27} /></span>
-            <div>
-              <h1>CPAP Clinician QuickReport</h1>
-              <p>Create current therapy reports and review the immediately previous settings period.</p>
-            </div>
-          </div>
-          <p className="hero-privacy">
-            Data is processed locally and never stored. Powered by{" "}
-            <a href="https://notespecialist.com" target="_blank" rel="noopener noreferrer">
-              NoteSpecialist.com
-            </a>
-            .
-          </p>
-        </section>
-
-        <section className="grid">
-        <article id="how-to-use" className="card col-12">
-          <h3>How-To Use</h3>
-          <ol className="usage-steps">
-            <li>Enter the patient name and date of birth.</li>
-            <li>Click <strong>Select SD-CARD</strong> and choose the SD-card root folder.</li>
-            <li>Click <strong>Generate Reports</strong> to create 90, 60, 30, and 7 day reports.</li>
-            <li>If available, use <strong>Load Older History</strong> to review only the immediately previous therapy settings period.</li>
-            <li>Use the report tabs in preview, then click <strong>Export PDF</strong> to save.</li>
-          </ol>
-        </article>
-
-        <article className="card col-4">
-          <h3>Patient</h3>
-          <label htmlFor="patientName" className="label-row">
-            <span>Patient name</span>
-            {isPatientNameMissing ? <span className="required-flag">Required</span> : null}
-          </label>
-          <input
-            id="patientName"
-            className="input"
-            value={patientName}
-            onChange={(e) => setPatientName(e.target.value)}
-            placeholder="First Last"
-            autoComplete="off"
-          />
-
-          <label htmlFor="dob" className="label-row" style={{ marginTop: 10 }}>
-            <span>Date of birth</span>
-            {isDobMissing ? <span className="required-flag">Required</span> : null}
-          </label>
-          <input
-            id="dob"
-            className="date-input"
-            type="text"
-            inputMode="numeric"
-            placeholder="MM/DD/YYYY"
-            value={dateOfBirthInput}
-            onChange={(e) => setDateOfBirthInput(formatDobTyping(e.target.value))}
-          />
-          {dateOfBirthInput.trim().length > 0 && !dateOfBirthIso ? (
-            <p className="subtle" style={{ marginTop: 6, color: "#a11c1c" }}>
-              Enter date as MM/DD/YYYY.
-            </p>
-          ) : null}
-          <button type="button" className="link-button" style={{ marginBottom: 10 }} onClick={openCalendarPicker}>
-            {showCalendarAlt ? "Hide calendar picker" : "Use calendar picker instead"}
-          </button>
-          {showCalendarAlt ? (
-            <div className="calendar-panel" role="dialog" aria-label="Date of birth calendar picker">
-              <div className="calendar-toolbar">
-                <button type="button" className="btn btn-secondary btn-calendar-nav" onClick={() => moveCalendarMonth(-1)}>
-                  ◀
-                </button>
-                <select
-                  className="input calendar-select"
-                  value={calendarMonth}
-                  onChange={(e) => setCalendarMonth(Number(e.target.value))}
-                  aria-label="Select month"
-                >
-                  {MONTH_LABELS.map((monthLabel, idx) => (
-                    <option key={monthLabel} value={idx + 1}>
-                      {monthLabel}
-                    </option>
-                  ))}
-                </select>
-                <select
-                  className="input calendar-select"
-                  value={calendarYear}
-                  onChange={(e) => setCalendarYear(Number(e.target.value))}
-                  aria-label="Select year"
-                >
-                  {yearOptions.map((year) => (
-                    <option key={year} value={year}>
-                      {year}
-                    </option>
-                  ))}
-                </select>
-                <button type="button" className="btn btn-secondary btn-calendar-nav" onClick={() => moveCalendarMonth(1)}>
-                  ▶
-                </button>
-              </div>
-              <div className="calendar-grid calendar-weekdays">
-                {WEEKDAY_LABELS.map((weekday) => (
-                  <div key={weekday} className="calendar-weekday">
-                    {weekday}
-                  </div>
-                ))}
-              </div>
-              <div className="calendar-grid">
-                {dobCalendarCells.map((day, index) => {
-                  const selected =
-                    Boolean(day) &&
-                    selectedDob &&
-                    selectedDob.year === calendarYear &&
-                    selectedDob.month === calendarMonth &&
-                    selectedDob.day === day;
-                  return (
-                    <button
-                      key={`${calendarYear}-${calendarMonth}-${index}`}
-                      type="button"
-                      className={`calendar-day ${selected ? "calendar-day-selected" : ""}`}
-                      onClick={() => day && pickCalendarDate(day)}
-                      disabled={!day}
-                    >
-                      {day ?? ""}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          ) : null}
-
-          <h3 style={{ marginTop: 18, marginBottom: 8 }}>Office Branding</h3>
-          <label htmlFor="physician" style={{ marginTop: 12 }}>
-            Physician name
-          </label>
-          <input
-            id="physician"
-            className="input"
-            value={physicianName}
-            onChange={(e) => setPhysicianName(e.target.value)}
-            autoComplete="off"
-          />
-
-          <label htmlFor="header-upload" style={{ marginTop: 10 }}>
-            Optional PDF header image
-          </label>
-          <input id="header-upload" ref={headerInputRef} type="file" accept="image/png,image/jpeg" onChange={handleHeaderUpload} />
-          {headerDataUrl ? (
-            <button type="button" className="link-button subtle-link-button" onClick={clearBrandingImage}>
-              Clear branding image
-            </button>
-          ) : null}
-          <p className="subtle">Use a clinic branding image if desired. The Quick Report header remains visible.</p>
-        </article>
-
-        <article className={`card col-8 ${isDataSourceLoading ? "card-loading" : ""}`} aria-busy={isDataSourceLoading}>
+        {showSetupPanel ? (
+        <section id="setup-panel" className={`dashboard-setup ${isDataSourceLoading ? "card-loading" : ""}`} aria-busy={isDataSourceLoading}>
           {isDataSourceLoading ? <div className="loading-overlay">{dataSourceOverlayText}</div> : null}
-          <h3>Data Source</h3>
-          <p className="subtle">Choose the SD-card root folder. Do not select a subfolder. The webapp initially keeps only the most recent 90 days of therapy data locally in the browser.</p>
-
-          <div className="actions">
+          <div className="setup-heading">
+            <div><strong>Report Setup</strong><span>Patient details and device/card source</span></div>
+            <button type="button" className="setup-close" onClick={() => setShowSetupPanel(false)}>Close</button>
+          </div>
+          <div className="setup-fields">
+            <label htmlFor="patientName"><span>Patient name {isPatientNameMissing ? "*" : ""}</span><input id="patientName" className="input" value={patientName} onChange={(e) => setPatientName(e.target.value)} placeholder="First Last" autoComplete="off" /></label>
+            <label htmlFor="dob"><span>Date of birth {isDobMissing ? "*" : ""}</span><input id="dob" className="date-input" type="text" inputMode="numeric" placeholder="MM/DD/YYYY" value={dateOfBirthInput} onChange={(e) => setDateOfBirthInput(formatDobTyping(e.target.value))} /></label>
+            <label htmlFor="physician"><span>Physician name</span><input id="physician" className="input" value={physicianName} onChange={(e) => setPhysicianName(e.target.value)} autoComplete="off" /></label>
+            <div className="setup-source-status"><span>Device/card</span><strong>{loadedSourceLoader ?? selectedCountLabel}</strong><small>{loadedSourceLatestClinicalDayLabel ? `Last data: ${loadedSourceLatestClinicalDayLabel}` : "Select the SD-card root folder"}</small></div>
+          </div>
+          <div className="setup-actions">
             <button
               type="button"
-              className="btn btn-secondary"
+              className="btn btn-outline-current"
               onClick={() => {
                 void handleFolderButtonClick();
               }}
               disabled={isDataSourceLoading}
             >
-              Select SD-CARD
+              <UiIcon name="database" size={20} /> Select SD-CARD
             </button>
+            <button type="button" className="btn btn-primary" onClick={handleGenerate} disabled={!canGenerate}><UiIcon name="report" size={20} /> Generate Reports</button>
+            <button type="button" className="btn btn-secondary" onClick={openCalendarPicker}>{showCalendarAlt ? "Hide Calendar" : "DOB Calendar"}</button>
+            <button type="button" className="btn btn-danger" onClick={handleResetClearAll} disabled={status === "working"}>Reset / Clear All</button>
           </div>
-
           <input ref={folderInputRef} type="file" multiple onChange={handleFolderSelection} style={{ display: "none" }} />
           <input ref={zipInputRef} type="file" accept=".zip" onChange={handleZipSelection} style={{ display: "none" }} />
-
-          <p style={{ marginTop: 12 }}>
-            <strong>Status:</strong> {selectedCountLabel}
-          </p>
-          {loadedSourceLoader || loadedSourceLatestClinicalDayLabel || loadedMixedDataWarning ? (
-            <ul className="notes" style={{ marginTop: 8 }}>
-              {loadedSourceLoader ? <li>Detected loader: {loadedSourceLoader}</li> : null}
-              {loadedMixedDataWarning ? <li className="mixed-data-warning">{loadedMixedDataWarning}</li> : null}
-              {loadedSourceLatestClinicalDayLabel ? (
-                <li>
-                  Last date with data on card: {loadedSourceLatestClinicalDayLabel}
-                  {staleDataAgeText ? (
-                    <span className="stale-data-detail">
-                      {" - "}
-                      <span className={staleDataAgeClass}>{staleDataAgeText}</span>
-                      <br />
-                      <span className="stale-data-context">This may indicate the device is not being used or the card is not current.</span>
-                    </span>
-                  ) : null}
-                </li>
-              ) : null}
-            </ul>
+          {showCalendarAlt ? (
+            <div className="calendar-panel" role="dialog" aria-label="Date of birth calendar picker">
+              <div className="calendar-toolbar">
+                <button type="button" className="btn btn-secondary btn-calendar-nav" onClick={() => moveCalendarMonth(-1)}>◀</button>
+                <select className="input calendar-select" value={calendarMonth} onChange={(e) => setCalendarMonth(Number(e.target.value))} aria-label="Select month">{MONTH_LABELS.map((monthLabel, idx) => <option key={monthLabel} value={idx + 1}>{monthLabel}</option>)}</select>
+                <select className="input calendar-select" value={calendarYear} onChange={(e) => setCalendarYear(Number(e.target.value))} aria-label="Select year">{yearOptions.map((year) => <option key={year} value={year}>{year}</option>)}</select>
+                <button type="button" className="btn btn-secondary btn-calendar-nav" onClick={() => moveCalendarMonth(1)}>▶</button>
+              </div>
+              <div className="calendar-grid calendar-weekdays">{WEEKDAY_LABELS.map((weekday) => <div key={weekday} className="calendar-weekday">{weekday}</div>)}</div>
+              <div className="calendar-grid">{dobCalendarCells.map((day, index) => {
+                const selected = Boolean(day) && selectedDob && selectedDob.year === calendarYear && selectedDob.month === calendarMonth && selectedDob.day === day;
+                return <button key={`${calendarYear}-${calendarMonth}-${index}`} type="button" className={`calendar-day ${selected ? "calendar-day-selected" : ""}`} onClick={() => day && pickCalendarDate(day)} disabled={!day}>{day ?? ""}</button>;
+              })}</div>
+            </div>
           ) : null}
-
-          <div className="file-list" aria-live="polite">
-            <ul>
-              {sourceFiles.map((file) => (
-                <li key={`${file.path}:${file.size}`}>
-                  {file.path} <span className="subtle">({bytesToLabel(file.size)})</span>
-                </li>
-              ))}
-            </ul>
-            {sourceFileCount > sourceFiles.length ? <p className="subtle">+ {sourceFileCount - sourceFiles.length} more files</p> : null}
-          </div>
-
-          <div className="actions">
-            <button type="button" className="btn btn-primary" onClick={handleGenerate} disabled={!canGenerate}>
-              Generate Reports
-            </button>
-            <button
-              type="button"
-              className="btn btn-danger"
-              onClick={handleResetClearAll}
-              disabled={status === "working"}
-            >
-              Reset / Clear All
-            </button>
-          </div>
+          <details className="setup-more">
+            <summary>Branding, source details, and help</summary>
+            <div className="setup-more-grid">
+              <label htmlFor="header-upload"><span>Optional PDF header image</span><input id="header-upload" ref={headerInputRef} type="file" accept="image/png,image/jpeg" onChange={handleHeaderUpload} /></label>
+              <div><strong>How to use</strong><p>Select the SD-card root folder, enter the patient details, then generate the current reports. Load older history only when offered.</p></div>
+              <div><strong>Source details</strong><p>{selectedCountLabel}{loadedMixedDataWarning ? ` · ${loadedMixedDataWarning}` : ""}{staleDataAgeText ? ` · ${staleDataAgeText}` : ""}</p></div>
+            </div>
+            {headerDataUrl ? <button type="button" className="link-button subtle-link-button" onClick={clearBrandingImage}>Clear branding image</button> : null}
+          </details>
           <div className="progress-wrap" role="status" aria-live="polite">
             <div className="progress-track">
               <div className="progress-value" style={{ width: `${parseProgress.percent}%` }} />
             </div>
-            <div className="phase">
-              {parseProgress.percent}% - {parseProgress.detail}
-            </div>
-            {pendingSourceSelection ? (
-              <div className="subtle" style={{ marginTop: 4 }}>
-                {pendingSourceSelection === "folder" ? "Opening SD-CARD folder..." : "Opening ZIP file..."}
-              </div>
-            ) : null}
+            <div className="phase">{statusMessage} · {parseProgress.percent}% - {parseProgress.detail}</div>
           </div>
-        </article>
+          {errors.length > 0 ? <p className="setup-error">{errors[0]}</p> : null}
+        </section>
+        ) : null}
 
-        {loadedSourceLoader ? (
-          <article className="card col-12 therapy-history-card">
+        <section className="dashboard-stack">
+          <article className="card therapy-history-card">
             <div className="therapy-history-heading">
               <span className="section-heading-icon"><UiIcon name="clock" size={27} /></span>
               <div>
                 <h2>Therapy Settings History</h2>
-                <p>Reports and PDF export remain limited to the current therapy settings.</p>
               </div>
             </div>
 
@@ -1369,14 +1196,17 @@ export function QuickReportApp() {
                   <span className="therapy-device-icon"><UiIcon name="device" size={45} /><i><UiIcon name="check" size={15} /></i></span>
                 </div>
                 <div className="therapy-period-details">
-                  <h4>{currentTherapyPeriod?.label ?? "Current settings"}</h4>
+                  <h4>{currentTherapyPeriod?.label ?? "Select device/card"}</h4>
                   {currentTherapyPeriod ? (
                     <>
                       <p><UiIcon name="calendar" size={20} /> {formatIsoDateLong(currentTherapyPeriod.startClinicalDayIso)} – {formatIsoDateLong(currentTherapyPeriod.endClinicalDayIso)}</p>
                       <p><UiIcon name="database" size={20} /> {currentTherapyPeriod.daysWithData} days with data available</p>
                     </>
                   ) : (
-                    <p>Current settings are shown in generated reports.</p>
+                    <>
+                      <p><UiIcon name="calendar" size={20} /> Current therapy dates will appear here</p>
+                      <p><UiIcon name="database" size={20} /> No therapy data loaded</p>
+                    </>
                   )}
                 </div>
                 <div className="therapy-period-actions">
@@ -1384,13 +1214,17 @@ export function QuickReportApp() {
                     type="button"
                     className="btn btn-outline-current"
                     onClick={() => {
+                      if (!loadedSourceLoader) {
+                        setShowSetupPanel(true);
+                        return;
+                      }
                       setShowPreviousTherapyReview(false);
                       if (!hasGeneratedReports) void handleGenerate();
                     }}
-                    disabled={!canGenerate}
+                    disabled={Boolean(loadedSourceLoader) && !canGenerate}
                   >
-                    <UiIcon name="report" size={21} />
-                    {hasGeneratedReports ? "View Current Reports" : "Generate Current Reports"}
+                    <UiIcon name={loadedSourceLoader ? "report" : "database"} size={21} />
+                    {!loadedSourceLoader ? "Select Device / Card" : hasGeneratedReports ? "View Current Reports" : "Generate Current Reports"}
                   </button>
                   <button type="button" className="btn btn-primary" onClick={triggerDownload} disabled={!activeReport}>
                     <UiIcon name="document" size={21} />
@@ -1452,9 +1286,11 @@ export function QuickReportApp() {
                   </>
                 ) : (
                   <div className="therapy-period-details therapy-period-unavailable">
-                    <h4>Previous settings</h4>
+                    <h4>{loadedSourceLoader ? "Previous settings" : "Previous therapy"}</h4>
                     <p className="previous-unavailable">
-                      {hasOlderDatedData && !olderHistoryLoaded
+                      {!loadedSourceLoader
+                        ? "Select a device/card to check therapy settings history."
+                        : hasOlderDatedData && !olderHistoryLoaded
                         ? "Load older history to check the immediately previous settings period."
                         : "Previous settings unavailable from this device/card."}
                     </p>
@@ -1463,87 +1299,48 @@ export function QuickReportApp() {
               </section>
             </div>
           </article>
-        ) : null}
 
-        {showPreviousTherapyReview && previousTherapyReview ? (
-          <article className="card col-12 previous-review-card">
+          <article className="card previous-review-card">
             <div className="review-tabs">
-              <button type="button" onClick={() => setShowPreviousTherapyReview(false)}><UiIcon name="report" size={20} /> Current Therapy</button>
-              <button type="button" className="review-tab-active"><UiIcon name="history" size={20} /> Previous Therapy</button>
-              <span className="review-export-disabled"><button type="button" className="btn btn-secondary" disabled><UiIcon name="document" size={20} /> Export PDF</button><small>Current therapy only</small></span>
+              <button type="button" className={!showPreviousTherapyReview ? "review-tab-active" : ""} onClick={() => setShowPreviousTherapyReview(false)}><UiIcon name="report" size={20} /> Current Therapy</button>
+              <button
+                type="button"
+                className={showPreviousTherapyReview ? "review-tab-active" : ""}
+                disabled={!previousTherapyPeriod?.machine}
+                onClick={() => {
+                  if (previousTherapyReview) setShowPreviousTherapyReview(true);
+                  else void handleReviewPreviousTherapy();
+                }}
+              ><UiIcon name="history" size={20} /> Previous Therapy</button>
+              <span className="review-export-disabled"><button type="button" className={showPreviousTherapyReview ? "btn btn-secondary" : "btn btn-primary"} onClick={triggerDownload} disabled={showPreviousTherapyReview || !activeReport}><UiIcon name="document" size={20} /> Export PDF</button><small>Current therapy only</small></span>
             </div>
             <div className="previous-review-metrics">
               <div className="review-metric review-metric-usage">
                 <span className="review-metric-icon"><UiIcon name="clock" size={33} /></span>
-                <span><small>Usage</small><strong>{formatMetric(previousTherapyReview.avgUsageHours, " hrs")}</strong><em>nightly average</em></span>
+                <span><small>Usage</small><strong>{formatMetric(dashboardMetrics?.avgUsageHours, " hrs")}</strong><em>nightly average</em></span>
               </div>
               <div className="review-metric review-metric-compliance">
                 <span className="review-metric-icon"><UiIcon name="check" size={33} /></span>
-                <span><small>Compliance</small><strong>{formatMetric(previousTherapyReview.compliancePercent, "%")}</strong><em>days used ≥ 4 hrs</em></span>
+                <span><small>Compliance</small><strong>{formatMetric(dashboardMetrics?.compliancePercent, "%")}</strong><em>days used ≥ 4 hrs</em></span>
               </div>
               <div className="review-metric review-metric-ahi">
                 <span className="review-metric-icon"><UiIcon name="activity" size={33} /></span>
-                <span><small>AHI</small><strong>{formatMetric(previousTherapyReview.avgAhi)}</strong><em>events/hr</em></span>
+                <span><small>AHI</small><strong>{formatMetric(dashboardMetrics?.avgAhi)}</strong><em>events/hr</em></span>
               </div>
               <div className="review-metric review-metric-leak">
                 <span className="review-metric-icon"><UiIcon name="drop" size={33} /></span>
-                <span><small>Leak</small><strong>{formatMetric(previousTherapyReview.avgLeak, " L/min")}</strong><em>reported average</em></span>
+                <span><small>Leak</small><strong>{formatMetric(dashboardMetrics?.avgLeak, " L/min")}</strong><em>reported average</em></span>
               </div>
             </div>
             <div className="review-detail-row">
-              <div><UiIcon name="calendar" size={27} /><span><small>Date Range</small><strong>{previousTherapyReview.dateRangeStart} – {previousTherapyReview.dateRangeEnd}</strong><em>{previousTherapyReview.daysWithData} days with data available</em></span></div>
-              <div><UiIcon name="gear" size={27} /><span><small>Therapy Settings</small><strong>{previousTherapyPeriod?.label ?? previousTherapyReview.machine.mode ?? "Not available"}</strong><em>{previousTherapyReview.machine.pressure ? `Fixed pressure ${previousTherapyReview.machine.pressure}` : "Historical settings"}</em></span></div>
-              <p className="review-only-notice"><UiIcon name="info" size={20} /><span><strong>Review only.</strong><br />Historical therapy period for review only.<br />Export is unavailable.</span></p>
+              <div><UiIcon name="calendar" size={27} /><span><small>Date Range</small><strong>{dashboardMetrics ? `${dashboardMetrics.dateRangeStart} – ${dashboardMetrics.dateRangeEnd}` : "No report selected"}</strong><em>{dashboardMetrics ? `${dashboardMetrics.daysWithData} days with data available` : "Generate or review a report"}</em></span></div>
+              <div><UiIcon name="gear" size={27} /><span><small>Therapy Settings</small><strong>{dashboardPeriod?.label ?? "Not available"}</strong><em>{dashboardMetrics?.machine.pressure ? `Fixed pressure ${dashboardMetrics.machine.pressure}` : "Therapy settings summary"}</em></span></div>
+              {showPreviousTherapyReview ? <p className="review-only-notice"><UiIcon name="info" size={20} /><span><strong>Review only.</strong><br />Historical therapy period for review only.<br />Export is unavailable.</span></p> : <div className="dashboard-export-actions"><button type="button" className="btn btn-primary" onClick={triggerDownload} disabled={!activeReport}><UiIcon name="document" size={20} /> Export PDF</button><button type="button" className="btn btn-outline-current" onClick={openPreviewInNewTab} disabled={!activeReport}><UiIcon name="eye" size={20} /> Open Report</button></div>}
             </div>
           </article>
-        ) : null}
-
-        {status === "ready" || status === "error" ? (
-          <article className="card col-12">
-            <h3>Status</h3>
-            {status === "ready" && activeMetrics ? (
-              <ul className="notes">
-                <li>Report is ready. Review the preview, then export the PDF.</li>
-                <li>
-                  Selected loader and Date range ({resolvedActiveReportDays ?? activeReportDays} days): {activeMetrics.selectedLoader} | {activeMetrics.dateRangeStart} to {activeMetrics.dateRangeEnd}
-                </li>
-                {displayedTherapyChangeWarning ? <li className="therapy-change-warning">{displayedTherapyChangeWarning}</li> : null}
-                {loadedSourceLatestClinicalDayLabel ? (
-                  <li>
-                    Last date with data on card: {loadedSourceLatestClinicalDayLabel}
-                    {staleDataAgeText ? (
-                      <span className="stale-data-detail">
-                        {" - "}
-                        <span className={staleDataAgeClass}>{staleDataAgeText}</span>
-                        <br />
-                        <span className="stale-data-context">This may indicate the device is not being used or the card is not current.</span>
-                      </span>
-                    ) : null}
-                  </li>
-                ) : null}
-                {loadedMixedDataWarning ? <li className="mixed-data-warning">{loadedMixedDataWarning}</li> : null}
-              </ul>
-            ) : null}
-
-            {status === "error" ? (
-              <>
-                <p className="subtle" style={{ marginTop: 0, color: "#a11c1c" }}>
-                  Report generation failed.
-                </p>
-                {errors.length > 0 ? (
-                  <ul className="notes">
-                    {errors.map((err) => (
-                      <li key={err}>{err}</li>
-                    ))}
-                  </ul>
-                ) : null}
-              </>
-            ) : null}
-          </article>
-        ) : null}
 
         {hasGeneratedReports && activeReport ? (
-          <article className="card col-12 preview-shell">
+          <article className="card preview-shell">
             <div>
               <span className="therapy-period-badge">Current Therapy Reports</span>
               <p className="subtle">PDF preview and export are available only for the current therapy settings period.</p>
@@ -1596,7 +1393,7 @@ export function QuickReportApp() {
           </article>
         ) : null}
 
-        <article className="card col-12 affiliate-card">
+        <article className="card affiliate-card">
           <details className="affiliate-disclosure">
             <summary>
               <span className="affiliate-summary-copy">
@@ -1637,7 +1434,7 @@ export function QuickReportApp() {
           </details>
         </article>
 
-        <article className="card col-12 legal-notice">
+        <article className="card legal-notice">
           <details className="legal-disclosure">
             <summary>{"\u00A0\u00A0GNU/OSCAR Copyright and Distribution Notice"}</summary>
             <ul className="notes">
