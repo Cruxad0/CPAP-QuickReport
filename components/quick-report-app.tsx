@@ -9,24 +9,6 @@ import { bytesToLabel, IMPORT_LOOKBACK_DAYS, OLDER_HISTORY_IMPORT_LOOKBACK_DAYS 
 import { daysSinceIsoDate, staleDataSeverity } from "@/lib/stale-data";
 import { ParseProgress, QuickReportMetrics, SourceFileSummary, TherapySettingsPeriod } from "@/lib/types";
 
-const MONTH_LABELS = [
-  "January",
-  "February",
-  "March",
-  "April",
-  "May",
-  "June",
-  "July",
-  "August",
-  "September",
-  "October",
-  "November",
-  "December"
-];
-
-const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const MIN_YEAR = 1900;
-const MAX_YEAR = 2100;
 const SOURCE_SELECTION_CANCEL_TIMEOUT_MS = 20000;
 const CARD_READER_PRODUCTS = [
   {
@@ -213,27 +195,6 @@ function isMixedDataWarning(warning: string): boolean {
   return /^(?:Mixed device data detected|Multiple device layouts detected)\./.test(warning);
 }
 
-function toUsDate(year: number, month: number, day: number): string {
-  return `${String(month).padStart(2, "0")}/${String(day).padStart(2, "0")}/${String(year).padStart(4, "0")}`;
-}
-
-function daysInMonth(year: number, month: number): number {
-  return new Date(Date.UTC(year, month, 0)).getUTCDate();
-}
-
-function calendarCells(year: number, month: number): Array<number | null> {
-  const firstWeekday = new Date(Date.UTC(year, month - 1, 1)).getUTCDay();
-  const totalDays = daysInMonth(year, month);
-  const cells: Array<number | null> = [];
-
-  for (let i = 0; i < firstWeekday; i += 1) cells.push(null);
-  for (let d = 1; d <= totalDays; d += 1) cells.push(d);
-  while (cells.length % 7 !== 0) cells.push(null);
-  while (cells.length < 42) cells.push(null);
-
-  return cells;
-}
-
 async function fileToDataUrl(file: File): Promise<string> {
   return await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
@@ -382,9 +343,6 @@ export function QuickReportApp() {
   const [errors, setErrors] = useState<string[]>([]);
   const [isSourceLoading, setIsSourceLoading] = useState(false);
   const [pendingSourceSelection, setPendingSourceSelection] = useState<"folder" | "zip" | null>(null);
-  const [showCalendarAlt, setShowCalendarAlt] = useState(false);
-  const [calendarMonth, setCalendarMonth] = useState<number>(new Date().getMonth() + 1);
-  const [calendarYear, setCalendarYear] = useState<number>(new Date().getFullYear());
 
   useEffect(() => {
     if (folderInputRef.current) {
@@ -462,13 +420,6 @@ export function QuickReportApp() {
   const dateOfBirthIso = useMemo(() => normalizeDobInput(dateOfBirthInput), [dateOfBirthInput]);
   const isPatientNameMissing = patientName.trim().length <= 1;
   const isDobMissing = !dateOfBirthIso;
-  const selectedDob = useMemo(() => (dateOfBirthIso ? parseIsoDate(dateOfBirthIso) : null), [dateOfBirthIso]);
-  const dobCalendarCells = useMemo(() => calendarCells(calendarYear, calendarMonth), [calendarMonth, calendarYear]);
-  const yearOptions = useMemo(
-    () => Array.from({ length: MAX_YEAR - MIN_YEAR + 1 }, (_, i) => MIN_YEAR + i),
-    []
-  );
-
   const canGenerate =
     !isPatientNameMissing &&
     !isDobMissing &&
@@ -575,7 +526,6 @@ export function QuickReportApp() {
     setStatusMessage("Awaiting data source.");
     setParseProgressImmediate({ phase: "idle", detail: "Idle", percent: 0 });
     setIsPreviewCollapsed(false);
-    setShowCalendarAlt(false);
     setIsSourceLoading(false);
     setPendingSourceSelection(null);
     setSourceFileCount(0);
@@ -1052,43 +1002,6 @@ export function QuickReportApp() {
     window.open(activeReport.previewUrl, "_blank", "noopener,noreferrer");
   };
 
-  const openCalendarPicker = () => {
-    setShowCalendarAlt((current) => {
-      const next = !current;
-      if (next) {
-        const seed = selectedDob ?? {
-          year: new Date().getFullYear(),
-          month: new Date().getMonth() + 1,
-          day: 1
-        };
-        setCalendarYear(seed.year);
-        setCalendarMonth(seed.month);
-      }
-      return next;
-    });
-  };
-
-  const moveCalendarMonth = (offset: number) => {
-    let nextMonth = calendarMonth + offset;
-    let nextYear = calendarYear;
-    while (nextMonth < 1) {
-      nextMonth += 12;
-      nextYear -= 1;
-    }
-    while (nextMonth > 12) {
-      nextMonth -= 12;
-      nextYear += 1;
-    }
-    if (nextYear < MIN_YEAR || nextYear > MAX_YEAR) return;
-    setCalendarYear(nextYear);
-    setCalendarMonth(nextMonth);
-  };
-
-  const pickCalendarDate = (day: number) => {
-    setDateOfBirthInput(toUsDate(calendarYear, calendarMonth, day));
-    setShowCalendarAlt(false);
-  };
-
   return (
     <>
       <header className="app-bar">
@@ -1129,7 +1042,6 @@ export function QuickReportApp() {
             <label htmlFor="patientName"><span>Patient name {isPatientNameMissing ? "*" : ""}</span><input id="patientName" className="input" value={patientName} onChange={(e) => setPatientName(e.target.value)} placeholder="First Last" autoComplete="off" /></label>
             <label htmlFor="dob"><span>Date of birth {isDobMissing ? "*" : ""}</span><input id="dob" className="date-input" type="text" inputMode="numeric" placeholder="MM/DD/YYYY" value={dateOfBirthInput} onChange={(e) => setDateOfBirthInput(formatDobTyping(e.target.value))} /></label>
             <label htmlFor="physician"><span>Physician name</span><input id="physician" className="input" value={physicianName} onChange={(e) => setPhysicianName(e.target.value)} autoComplete="off" /></label>
-            <div className="setup-source-status"><span>Device/card</span><strong>{loadedSourceLoader ?? selectedCountLabel}</strong><small>{loadedSourceLatestClinicalDayLabel ? `Last data: ${loadedSourceLatestClinicalDayLabel}` : "Select the SD-card root folder"}</small></div>
           </div>
           <div className="setup-actions">
             <button
@@ -1143,26 +1055,10 @@ export function QuickReportApp() {
               <UiIcon name="database" size={20} /> Select SD-CARD
             </button>
             <button type="button" className="btn btn-primary" onClick={handleGenerate} disabled={!canGenerate}><UiIcon name="report" size={20} /> Generate Reports</button>
-            <button type="button" className="btn btn-secondary" onClick={openCalendarPicker}>{showCalendarAlt ? "Hide Calendar" : "DOB Calendar"}</button>
             <button type="button" className="btn btn-danger" onClick={handleResetClearAll} disabled={status === "working"}>Reset / Clear All</button>
           </div>
           <input ref={folderInputRef} type="file" multiple onChange={handleFolderSelection} style={{ display: "none" }} />
           <input ref={zipInputRef} type="file" accept=".zip" onChange={handleZipSelection} style={{ display: "none" }} />
-          {showCalendarAlt ? (
-            <div className="calendar-panel" role="dialog" aria-label="Date of birth calendar picker">
-              <div className="calendar-toolbar">
-                <button type="button" className="btn btn-secondary btn-calendar-nav" onClick={() => moveCalendarMonth(-1)}>◀</button>
-                <select className="input calendar-select" value={calendarMonth} onChange={(e) => setCalendarMonth(Number(e.target.value))} aria-label="Select month">{MONTH_LABELS.map((monthLabel, idx) => <option key={monthLabel} value={idx + 1}>{monthLabel}</option>)}</select>
-                <select className="input calendar-select" value={calendarYear} onChange={(e) => setCalendarYear(Number(e.target.value))} aria-label="Select year">{yearOptions.map((year) => <option key={year} value={year}>{year}</option>)}</select>
-                <button type="button" className="btn btn-secondary btn-calendar-nav" onClick={() => moveCalendarMonth(1)}>▶</button>
-              </div>
-              <div className="calendar-grid calendar-weekdays">{WEEKDAY_LABELS.map((weekday) => <div key={weekday} className="calendar-weekday">{weekday}</div>)}</div>
-              <div className="calendar-grid">{dobCalendarCells.map((day, index) => {
-                const selected = Boolean(day) && selectedDob && selectedDob.year === calendarYear && selectedDob.month === calendarMonth && selectedDob.day === day;
-                return <button key={`${calendarYear}-${calendarMonth}-${index}`} type="button" className={`calendar-day ${selected ? "calendar-day-selected" : ""}`} onClick={() => day && pickCalendarDate(day)} disabled={!day}>{day ?? ""}</button>;
-              })}</div>
-            </div>
-          ) : null}
           <details className="setup-more">
             <summary>Branding, source details, and help</summary>
             <div className="setup-more-grid">
@@ -1181,48 +1077,8 @@ export function QuickReportApp() {
           {errors.length > 0 ? <p className="setup-error">{errors[0]}</p> : null}
         </section>
 
+            {hasOlderDatedData && !olderHistoryLoaded || previousTherapyPeriod?.machine ? (
             <div className="therapy-period-list">
-              <section className="therapy-period therapy-period-current">
-                <div className="therapy-period-identity">
-                  <span className="therapy-period-badge"><UiIcon name="check" size={17} /> Current Therapy</span>
-                  <span className="therapy-device-icon"><UiIcon name="device" size={45} /><i><UiIcon name="check" size={15} /></i></span>
-                </div>
-                <div className="therapy-period-details">
-                  <h4>{currentTherapyPeriod?.label ?? "Select device/card"}</h4>
-                  {currentTherapyPeriod ? (
-                    <>
-                      <p><UiIcon name="calendar" size={20} /> {formatIsoDateLong(currentTherapyPeriod.startClinicalDayIso)} – {formatIsoDateLong(currentTherapyPeriod.endClinicalDayIso)}</p>
-                      <p><UiIcon name="database" size={20} /> {currentTherapyPeriod.daysWithData} days with data available</p>
-                    </>
-                  ) : (
-                    <>
-                      <p><UiIcon name="calendar" size={20} /> Current therapy dates will appear here</p>
-                      <p><UiIcon name="database" size={20} /> No therapy data loaded</p>
-                    </>
-                  )}
-                </div>
-                <div className="therapy-period-actions">
-                  {loadedSourceLoader ? (
-                    <button
-                      type="button"
-                      className="btn btn-outline-current"
-                      onClick={() => {
-                        setShowPreviousTherapyReview(false);
-                        if (!hasGeneratedReports) void handleGenerate();
-                      }}
-                      disabled={!canGenerate}
-                    >
-                      <UiIcon name="report" size={21} />
-                      {hasGeneratedReports ? "View Current Reports" : "Generate Current Reports"}
-                    </button>
-                  ) : null}
-                  <button type="button" className="btn btn-primary" onClick={triggerDownload} disabled={!activeReport}>
-                    <UiIcon name="document" size={21} />
-                    Export Current PDF
-                  </button>
-                </div>
-              </section>
-
               {hasOlderDatedData && !olderHistoryLoaded ? (
                 <div className="older-history-banner">
                   <span className="banner-icon"><UiIcon name="info" size={22} /></span>
@@ -1247,13 +1103,12 @@ export function QuickReportApp() {
                 </div>
               ) : null}
 
+              {previousTherapyPeriod?.machine ? (
               <section className="therapy-period therapy-period-previous">
                 <div className="therapy-period-identity">
                   <span className="therapy-period-badge"><UiIcon name="history" size={17} /> Previous Therapy</span>
                   <span className="therapy-device-icon"><UiIcon name="device" size={45} /><i><UiIcon name="history" size={15} /></i></span>
                 </div>
-                {previousTherapyPeriod?.machine ? (
-                  <>
                     <div className="therapy-period-details">
                       <h4>{previousTherapyPeriod.label}</h4>
                       <p><UiIcon name="calendar" size={20} /> {formatIsoDateLong(previousTherapyPeriod.startClinicalDayIso)} – {formatIsoDateLong(previousTherapyPeriod.endClinicalDayIso)}</p>
@@ -1273,37 +1128,33 @@ export function QuickReportApp() {
                       </button>
                       <p className="review-only-notice"><UiIcon name="warning" size={20} /><span>Historical therapy period for review only.<br />Export is unavailable.</span></p>
                     </div>
-                  </>
-                ) : (
-                  <div className="therapy-period-details therapy-period-unavailable">
-                    <h4>{loadedSourceLoader ? "Previous settings" : "Previous therapy"}</h4>
-                    <p className="previous-unavailable">
-                      {!loadedSourceLoader
-                        ? "Select a device/card to check previous therapy settings."
-                        : hasOlderDatedData && !olderHistoryLoaded
-                        ? "Load older history to check the immediately previous settings period."
-                        : "Previous settings unavailable from this device/card."}
-                    </p>
-                  </div>
-                )}
               </section>
+              ) : null}
             </div>
+            ) : null}
           </article>
 
           <article className="card previous-review-card">
             <div className="review-tabs">
-              <button type="button" className={!showPreviousTherapyReview ? "review-tab-active" : ""} onClick={() => setShowPreviousTherapyReview(false)}><UiIcon name="report" size={20} /> Current Therapy</button>
+              <button type="button" className={!showPreviousTherapyReview ? "review-tab-active" : ""} onClick={() => setShowPreviousTherapyReview(false)}><UiIcon name="report" size={20} /> Therapy Overview</button>
+              {previousTherapyPeriod?.machine ? (
               <button
                 type="button"
                 className={showPreviousTherapyReview ? "review-tab-active" : ""}
-                disabled={!previousTherapyPeriod?.machine}
                 onClick={() => {
                   if (previousTherapyReview) setShowPreviousTherapyReview(true);
                   else void handleReviewPreviousTherapy();
                 }}
               ><UiIcon name="history" size={20} /> Previous Therapy</button>
+              ) : null}
               <span className="review-export-disabled"><button type="button" className={showPreviousTherapyReview ? "btn btn-secondary" : "btn btn-primary"} onClick={triggerDownload} disabled={showPreviousTherapyReview || !activeReport}><UiIcon name="document" size={20} /> Export PDF</button><small>Current therapy only</small></span>
             </div>
+            {!showPreviousTherapyReview ? (
+              <div className="therapy-overview-source">
+                <UiIcon name="device" size={27} />
+                <span><small>Device/card</small><strong>{loadedSourceLoader ?? "No device/card selected"}</strong><em>{loadedSourceLatestClinicalDayLabel ? `Last data: ${loadedSourceLatestClinicalDayLabel}` : "Select an SD-card to load therapy data"}</em></span>
+              </div>
+            ) : null}
             <div className="previous-review-metrics">
               <div className="review-metric review-metric-usage">
                 <span className="review-metric-icon"><UiIcon name="clock" size={33} /></span>
@@ -1332,7 +1183,7 @@ export function QuickReportApp() {
         {hasGeneratedReports && activeReport ? (
           <article className="card preview-shell">
             <div>
-              <span className="therapy-period-badge">Current Therapy Reports</span>
+              <span className="therapy-period-badge">Therapy Overview Reports</span>
               <p className="subtle">PDF preview and export are available only for the current therapy settings period.</p>
             </div>
             <div className="range-tabs" role="tablist" aria-label="Generated report tabs">

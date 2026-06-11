@@ -1039,7 +1039,7 @@ main {
 }
 
 .setup-fields {
-  grid-template-columns: repeat(3, minmax(150px, 1fr)) minmax(220px, 1.3fr);
+  grid-template-columns: repeat(3, minmax(150px, 1fr));
 }
 
 .setup-fields label,
@@ -1075,7 +1075,7 @@ main {
 }
 
 .setup-actions {
-  grid-template-columns: repeat(4, max-content);
+  grid-template-columns: repeat(3, max-content);
   margin-top: 12px;
 }
 
@@ -1505,6 +1505,40 @@ main {
 
 .review-export-disabled small {
   color: #6c7b8d;
+}
+
+.therapy-overview-source {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 14px;
+  padding: 11px 16px;
+  color: #0758b8;
+  border: 1px solid #b9d2eb;
+  border-radius: 6px;
+  background: linear-gradient(90deg, #f7fbff 0%, #f1f7fd 100%);
+}
+
+.therapy-overview-source > span {
+  display: grid;
+  gap: 2px;
+}
+
+.therapy-overview-source small {
+  color: #4b6479;
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.therapy-overview-source strong {
+  color: #10294d;
+  font-size: 1rem;
+}
+
+.therapy-overview-source em {
+  color: #526a84;
+  font-size: 0.78rem;
+  font-style: normal;
 }
 
 .previous-review-metrics {
