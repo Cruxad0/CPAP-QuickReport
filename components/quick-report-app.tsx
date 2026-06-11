@@ -1041,7 +1041,6 @@ export function QuickReportApp() {
           <div className="setup-fields">
             <label htmlFor="patientName"><span>Patient name {isPatientNameMissing ? "*" : ""}</span><input id="patientName" className="input" value={patientName} onChange={(e) => setPatientName(e.target.value)} placeholder="First Last" autoComplete="off" /></label>
             <label htmlFor="dob"><span>Date of birth {isDobMissing ? "*" : ""}</span><input id="dob" className="date-input" type="text" inputMode="numeric" placeholder="MM/DD/YYYY" value={dateOfBirthInput} onChange={(e) => setDateOfBirthInput(formatDobTyping(e.target.value))} /></label>
-            <label htmlFor="physician"><span>Physician name</span><input id="physician" className="input" value={physicianName} onChange={(e) => setPhysicianName(e.target.value)} autoComplete="off" /></label>
           </div>
           <div className="setup-actions">
             <button
@@ -1054,17 +1053,15 @@ export function QuickReportApp() {
             >
               <UiIcon name="database" size={20} /> Select SD-CARD
             </button>
-            <button type="button" className="btn btn-primary" onClick={handleGenerate} disabled={!canGenerate}><UiIcon name="report" size={20} /> Generate Reports</button>
             <button type="button" className="btn btn-danger" onClick={handleResetClearAll} disabled={status === "working"}>Reset / Clear All</button>
           </div>
           <input ref={folderInputRef} type="file" multiple onChange={handleFolderSelection} style={{ display: "none" }} />
           <input ref={zipInputRef} type="file" accept=".zip" onChange={handleZipSelection} style={{ display: "none" }} />
           <details className="setup-more">
-            <summary>Branding, source details, and help</summary>
+            <summary>Branding</summary>
             <div className="setup-more-grid">
+              <label htmlFor="physician"><span>Physician name</span><input id="physician" className="input" value={physicianName} onChange={(e) => setPhysicianName(e.target.value)} autoComplete="off" /></label>
               <label htmlFor="header-upload"><span>Optional PDF header image</span><input id="header-upload" ref={headerInputRef} type="file" accept="image/png,image/jpeg" onChange={handleHeaderUpload} /></label>
-              <div><strong>How to use</strong><p>Select the SD-card root folder, enter the patient details, then generate the current reports. Load older history only when offered.</p></div>
-              <div><strong>Source details</strong><p>{selectedCountLabel}{loadedMixedDataWarning ? ` · ${loadedMixedDataWarning}` : ""}{staleDataAgeText ? ` · ${staleDataAgeText}` : ""}</p></div>
             </div>
             {headerDataUrl ? <button type="button" className="link-button subtle-link-button" onClick={clearBrandingImage}>Clear branding image</button> : null}
           </details>
@@ -1145,13 +1142,20 @@ export function QuickReportApp() {
                   if (previousTherapyReview) setShowPreviousTherapyReview(true);
                   else void handleReviewPreviousTherapy();
                 }}
-              ><UiIcon name="history" size={20} /> Previous Therapy</button>
+              ><UiIcon name="history" size={20} /> Previous Data Overview</button>
               ) : null}
             </div>
             {!showPreviousTherapyReview ? (
-              <div className="therapy-overview-source">
-                <UiIcon name="device" size={27} />
-                <span><small>Device/card</small><strong>{loadedSourceLoader ?? "No device/card selected"}</strong><em>{loadedSourceLatestClinicalDayLabel ? `Last data: ${loadedSourceLatestClinicalDayLabel}` : "Select an SD-card to load therapy data"}</em></span>
+              <div className="therapy-overview-toolbar">
+                <div className="therapy-overview-source">
+                  <UiIcon name="device" size={27} />
+                  <span><small>Device/card</small><strong>{loadedSourceLoader ?? "No device/card selected"}</strong><em>{loadedSourceLatestClinicalDayLabel ? `Last data: ${loadedSourceLatestClinicalDayLabel}` : "Select an SD-card to load therapy data"}</em></span>
+                </div>
+                {loadedSourceLoader ? (
+                  <button type="button" className="btn btn-primary therapy-overview-generate" onClick={handleGenerate} disabled={!canGenerate}>
+                    <UiIcon name="report" size={20} /> Analyze Data and Generate Report
+                  </button>
+                ) : null}
               </div>
             ) : null}
             <div className="previous-review-metrics">

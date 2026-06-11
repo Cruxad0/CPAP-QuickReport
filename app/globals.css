@@ -1093,7 +1093,7 @@ main {
 }
 
 .setup-more-grid {
-  grid-template-columns: 1fr 1.3fr 1.3fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   align-items: start;
   margin-top: 8px;
 }
@@ -1398,9 +1398,9 @@ main {
   gap: 15px;
   margin: 4px 8px 0;
   padding: 13px 16px;
-  border: 1px solid #0870dc;
+  border: 1px solid #e0a333;
   border-radius: 8px;
-  background: linear-gradient(90deg, #f9fcff, #f5faff);
+  background: linear-gradient(90deg, #fffaf0, #fff4d6);
 }
 
 .older-history-banner .banner-icon {
@@ -1408,21 +1408,23 @@ main {
   padding: 3px;
   color: #fff;
   border-radius: 50%;
-  background: #0965c8;
+  background: #c47800;
 }
 
 .older-history-banner strong {
-  color: #10294d;
+  color: #604000;
   font-size: 1rem;
 }
 
 .older-history-banner span {
-  color: #4d6680;
+  color: #725618;
 }
 
 .older-history-banner .btn {
   min-width: 210px;
   justify-content: center;
+  border-color: #b86b00;
+  background: linear-gradient(180deg, #d98a0b 0%, #b86b00 100%);
 }
 
 .review-only-notice,
@@ -1480,16 +1482,28 @@ main {
   background: linear-gradient(180deg, #fff, #f5f9fd);
 }
 
+.therapy-overview-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: stretch;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
 .therapy-overview-source {
   display: flex;
   align-items: center;
   gap: 14px;
-  margin-bottom: 14px;
   padding: 11px 16px;
   color: #0758b8;
   border: 1px solid #b9d2eb;
   border-radius: 6px;
   background: linear-gradient(90deg, #f7fbff 0%, #f1f7fd 100%);
+}
+
+.therapy-overview-generate {
+  justify-content: center;
+  min-width: 285px;
 }
 
 .therapy-overview-source > span {
@@ -1752,6 +1766,14 @@ main {
   .older-history-banner .btn {
     grid-column: 1 / -1;
     width: 100%;
+  }
+
+  .therapy-overview-toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .therapy-overview-generate {
+    min-width: 0;
   }
 
   .review-tabs > button {
