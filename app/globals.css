@@ -1450,17 +1450,6 @@ main {
   background: #fff;
 }
 
-.dashboard-export-actions {
-  display: grid;
-  align-content: center;
-  gap: 8px;
-  padding: 11px;
-}
-
-.dashboard-export-actions .btn {
-  justify-content: center;
-}
-
 .review-tabs {
   display: flex;
   align-items: stretch;
@@ -1489,22 +1478,6 @@ main {
   color: #0758b8;
   border-bottom-color: #096ad3;
   background: linear-gradient(180deg, #fff, #f5f9fd);
-}
-
-.review-export-disabled {
-  display: grid;
-  justify-items: center;
-  gap: 2px;
-  margin: 8px 0 6px auto;
-}
-
-.review-export-disabled .btn {
-  padding-top: 0.5rem;
-  padding-bottom: 0.5rem;
-}
-
-.review-export-disabled small {
-  color: #6c7b8d;
 }
 
 .therapy-overview-source {
@@ -1617,6 +1590,10 @@ main {
   margin-top: 14px;
   border: 1px solid #ccd7e2;
   border-radius: 7px;
+}
+
+.review-detail-row-overview {
+  grid-template-columns: 1fr 1fr;
 }
 
 .review-detail-row > div {
@@ -1780,10 +1757,6 @@ main {
   .review-tabs > button {
     min-width: 0;
     padding: 0 12px;
-  }
-
-  .review-export-disabled {
-    display: none;
   }
 
   .previous-review-metrics {

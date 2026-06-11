@@ -1137,7 +1137,7 @@ export function QuickReportApp() {
           <article className="card previous-review-card">
             <div className="review-tabs">
               <button type="button" className={!showPreviousTherapyReview ? "review-tab-active" : ""} onClick={() => setShowPreviousTherapyReview(false)}><UiIcon name="report" size={20} /> Therapy Overview</button>
-              {previousTherapyPeriod?.machine ? (
+              {olderHistoryLoaded && previousTherapyPeriod?.machine ? (
               <button
                 type="button"
                 className={showPreviousTherapyReview ? "review-tab-active" : ""}
@@ -1147,7 +1147,6 @@ export function QuickReportApp() {
                 }}
               ><UiIcon name="history" size={20} /> Previous Therapy</button>
               ) : null}
-              <span className="review-export-disabled"><button type="button" className={showPreviousTherapyReview ? "btn btn-secondary" : "btn btn-primary"} onClick={triggerDownload} disabled={showPreviousTherapyReview || !activeReport}><UiIcon name="document" size={20} /> Export PDF</button><small>Current therapy only</small></span>
             </div>
             {!showPreviousTherapyReview ? (
               <div className="therapy-overview-source">
@@ -1173,10 +1172,10 @@ export function QuickReportApp() {
                 <span><small>Leak</small><strong>{formatMetric(dashboardMetrics?.avgLeak, " L/min")}</strong><em>reported average</em></span>
               </div>
             </div>
-            <div className="review-detail-row">
+            <div className={`review-detail-row ${showPreviousTherapyReview ? "" : "review-detail-row-overview"}`}>
               <div><UiIcon name="calendar" size={27} /><span><small>Date Range</small><strong>{dashboardMetrics ? `${dashboardMetrics.dateRangeStart} – ${dashboardMetrics.dateRangeEnd}` : "No report selected"}</strong><em>{dashboardMetrics ? `${dashboardMetrics.daysWithData} days with data available` : "Generate or review a report"}</em></span></div>
               <div><UiIcon name="gear" size={27} /><span><small>Therapy Settings</small><strong>{dashboardPeriod?.label ?? "Not available"}</strong><em>{dashboardMetrics?.machine.pressure ? `Fixed pressure ${dashboardMetrics.machine.pressure}` : "Therapy settings summary"}</em></span></div>
-              {showPreviousTherapyReview ? <p className="review-only-notice"><UiIcon name="info" size={20} /><span><strong>Review only.</strong><br />Historical therapy period for review only.<br />Export is unavailable.</span></p> : <div className="dashboard-export-actions"><button type="button" className="btn btn-primary" onClick={triggerDownload} disabled={!activeReport}><UiIcon name="document" size={20} /> Export PDF</button><button type="button" className="btn btn-outline-current" onClick={openPreviewInNewTab} disabled={!activeReport}><UiIcon name="eye" size={20} /> Open Report</button></div>}
+              {showPreviousTherapyReview ? <p className="review-only-notice"><UiIcon name="info" size={20} /><span><strong>Review only.</strong><br />Historical therapy period for review only.<br />Export is unavailable.</span></p> : null}
             </div>
           </article>
 
@@ -1205,7 +1204,7 @@ export function QuickReportApp() {
                 Export PDF
               </button>
               <button type="button" className="btn btn-secondary" onClick={openPreviewInNewTab}>
-                Open PDF
+                Open Report
               </button>
               <button
                 type="button"
@@ -1226,7 +1225,7 @@ export function QuickReportApp() {
                   src={activeReport.previewUrl}
                   title="PDF preview"
                 />
-                <p className="subtle">If preview is blank on this browser, use Open PDF.</p>
+                <p className="subtle">If preview is blank on this browser, use Open Report.</p>
               </>
             ) : (
               <p className="subtle">Preview collapsed. Use Open Preview to expand.</p>
