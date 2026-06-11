@@ -1000,12 +1000,12 @@ main {
 
 .dashboard-setup {
   position: relative;
-  margin-bottom: 10px;
-  padding: 15px 18px 12px;
-  border: 1px solid #c5d2df;
-  border-radius: 7px;
-  background: #fff;
-  box-shadow: 0 2px 7px rgba(9, 40, 77, 0.1);
+  margin: 0 0 12px;
+  padding: 14px 16px 11px;
+  border: 1px solid #b9d2eb;
+  border-radius: 6px;
+  background: linear-gradient(90deg, #f7fbff 0%, #f1f7fd 100%);
+  box-shadow: inset 3px 0 0 #0872dc;
 }
 
 .setup-heading,
@@ -1019,7 +1019,7 @@ main {
 
 .setup-heading {
   grid-template-columns: 1fr auto;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
 
 .setup-heading div {
@@ -1029,7 +1029,7 @@ main {
 
 .setup-heading strong {
   color: #10294d;
-  font-size: 1.05rem;
+  font-size: 0.95rem;
 }
 
 .setup-heading span,
@@ -1039,10 +1039,11 @@ main {
 }
 
 .setup-close {
-  padding: 4px 8px;
-  color: #49627e;
-  border: 0;
-  background: transparent;
+  padding: 5px 9px;
+  color: #0758b8;
+  border: 1px solid #9fc3e7;
+  border-radius: 5px;
+  background: #fff;
   cursor: pointer;
 }
 

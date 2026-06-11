@@ -1116,11 +1116,20 @@ export function QuickReportApp() {
         </button>
       </header>
       <main>
+        <section className="dashboard-stack">
+          <article className="card therapy-history-card">
+            <div className="therapy-history-heading">
+              <span className="section-heading-icon"><UiIcon name="report" size={27} /></span>
+              <div>
+                <h2>Therapy Report</h2>
+              </div>
+            </div>
+
         {showSetupPanel ? (
         <section id="setup-panel" className={`dashboard-setup ${isDataSourceLoading ? "card-loading" : ""}`} aria-busy={isDataSourceLoading}>
           {isDataSourceLoading ? <div className="loading-overlay">{dataSourceOverlayText}</div> : null}
           <div className="setup-heading">
-            <div><strong>Report Setup</strong><span>Patient details and device/card source</span></div>
+            <div><strong>Patient &amp; Device Details</strong><span>Complete these fields to generate the therapy report.</span></div>
             <button type="button" className="setup-close" onClick={() => setShowSetupPanel(false)}>Close</button>
           </div>
           <div className="setup-fields">
@@ -1179,15 +1188,6 @@ export function QuickReportApp() {
           {errors.length > 0 ? <p className="setup-error">{errors[0]}</p> : null}
         </section>
         ) : null}
-
-        <section className="dashboard-stack">
-          <article className="card therapy-history-card">
-            <div className="therapy-history-heading">
-              <span className="section-heading-icon"><UiIcon name="clock" size={27} /></span>
-              <div>
-                <h2>Therapy Settings History</h2>
-              </div>
-            </div>
 
             <div className="therapy-period-list">
               <section className="therapy-period therapy-period-current">
@@ -1289,7 +1289,7 @@ export function QuickReportApp() {
                     <h4>{loadedSourceLoader ? "Previous settings" : "Previous therapy"}</h4>
                     <p className="previous-unavailable">
                       {!loadedSourceLoader
-                        ? "Select a device/card to check therapy settings history."
+                        ? "Select a device/card to check previous therapy settings."
                         : hasOlderDatedData && !olderHistoryLoaded
                         ? "Load older history to check the immediately previous settings period."
                         : "Previous settings unavailable from this device/card."}
