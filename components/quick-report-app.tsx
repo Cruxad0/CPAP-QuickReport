@@ -1396,13 +1396,15 @@ export function QuickReportApp() {
         <article className="card affiliate-card">
           <details className="affiliate-disclosure">
             <summary>
+              <span className="affiliate-summary-icon"><UiIcon name="device" size={25} /></span>
               <span className="affiliate-summary-copy">
-                <span className="affiliate-summary-title">Buy your Card reader here</span>
+                <span className="affiliate-summary-title">SD Card Readers</span>
+                <span className="affiliate-summary-description">Compatible options for importing therapy data</span>
               </span>
-              <span className="affiliate-summary-pill">3 options</span>
+              <span className="affiliate-summary-action">View 3 options</span>
             </summary>
             <div className="card-reader-list">
-              {CARD_READER_PRODUCTS.map((product) => (
+              {CARD_READER_PRODUCTS.map((product, index) => (
                 <a
                   key={product.href}
                   className="card-reader-item"
@@ -1411,11 +1413,7 @@ export function QuickReportApp() {
                   rel="noopener noreferrer sponsored"
                   aria-label={`Buy ${product.title} on Amazon`}
                 >
-                  <span className="card-reader-copy">
-                    <strong>{product.title}</strong>
-                    <span className="card-reader-description">{product.description}</span>
-                    <span className="card-reader-cta">View on Amazon</span>
-                  </span>
+                  <span className="card-reader-number">{String(index + 1).padStart(2, "0")}</span>
                   <span className="card-reader-media" aria-hidden="true">
                     <img
                       className="card-reader-image"
@@ -1425,11 +1423,17 @@ export function QuickReportApp() {
                       decoding="async"
                     />
                   </span>
+                  <span className="card-reader-copy">
+                    <span className="card-reader-label">Recommended accessory</span>
+                    <strong>{product.title}</strong>
+                    <span className="card-reader-description">{product.description}</span>
+                    <span className="card-reader-cta"><UiIcon name="eye" size={17} /> View on Amazon</span>
+                  </span>
                 </a>
               ))}
             </div>
             <p className="affiliate-note">
-              Each product link is an affiliate link. Purchases do not change your price; a small portion supports our team and helps keep this website up and running.
+              Affiliate disclosure: purchases do not change your price. A small portion supports this local-first reporting tool.
             </p>
           </details>
         </article>
