@@ -1506,6 +1506,44 @@ main {
   min-width: 285px;
 }
 
+.therapy-overview-generate-ready {
+  animation: analysis-ready-pulse 2.4s ease-in-out infinite;
+  box-shadow:
+    0 0 0 0 rgba(8, 114, 220, 0.38),
+    0 4px 12px rgba(7, 88, 184, 0.28);
+}
+
+.therapy-overview-generate-ready:hover {
+  animation-play-state: paused;
+  box-shadow:
+    0 0 0 5px rgba(8, 114, 220, 0.18),
+    0 6px 16px rgba(7, 88, 184, 0.34);
+}
+
+@keyframes analysis-ready-pulse {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 0 rgba(8, 114, 220, 0.34),
+      0 4px 12px rgba(7, 88, 184, 0.24);
+  }
+
+  50% {
+    box-shadow:
+      0 0 0 7px rgba(8, 114, 220, 0.08),
+      0 6px 18px rgba(7, 88, 184, 0.38);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .therapy-overview-generate-ready {
+    animation: none;
+    box-shadow:
+      0 0 0 4px rgba(8, 114, 220, 0.14),
+      0 4px 12px rgba(7, 88, 184, 0.28);
+  }
+}
+
 .therapy-overview-source > span {
   display: grid;
   gap: 2px;

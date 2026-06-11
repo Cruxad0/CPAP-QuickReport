@@ -1085,7 +1085,7 @@ export function QuickReportApp() {
                         ? "Older therapy data with different settings is available."
                         : "Older therapy data is available on this device/card."}
                     </strong>
-                    <span>Loads only the immediately previous settings period, up to 90 days.</span>
+                    <span>This data uses therapy settings older than the current settings. Loads only the immediately previous settings period, up to 90 days.</span>
                   </div>
                   <button
                     type="button"
@@ -1134,7 +1134,7 @@ export function QuickReportApp() {
           <article className="card previous-review-card">
             <div className="review-tabs">
               <button type="button" className={!showPreviousTherapyReview ? "review-tab-active" : ""} onClick={() => setShowPreviousTherapyReview(false)}><UiIcon name="report" size={20} /> Therapy Overview</button>
-              {olderHistoryLoaded && previousTherapyPeriod?.machine ? (
+              {previousTherapyPeriod?.machine ? (
               <button
                 type="button"
                 className={showPreviousTherapyReview ? "review-tab-active" : ""}
@@ -1152,7 +1152,12 @@ export function QuickReportApp() {
                   <span><small>Device/card</small><strong>{loadedSourceLoader ?? "No device/card selected"}</strong><em>{loadedSourceLatestClinicalDayLabel ? `Last data: ${loadedSourceLatestClinicalDayLabel}` : "Select an SD-card to load therapy data"}</em></span>
                 </div>
                 {loadedSourceLoader ? (
-                  <button type="button" className="btn btn-primary therapy-overview-generate" onClick={handleGenerate} disabled={!canGenerate}>
+                  <button
+                    type="button"
+                    className={`btn btn-primary therapy-overview-generate ${canGenerate && !hasGeneratedReports ? "therapy-overview-generate-ready" : ""}`}
+                    onClick={handleGenerate}
+                    disabled={!canGenerate}
+                  >
                     <UiIcon name="report" size={20} /> Analyze Data and Generate Report
                   </button>
                 ) : null}
