@@ -9,7 +9,6 @@ import {
   parseYuwellFormatC,
   parseYuwellFormatD
 } from "../lib/parsers/yuwell";
-import { isDifferentSdCard, sdCardIdentityLabel } from "../lib/sd-card-identity";
 import type { SourceFile } from "../lib/types";
 
 function writeU16(bytes: Uint8Array, offset: number, value: number) {
@@ -207,10 +206,4 @@ test("Prisma Line config identifies prisma25S and prisma25ST models", () => {
     machine25st
   );
   assert.deepEqual(machine25st, { device: "prisma25ST (ST25-001)" });
-});
-
-test("SD-card identity check compares normalized device identities", () => {
-  assert.equal(isDifferentSdCard("resmed|AirSense 11 (123)", "resmed| airsense 11 (123) "), false);
-  assert.equal(isDifferentSdCard("resmed|AirSense 11 (123)", "resmed|AirSense 11 (456)"), true);
-  assert.equal(sdCardIdentityLabel("bmcg3x|G3 A20 (ABC123)"), "G3 A20 (ABC123)");
 });

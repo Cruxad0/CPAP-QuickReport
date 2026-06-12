@@ -219,7 +219,6 @@ async function loadSource(
     totalBytes,
     statusMessage,
     selectedLoader: prepared.selectedLoader,
-    sourceDeviceIdentity: prepared.sourceDeviceIdentity,
     latestClinicalDayIso: prepared.latestClinicalDayIso,
     warnings: prepared.warnings,
     hasOlderDatedData,

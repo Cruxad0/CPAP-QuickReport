@@ -6,16 +6,10 @@ import { enumerateDeferredFolderEntries, pickDirectoryHandle, supportsDirectoryP
 import { ReportWorkerClient } from "@/lib/report-worker-client";
 import { REPORT_RANGE_OPTIONS, type ReportRangeDays } from "@/lib/report-orchestrator";
 import { OLDER_HISTORY_IMPORT_LOOKBACK_DAYS } from "@/lib/source-files";
-import {
-  WARN_ON_DIFFERENT_SD_CARD_KEY,
-  isDifferentSdCard,
-  sdCardIdentityLabel
-} from "@/lib/sd-card-identity";
 import { daysSinceIsoDate, staleDataAgeClassName, staleDataSeverity } from "@/lib/stale-data";
 import { ParseProgress, QuickReportMetrics, TherapySettingsPeriod } from "@/lib/types";
 
 const SOURCE_SELECTION_CANCEL_TIMEOUT_MS = 20000;
-const LEGACY_LAST_SD_CARD_IDENTITY_KEY = "cpap-quickreport.last-sd-card-identity";
 const CARD_READER_PRODUCTS = [
   {
     title: "Acer Dual USB-C and USB-A Card Reader",
@@ -296,13 +290,8 @@ async function clearSiteData(): Promise<void> {
 }
 
 function clearUnloadSafeSiteData() {
-  let preservedWarnPreference: string | null = null;
   try {
-    preservedWarnPreference = window.localStorage?.getItem(WARN_ON_DIFFERENT_SD_CARD_KEY) ?? null;
     window.localStorage?.clear();
-    if (preservedWarnPreference !== null) {
-      window.localStorage?.setItem(WARN_ON_DIFFERENT_SD_CARD_KEY, preservedWarnPreference);
-    }
   } catch {
     // Best effort only.
   }
@@ -327,7 +316,6 @@ export function QuickReportApp() {
   const parseProgressRafRef = useRef<number | null>(null);
   const queuedParseProgressRef = useRef<ParseProgress | null>(null);
   const generatedReportsRef = useRef<GeneratedReports>({});
-  const lastSdCardIdentityRef = useRef<string | null>(null);
   const previewWindowsRef = useRef<Window[]>([]);
 
   const [patientName, setPatientName] = useState("");
@@ -357,21 +345,11 @@ export function QuickReportApp() {
   const [errors, setErrors] = useState<string[]>([]);
   const [isSourceLoading, setIsSourceLoading] = useState(false);
   const [pendingSourceSelection, setPendingSourceSelection] = useState<"folder" | "zip" | null>(null);
-  const [warnOnDifferentSdCard, setWarnOnDifferentSdCard] = useState(true);
 
   useEffect(() => {
     if (folderInputRef.current) {
       folderInputRef.current.setAttribute("webkitdirectory", "");
       folderInputRef.current.setAttribute("directory", "");
-    }
-  }, []);
-
-  useEffect(() => {
-    try {
-      window.localStorage?.removeItem(LEGACY_LAST_SD_CARD_IDENTITY_KEY);
-      setWarnOnDifferentSdCard(window.localStorage?.getItem(WARN_ON_DIFFERENT_SD_CARD_KEY) !== "false");
-    } catch {
-      setWarnOnDifferentSdCard(true);
     }
   }, []);
 
@@ -406,7 +384,6 @@ export function QuickReportApp() {
       revokeGeneratedReportUrls(generatedReportsRef.current);
       generatedReportsRef.current = {};
       closeOpenedPreviewWindows(previewWindowsRef.current);
-      lastSdCardIdentityRef.current = null;
       if (folderInputRef.current) folderInputRef.current.value = "";
       if (zipInputRef.current) zipInputRef.current.value = "";
       if (headerInputRef.current) headerInputRef.current.value = "";
@@ -607,35 +584,6 @@ export function QuickReportApp() {
     workerClientRef.current = new ReportWorkerClient();
   };
 
-  const confirmAndRememberSdCard = async (loaded: {
-    selectedLoader: string;
-    sourceDeviceIdentity?: string;
-  }): Promise<boolean> => {
-    const currentIdentity = loaded.sourceDeviceIdentity?.trim();
-    if (!currentIdentity) return true;
-
-    const previousIdentity = lastSdCardIdentityRef.current;
-
-    if (
-      warnOnDifferentSdCard &&
-      isDifferentSdCard(previousIdentity, currentIdentity) &&
-      !window.confirm(
-        `This SD-CARD is from a different machine than the last one imported.\n\n` +
-          `Last imported: ${sdCardIdentityLabel(previousIdentity)}\n` +
-          `This card: ${sdCardIdentityLabel(currentIdentity)}\n\n` +
-          `Continue importing this card?`
-      )
-    ) {
-      replaceWorkerClient();
-      resetResultState();
-      setStatusMessage("SD-CARD import canceled because a different machine was detected.");
-      return false;
-    }
-
-    lastSdCardIdentityRef.current = currentIdentity;
-    return true;
-  };
-
   const handleResetClearAll = async () => {
     if (status === "working") return;
     sourceSelectionAttemptRef.current += 1;
@@ -652,13 +600,11 @@ export function QuickReportApp() {
       setSourceFileCount(0);
       setPatientName("");
       setDateOfBirthInput("");
-      setWarnOnDifferentSdCard(true);
       setStatus("working");
       setStatusMessage("Clearing local data...");
       setParseProgressImmediate({ phase: "reset", detail: "Clearing local cache and storage...", percent: 12 });
       setIsSourceLoading(true);
     });
-    lastSdCardIdentityRef.current = null;
     clearSourceInputs();
 
     let resetError = workerReplacementError;
@@ -711,8 +657,6 @@ export function QuickReportApp() {
         parseLookbackDays: OLDER_HISTORY_IMPORT_LOOKBACK_DAYS,
         onProgress: (progress) => queueParseProgress(progress)
       });
-      if (!(await confirmAndRememberSdCard(loaded))) return;
-
       setSourceFileCount(loaded.totalFileCount);
       setLoadedSourceLoader(loaded.selectedLoader);
       setLoadedSourceLatestClinicalDayIso(loaded.latestClinicalDayIso);
@@ -793,8 +737,6 @@ export function QuickReportApp() {
           onProgress: (progress) => queueParseProgress(progress)
         });
       }
-      if (!(await confirmAndRememberSdCard(loaded))) return;
-
       setSourceFileCount(loaded.totalFileCount);
       setLoadedSourceLoader(loaded.selectedLoader);
       setLoadedSourceLatestClinicalDayIso(loaded.latestClinicalDayIso);
@@ -1084,28 +1026,6 @@ export function QuickReportApp() {
               <label htmlFor="header-upload"><span>Optional PDF header image</span><input id="header-upload" ref={headerInputRef} type="file" accept="image/png,image/jpeg" onChange={handleHeaderUpload} /></label>
             </div>
             {headerDataUrl ? <button type="button" className="link-button subtle-link-button" onClick={clearBrandingImage}>Clear branding image</button> : null}
-          </details>
-          <details className="setup-more">
-            <summary>Preferences</summary>
-            <label className="preference-toggle">
-              <input
-                type="checkbox"
-                checked={warnOnDifferentSdCard}
-                onChange={(event) => {
-                  const checked = event.target.checked;
-                  setWarnOnDifferentSdCard(checked);
-                  try {
-                    window.localStorage?.setItem(WARN_ON_DIFFERENT_SD_CARD_KEY, String(checked));
-                  } catch {
-                    // Keep the in-memory preference when browser storage is unavailable.
-                  }
-                }}
-              />
-              <span>
-                <strong>Warn when SD-CARD is from a different machine</strong>
-                <small>Compares devices only within this browser tab. The detected identity is removed when the tab closes.</small>
-              </span>
-            </label>
           </details>
           <div className="progress-wrap" role="status" aria-live="polite">
             <div className="progress-track">

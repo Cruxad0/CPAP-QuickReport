@@ -76,7 +76,6 @@ export type ReportWorkerResponse =
       totalBytes: number;
       statusMessage: string;
       selectedLoader: string;
-      sourceDeviceIdentity?: string;
       latestClinicalDayIso: string;
       warnings: string[];
       hasOlderDatedData: boolean;

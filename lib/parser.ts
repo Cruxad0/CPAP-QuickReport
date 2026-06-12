@@ -3378,7 +3378,6 @@ async function prepareQuickReportSourceInternal(request: PrepareQuickReportSourc
 
   return {
     selectedLoader: selectedFamily.label,
-    sourceDeviceIdentity: machine.device ? `${selectedFamily.id}|${machine.device}` : undefined,
     machine: cloneMachineSettings(machine),
     sourceTimeZoneOffsetMinutes,
     warnings,

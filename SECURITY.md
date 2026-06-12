@@ -6,8 +6,7 @@
 - No default backend persistence of PHI.
 - Raw files and parsed therapy data are held only in a dedicated in-memory worker.
 - Reset destroys and recreates the worker, revokes generated PDF object URLs, closes app-opened preview tabs, and clears browser storage plus patient/source inputs. Clinician branding stays in volatile memory for reuse.
-- Page close/navigation terminates the worker, revokes generated PDF object URLs, closes app-opened preview tabs, clears session storage and script-accessible cookies, and preserves only the non-PHI warning preference in local storage.
-- Detected SD-card identity is held only in volatile memory and is removed on reset or when the tab closes.
+- Page close/navigation terminates the worker, revokes generated PDF object URLs, closes app-opened preview tabs, and clears browser storage and script-accessible cookies.
 - Strict response headers (CSP, HSTS, COOP/CORP, no-referrer, nosniff).
 - Minimal permissions policy; no browser access to camera/microphone/USB.
 
