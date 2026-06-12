@@ -18,7 +18,9 @@ import {
   type RecencyLoaderSelection
 } from "@/lib/parsers/families";
 import { hasBmcBundleStructure } from "@/lib/parsers/families/bmc";
+import { hasBmcG3xCandidateStructure } from "@/lib/parsers/families/bmcg3x";
 import { parseBmcFamily } from "@/lib/parsers/bmc";
+import { isBmcG3xIdx, parseBmcG3xFamily } from "@/lib/parsers/bmcg3x";
 import { parseIconFamily } from "@/lib/parsers/icon";
 import { parseIntelliPapFamily } from "@/lib/parsers/intellipap";
 import { parseMSeriesFamily } from "@/lib/parsers/mseries";
@@ -31,6 +33,7 @@ import type { FamilyParserDeps } from "@/lib/parsers/text-family-types";
 import { createCalendarDateNoonAtUtcOffset, extractExplicitUtcOffsetMinutes } from "@/lib/timezone";
 import { parseVremFamily } from "@/lib/parsers/vrem";
 import { parseWeinmannFamily } from "@/lib/parsers/weinmann";
+import { parseYuwellFamily } from "@/lib/parsers/yuwell";
 import { buildTherapySettingsSnapshot } from "@/lib/therapy-settings";
 import {
   BuildQuickReportMetricsFromPreparedRequest,
@@ -2793,11 +2796,13 @@ function usesDedicatedFamilyParser(familyId: string): boolean {
     familyId === "prisma" ||
     familyId === "weinmann" ||
     familyId === "bmc" ||
+    familyId === "bmcg3x" ||
     familyId === "sleepstyle" ||
     familyId === "icon" ||
     familyId === "intellipap" ||
     familyId === "mseries" ||
-    familyId === "vrem"
+    familyId === "vrem" ||
+    familyId === "yuwell"
   );
 }
 
@@ -2836,6 +2841,21 @@ async function refineSelectedFamily(
 ): Promise<ParserFamilyDefinition | null> {
   if (hasBmcBundleStructure(meta) && (!selectedFamily || selectedFamily.id === "bmc")) {
     return getParserFamily("bmc") ?? selectedFamily;
+  }
+
+  if (hasBmcG3xCandidateStructure(meta)) {
+    for (const candidate of meta.filter((entry) => entry.ext === "idx")) {
+      try {
+        if (isBmcG3xIdx((await candidate.file.readBytes()).subarray(0, 32))) {
+          return getParserFamily("bmcg3x") ?? selectedFamily;
+        }
+      } catch {
+        // Keep scanning other IDX candidates.
+      }
+    }
+    if (selectedFamily?.id === "bmcg3x") {
+      return loaderRanking.find((match) => match.id !== "bmcg3x")?.family ?? null;
+    }
   }
 
   if (!selectedFamily) {
@@ -3281,12 +3301,16 @@ async function prepareQuickReportSourceInternal(request: PrepareQuickReportSourc
     await parseWeinmannFamily(familyParserContext, familyParserDeps);
   } else if (selectedFamily.id === "bmc") {
     await parseBmcFamily(familyParserContext, familyParserDeps);
+  } else if (selectedFamily.id === "bmcg3x") {
+    await parseBmcG3xFamily(familyParserContext, familyParserDeps);
   } else if (selectedFamily.id === "intellipap") {
     await parseIntelliPapFamily(familyParserContext, familyParserDeps);
   } else if (selectedFamily.id === "mseries") {
     await parseMSeriesFamily(familyParserContext, familyParserDeps);
   } else if (selectedFamily.id === "vrem") {
     await parseVremFamily(familyParserContext, familyParserDeps);
+  } else if (selectedFamily.id === "yuwell") {
+    await parseYuwellFamily(familyParserContext, familyParserDeps);
   } else {
     await runTextFamilyParser(familyParserContext, familyParserDeps);
   }
@@ -3354,6 +3378,7 @@ async function prepareQuickReportSourceInternal(request: PrepareQuickReportSourc
 
   return {
     selectedLoader: selectedFamily.label,
+    sourceDeviceIdentity: machine.device ? `${selectedFamily.id}|${machine.device}` : undefined,
     machine: cloneMachineSettings(machine),
     sourceTimeZoneOffsetMinutes,
     warnings,

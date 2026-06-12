@@ -318,6 +318,10 @@ function resetBmcLeakWindows(state: BmcWaveformDayState) {
   resetRollingAverageState(state.window60m);
 }
 
+export function detectBmcLegacyWaveformDataOffset(bytes: Uint8Array): number {
+  return bytes.length >= 0x101 && bytes[0xff] === 0xaa && bytes[0x100] === 0xaa ? 0xff : 0;
+}
+
 function finishBmcLargeLeakEpisode(state: BmcWaveformDayState) {
   if (state.currentLargeLeakSeconds <= 0 || state.currentLargeLeakMax === null) return;
   if (
@@ -363,8 +367,9 @@ function parseBmcWaveformRecords(
 
   for (const waveformFile of waveformFiles) {
     const bytes = waveformFile.bytes;
+    const dataOffset = detectBmcLegacyWaveformDataOffset(bytes);
 
-    for (let offset = 0; offset + BMC_WAVEFORM_PACKET_SIZE <= bytes.length; offset += BMC_WAVEFORM_PACKET_SIZE) {
+    for (let offset = dataOffset; offset + BMC_WAVEFORM_PACKET_SIZE <= bytes.length; offset += BMC_WAVEFORM_PACKET_SIZE) {
       if (u16(bytes, offset) !== 0xaaaa) continue;
 
       const year = u16(bytes, offset + 0xf8);

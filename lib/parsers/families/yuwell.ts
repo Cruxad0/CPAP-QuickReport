@@ -3,10 +3,20 @@ import type { ParserFamilyDefinition } from "@/lib/parsers/families/types";
 export const YUWELL_FAMILY: ParserFamilyDefinition = {
   id: "yuwell",
   label: "Yuwell",
-  supportedQuickReport: false,
+  supportedQuickReport: true,
   parserStrategy: "generic-text",
-  oscarLoader: "OSCAR-code-ref-2/oscar/SleepLib/loader_plugins/yuwell_loader.cpp",
-  signaturePatterns: [/(?:^|\/)yuwell/i, /(?:^|\/)wave\//i],
-  confidencePatterns: [{ pattern: /(?:^|\/)yuwell/i, weight: 4 }],
-  priorityPatterns: [/(?:^|\/)(?:yuwell|wave\/)/i]
+  oscarLoader: "OSCAR-SQL/oscar/SleepLib/loader_plugins/yuwell_loader.cpp",
+  signaturePatterns: [
+    /(?:^|\/)yhsd-new\.bys$/i,
+    /(?:^|\/)runlog\.bys$/i,
+    /(?:^|\/)sn\.bys$/i,
+    /(?:^|\/)yh[^/]+\/.*\.bys$/i
+  ],
+  confidencePatterns: [
+    { pattern: /(?:^|\/)yhsd-new\.bys$/i, weight: 8 },
+    { pattern: /(?:^|\/)runlog\.bys$/i, weight: 4 },
+    { pattern: /(?:^|\/)sn\.bys$/i, weight: 4 },
+    { pattern: /(?:^|\/)yh[^/]+\/.*\.bys$/i, weight: 4 }
+  ],
+  priorityPatterns: [/(?:^|\/).*\.bys$/i]
 };

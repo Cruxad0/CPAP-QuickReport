@@ -25,6 +25,8 @@ Loadable quick-report families currently include:
 - Loewenstein / Prisma
 - Weinmann / Loewenstein
 - Apex / BMC / Luna
+- ReactHealth / BMC G3 / G3X
+- Yuwell YH-series
 - DeVilbiss IntelliPAP
 - Fisher & Paykel SleepStyle
 - Fisher & Paykel ICON
@@ -116,3 +118,8 @@ See:
 
 - [HIPAA_CHECKLIST.md](/Users/joelrodz/Sites/oscar-clinician-work/HIPAA_CHECKLIST.md)
 - [SECURITY.md](/Users/joelrodz/Sites/oscar-clinician-work/SECURITY.md)
+
+## Copyright and distribution
+
+Parser behavior derived from OSCAR and OSCAR-SQL remains subject to GNU GPLv3
+distribution requirements and attribution. See [NOTICE.md](NOTICE.md).

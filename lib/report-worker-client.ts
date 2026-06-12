@@ -14,6 +14,7 @@ type LoadSourceResult = {
   totalBytes: number;
   statusMessage: string;
   selectedLoader: string;
+  sourceDeviceIdentity?: string;
   latestClinicalDayIso: string;
   warnings: string[];
   hasOlderDatedData: boolean;
@@ -511,6 +512,7 @@ export class ReportWorkerClient {
         totalBytes: message.totalBytes,
         statusMessage: message.statusMessage,
         selectedLoader: message.selectedLoader,
+        sourceDeviceIdentity: message.sourceDeviceIdentity,
         latestClinicalDayIso: message.latestClinicalDayIso,
         warnings: message.warnings,
         hasOlderDatedData: message.hasOlderDatedData,

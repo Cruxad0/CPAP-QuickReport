@@ -218,6 +218,7 @@ export interface PreparedDayBucket {
 
 export interface PreparedQuickReportSource {
   selectedLoader: string;
+  sourceDeviceIdentity?: string;
   machine: MachineSettings;
   sourceTimeZoneOffsetMinutes?: number | null;
   warnings: string[];

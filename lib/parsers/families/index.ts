@@ -1,4 +1,5 @@
 import { BMC_FAMILY, hasBmcBundleStructure, hasBmcUsrStructure } from "@/lib/parsers/families/bmc";
+import { BMC_G3X_FAMILY, hasBmcG3xCandidateStructure } from "@/lib/parsers/families/bmcg3x";
 import { CMS50_FAMILY } from "@/lib/parsers/families/cms50";
 import { CMS50F37_FAMILY } from "@/lib/parsers/families/cms50f37";
 import { DREEM_FAMILY } from "@/lib/parsers/families/dreem";
@@ -34,6 +35,7 @@ export const PARSER_FAMILIES: ParserFamilyDefinition[] = [
   PRS1_FAMILY,
   MSERIES_FAMILY,
   BMC_FAMILY,
+  BMC_G3X_FAMILY,
   INTELLIPAP_FAMILY,
   ICON_FAMILY,
   YUWELL_FAMILY,
@@ -54,6 +56,10 @@ function familyHit(files: SourceMetaLike[], pattern: RegExp): boolean {
 }
 
 function scoreFamily(files: SourceMetaLike[], family: ParserFamilyDefinition): number {
+  if (family.id === "bmcg3x" && !hasBmcG3xCandidateStructure(files)) {
+    return 0;
+  }
+
   let score = 0;
 
   for (const pattern of family.signaturePatterns) {
@@ -70,6 +76,9 @@ function scoreFamily(files: SourceMetaLike[], family: ParserFamilyDefinition): n
   if (family.id === "bmc" && !hasBmcBundleStructure(files) && hasBmcUsrStructure(files)) {
     score += 4;
   }
+  if (family.id === "bmcg3x") {
+    score += 8;
+  }
 
   return score;
 }
@@ -83,6 +92,9 @@ export function hasFamilySignature(files: SourceMetaLike[], familyId: string): b
   if (!family) return false;
   if (family.id === "bmc") {
     return hasBmcBundleStructure(files) || hasBmcUsrStructure(files);
+  }
+  if (family.id === "bmcg3x") {
+    return hasBmcG3xCandidateStructure(files);
   }
   return family.signaturePatterns.some((pattern) => familyHit(files, pattern));
 }

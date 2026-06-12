@@ -20,9 +20,11 @@ Engineering reference for the webapp parser stack. This tracks how the current w
 | ResMed | `resmed_loader.cpp` | Yes | Yes | Dedicated | Dedicated parser with `STR.edf` summary handling and family-specific mode/settings extraction. |
 | Philips Respironics System One / DreamStation | `prs1_loader.cpp`, `prs1_parser*.cpp` | Yes | Yes | Dedicated | Dedicated binary/session parsing for major PRS1 family 0 xPAP flows. Vent/ASV parity is still thinner than desktop OSCAR. |
 | Philips Respironics M-Series | `mseries_loader.cpp` | Yes | Yes | Metadata-only | Smartcard metadata and mode detection exist. Daily efficacy parity is not complete. |
-| Loewenstein / Prisma | `prisma_loader.cpp` | Yes | Yes | Dedicated | Includes `therapy.pdat` inner-archive extraction plus Prisma-specific parameter/event handling. |
+| Loewenstein / Prisma | `prisma_loader.cpp` | Yes | Yes | Dedicated | Includes `therapy.pdat` inner-archive extraction plus Prisma-specific parameter/event handling and prisma25S/prisma25ST identification. |
 | Weinmann / Loewenstein | `weinmann_loader.cpp` | Yes | Yes | Dedicated | Binary `WM_DATA.TDF` compliance/event parsing is present, but still lighter than full OSCAR waveform/session reconstruction. |
-| Apex / BMC / Luna | `bmc_loader.cpp`, `bmcDataParsing.cpp` | Yes | Yes | Dedicated | Dedicated `.USR` / `.IDX` parsing with session history and settings extraction. |
+| Apex / BMC / Luna legacy | `bmc_loader.cpp`, `bmcDataParsing.cpp` | Yes | Yes | Dedicated | Dedicated `.USR` / `.IDX` parsing with session history, settings extraction, and G3 B20A one-byte waveform alignment support. |
+| ReactHealth / BMC G3 / G3X | `bmcg3x_loader.cpp`, `bmcG3xDataParsing.cpp` | Yes | Yes | Dedicated | Separate G3X IDX/EVT/2 KB waveform path, including EVT-only summaries and mask-on usage detection. |
+| Yuwell YH-series | `yuwell_loader.cpp` | Yes | Yes | Dedicated | Supports YH-580 Format B, YH-820/YH-825/YH-830 Format C, and YH-680/YH-690 Format D; also preserves Format A parsing. |
 | DeVilbiss IntelliPAP | `intellipap_loader.cpp` | Yes | Yes | Dedicated | Dedicated DV5 and DV6 handling from family-specific files. |
 | Fisher & Paykel SleepStyle | `sleepstyle_loader.cpp` | Yes | Yes | Dedicated | Dedicated parser for `SUM/DET/HIS/HRD` family files. |
 | Fisher & Paykel ICON | `icon_loader.cpp` | Yes | Yes | Dedicated | Dedicated parser for `SUM/DET/FLW` family files. |
@@ -34,7 +36,6 @@ These are present in the OSCAR reference tree and now recognized by the webapp d
 
 | Family | OSCAR loader | Detected | Quick Report | Parser depth | Reason |
 |---|---|---:|---:|---|---|
-| Yuwell | `yuwell_loader.cpp` | Yes | No | Recognized only | Not part of the supported CPAP/NIV quick-report path yet. |
 | Dreem | `dreem_loader.cpp` | Yes | No | Recognized only | Non-target device family for current clinician report workflow. |
 | Viatom | `viatom_loader.cpp` | Yes | No | Recognized only | Oximetry/adjunct family, not CPAP/NIV report source. |
 | CMS50 | `cms50_loader.cpp` | Yes | No | Recognized only | Oximeter family, not CPAP/NIV report source. |

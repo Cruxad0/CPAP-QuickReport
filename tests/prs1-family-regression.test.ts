@@ -21,6 +21,30 @@ test("DreamStation-style P-SERIES structure ranks Philips PRS1 ahead of BMC/Luna
   assert.equal(ranked[0]?.id, "prs1");
 });
 
+test("legacy BMC bundles do not rank as BMC G3X", () => {
+  const files = [
+    { normalizedPath: "22A35472.USR" },
+    { normalizedPath: "22A35472.idx" },
+    { normalizedPath: "22A35472.000" },
+    { normalizedPath: "22A35472.evt" }
+  ];
+
+  const ranked = rankParserFamilies(files);
+  assert.equal(ranked[0]?.id, "bmc");
+  assert.equal(ranked.some((match) => match.id === "bmcg3x"), false);
+});
+
+test("BMC G3X IDX and waveform bundles rank as BMC G3X", () => {
+  const files = [
+    { normalizedPath: "A3125636308.idx" },
+    { normalizedPath: "A3125636308.000" },
+    { normalizedPath: "A3125636308.evt" }
+  ];
+
+  const ranked = rankParserFamilies(files);
+  assert.equal(ranked[0]?.id, "bmcg3x");
+});
+
 function datedCandidate(path: string, isoDay: string | null) {
   return {
     normalizedPath: path,

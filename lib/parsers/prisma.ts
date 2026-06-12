@@ -30,7 +30,9 @@ const PRISMA_EVENT_RERA = 121;
 
 const PRISMA_DEVICE_BY_ID = new Map<string, string>([
   ["0x92", "Prisma Smart"],
-  ["0x91", "Prisma Soft"]
+  ["0x91", "Prisma Soft"],
+  ["22", "prisma25S"],
+  ["23", "prisma25ST"]
 ]);
 
 type PrismaRespEventCounts = {
@@ -177,6 +179,19 @@ function inferPrismaDeviceFromConfig(text: string, machine: QuickReportMetrics["
       machine.device = "Prisma Smart";
     }
   }
+}
+
+export function inferPrismaLineDeviceFromXml(text: string, machine: QuickReportMetrics["machine"]) {
+  const deviceType =
+    /<DeviceType\b[^>]*\bvalue="([^"]+)"/i.exec(text)?.[1]?.trim() ??
+    /<DeviceType\b[^>]*>([^<]+)<\/DeviceType>/i.exec(text)?.[1]?.trim() ??
+    "";
+  const serial =
+    /<DeviceSerialNumber\b[^>]*\bvalue="([^"]+)"/i.exec(text)?.[1]?.trim() ??
+    /<DeviceSerialNumber\b[^>]*>([^<]+)<\/DeviceSerialNumber>/i.exec(text)?.[1]?.trim() ??
+    "";
+  const model = PRISMA_DEVICE_BY_ID.get(deviceType);
+  if (model) machine.device = serial ? `${model} (${serial})` : model;
 }
 
 function applyPrismaSmartParameters(parameters: Map<number, number>, machine: QuickReportMetrics["machine"]) {
@@ -423,6 +438,15 @@ async function readPrismaTherapyArchive(bytes: Uint8Array, bundles: Map<string, 
   }
 }
 
+async function readPrismaLineConfigArchive(bytes: Uint8Array, machine: QuickReportMetrics["machine"]) {
+  const archive = await JSZip.loadAsync(bytes);
+  const deviceEntry = Object.values(archive.files).find(
+    (entry) => !entry.dir && /(?:^|\/)device\.xml$/i.test(entry.name)
+  );
+  if (!deviceEntry) return;
+  inferPrismaLineDeviceFromXml(await deviceEntry.async("string"), machine);
+}
+
 function buildPrismaRecord(bundle: PrismaSessionBundle): ParsedRecord | null {
   const signal = bundle.signalBytes ? parsePrismaSignalSummary(bundle.signalBytes) : null;
   const counts = bundle.eventText ? extractPrismaRespEventCounts(bundle.eventText) : null;
@@ -483,6 +507,9 @@ export async function parsePrismaFamily(context: FamilyParserContext, deps: Fami
 
       if (lowerPath.endsWith("therapy.pdat")) {
         await readPrismaTherapyArchive(bytes, bundles);
+      }
+      if (lowerPath.endsWith("config.pcfg")) {
+        await readPrismaLineConfigArchive(bytes, context.machine);
       }
     } catch {
       continue;

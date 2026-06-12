@@ -211,6 +211,12 @@ function shouldKeepUndatedFile(path: string, size: number, likelyFamilyId: strin
       case "bmc":
         if (/(?:^|\/)[^/]+\.(?:usr|idx|\d{3})$/i.test(normalized)) return true;
         break;
+      case "bmcg3x":
+        if (/(?:^|\/)[^/]+\.(?:idx|evt|log|\d{3})$/i.test(normalized)) return true;
+        break;
+      case "yuwell":
+        if (/(?:^|\/).*\.bys$/i.test(normalized)) return true;
+        break;
       case "intellipap":
         if (/(?:^|\/)(?:(?:sl\/)?(?:set1|u|l)|(?:dv6\/)?(?:set\.bin|ver\.bin|s\.bin))$/i.test(normalized)) return true;
         break;
@@ -243,7 +249,7 @@ function shouldKeepUndatedFile(path: string, size: number, likelyFamilyId: strin
   }
 
   if (
-    /(?:^|\/)(?:p-series\/|p\d{5}\.\d{3}$|prop[^/]*\.(?:txt|bin)$|p\d{4}\.(?:idx|000)$|therapy\.pdat$|therapy\.dat$|(?:sl\/)?set1$|(?:sl\/)?u$|(?:sl\/)?l$|(?:dv6\/)?set\.bin$|(?:dv6\/)?ver\.bin$|(?:dv6\/)?s\.bin$|wm_data\.tdf$|[^/]+\.(?:usr|idx|\d{3})$)/i.test(
+    /(?:^|\/)(?:p-series\/|p\d{5}\.\d{3}$|prop[^/]*\.(?:txt|bin)$|p\d{4}\.(?:idx|000)$|therapy\.pdat$|therapy\.dat$|(?:sl\/)?set1$|(?:sl\/)?u$|(?:sl\/)?l$|(?:dv6\/)?set\.bin$|(?:dv6\/)?ver\.bin$|(?:dv6\/)?s\.bin$|wm_data\.tdf$|yhsd-(?:new|old)\.bys$|runlog\.bys$|sn\.bys$|[^/]+\.(?:usr|idx|evt|\d{3})$)/i.test(
       normalized
     )
   ) {

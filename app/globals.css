@@ -1088,6 +1088,29 @@ main {
   font-size: 0.8rem;
 }
 
+.preference-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin-top: 8px;
+  color: #29455f;
+  cursor: pointer;
+}
+
+.preference-toggle input {
+  margin-top: 3px;
+}
+
+.preference-toggle span {
+  display: grid;
+  gap: 2px;
+}
+
+.preference-toggle small {
+  color: #60758b;
+  font-size: 0.78rem;
+}
+
 .dashboard-setup .progress-wrap {
   margin-top: 8px;
 }

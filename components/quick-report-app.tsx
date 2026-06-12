@@ -6,6 +6,12 @@ import { enumerateDeferredFolderEntries, pickDirectoryHandle, supportsDirectoryP
 import { ReportWorkerClient } from "@/lib/report-worker-client";
 import { REPORT_RANGE_OPTIONS, type ReportRangeDays } from "@/lib/report-orchestrator";
 import { OLDER_HISTORY_IMPORT_LOOKBACK_DAYS } from "@/lib/source-files";
+import {
+  LAST_SD_CARD_IDENTITY_KEY,
+  WARN_ON_DIFFERENT_SD_CARD_KEY,
+  isDifferentSdCard,
+  sdCardIdentityLabel
+} from "@/lib/sd-card-identity";
 import { daysSinceIsoDate, staleDataAgeClassName, staleDataSeverity } from "@/lib/stale-data";
 import { ParseProgress, QuickReportMetrics, TherapySettingsPeriod } from "@/lib/types";
 
@@ -279,8 +285,18 @@ async function clearSiteData(): Promise<void> {
 }
 
 function clearUnloadSafeSiteData() {
+  let preservedWarnPreference: string | null = null;
+  let preservedLastSdCardIdentity: string | null = null;
   try {
+    preservedWarnPreference = window.localStorage?.getItem(WARN_ON_DIFFERENT_SD_CARD_KEY) ?? null;
+    preservedLastSdCardIdentity = window.localStorage?.getItem(LAST_SD_CARD_IDENTITY_KEY) ?? null;
     window.localStorage?.clear();
+    if (preservedWarnPreference !== null) {
+      window.localStorage?.setItem(WARN_ON_DIFFERENT_SD_CARD_KEY, preservedWarnPreference);
+    }
+    if (preservedLastSdCardIdentity !== null) {
+      window.localStorage?.setItem(LAST_SD_CARD_IDENTITY_KEY, preservedLastSdCardIdentity);
+    }
   } catch {
     // Best effort only.
   }
@@ -332,11 +348,20 @@ export function QuickReportApp() {
   const [errors, setErrors] = useState<string[]>([]);
   const [isSourceLoading, setIsSourceLoading] = useState(false);
   const [pendingSourceSelection, setPendingSourceSelection] = useState<"folder" | "zip" | null>(null);
+  const [warnOnDifferentSdCard, setWarnOnDifferentSdCard] = useState(true);
 
   useEffect(() => {
     if (folderInputRef.current) {
       folderInputRef.current.setAttribute("webkitdirectory", "");
       folderInputRef.current.setAttribute("directory", "");
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      setWarnOnDifferentSdCard(window.localStorage?.getItem(WARN_ON_DIFFERENT_SD_CARD_KEY) !== "false");
+    } catch {
+      setWarnOnDifferentSdCard(true);
     }
   }, []);
 
@@ -532,6 +557,44 @@ export function QuickReportApp() {
     setShowPreviousTherapyReview(false);
   };
 
+  const confirmAndRememberSdCard = async (loaded: {
+    selectedLoader: string;
+    sourceDeviceIdentity?: string;
+  }): Promise<boolean> => {
+    const currentIdentity = loaded.sourceDeviceIdentity?.trim();
+    if (!currentIdentity) return true;
+
+    let previousIdentity: string | null = null;
+    try {
+      previousIdentity = window.localStorage?.getItem(LAST_SD_CARD_IDENTITY_KEY) ?? null;
+    } catch {
+      // Continue without the previous-card check when browser storage is unavailable.
+    }
+
+    if (
+      warnOnDifferentSdCard &&
+      isDifferentSdCard(previousIdentity, currentIdentity) &&
+      !window.confirm(
+        `This SD-CARD is from a different machine than the last one imported.\n\n` +
+          `Last imported: ${sdCardIdentityLabel(previousIdentity)}\n` +
+          `This card: ${sdCardIdentityLabel(currentIdentity)}\n\n` +
+          `Continue importing this card?`
+      )
+    ) {
+      await workerClientRef.current?.reset();
+      resetResultState();
+      setStatusMessage("SD-CARD import canceled because a different machine was detected.");
+      return false;
+    }
+
+    try {
+      window.localStorage?.setItem(LAST_SD_CARD_IDENTITY_KEY, currentIdentity);
+    } catch {
+      // The import remains usable when browser storage is unavailable.
+    }
+    return true;
+  };
+
   const handleResetClearAll = async () => {
     if (status === "working") return;
     sourceSelectionAttemptRef.current += 1;
@@ -551,6 +614,7 @@ export function QuickReportApp() {
       setSourceFileCount(0);
       setPatientName("");
       setDateOfBirthInput("");
+      setWarnOnDifferentSdCard(true);
       clearSourceInputs();
       setParseProgressImmediate({ phase: "idle", detail: "Idle", percent: 0 });
       setStatus("idle");
@@ -595,6 +659,7 @@ export function QuickReportApp() {
         parseLookbackDays: OLDER_HISTORY_IMPORT_LOOKBACK_DAYS,
         onProgress: (progress) => queueParseProgress(progress)
       });
+      if (!(await confirmAndRememberSdCard(loaded))) return;
 
       setSourceFileCount(loaded.totalFileCount);
       setLoadedSourceLoader(loaded.selectedLoader);
@@ -675,6 +740,7 @@ export function QuickReportApp() {
           onProgress: (progress) => queueParseProgress(progress)
         });
       }
+      if (!(await confirmAndRememberSdCard(loaded))) return;
 
       setSourceFileCount(loaded.totalFileCount);
       setLoadedSourceLoader(loaded.selectedLoader);
@@ -954,6 +1020,28 @@ export function QuickReportApp() {
             </div>
             {headerDataUrl ? <button type="button" className="link-button subtle-link-button" onClick={clearBrandingImage}>Clear branding image</button> : null}
           </details>
+          <details className="setup-more">
+            <summary>Preferences</summary>
+            <label className="preference-toggle">
+              <input
+                type="checkbox"
+                checked={warnOnDifferentSdCard}
+                onChange={(event) => {
+                  const checked = event.target.checked;
+                  setWarnOnDifferentSdCard(checked);
+                  try {
+                    window.localStorage?.setItem(WARN_ON_DIFFERENT_SD_CARD_KEY, String(checked));
+                  } catch {
+                    // Keep the in-memory preference when browser storage is unavailable.
+                  }
+                }}
+              />
+              <span>
+                <strong>Warn when SD-CARD is from a different machine</strong>
+                <small>Compares the detected device with the last successfully imported SD-CARD.</small>
+              </span>
+            </label>
+          </details>
           <div className="progress-wrap" role="status" aria-live="polite">
             <div className="progress-track">
               <div className="progress-value" style={{ width: `${parseProgress.percent}%` }} />
@@ -1200,7 +1288,7 @@ export function QuickReportApp() {
                 This app contains parser behavior derived from OSCAR (Open Source CPAP Analysis Reporter), which is GPLv3-licensed software.
               </li>
               <li>
-                Attribution from OSCAR repository materials: SleepyHead copyright (C) 2011-2018 Mark Watkins; portions of OSCAR copyright (C) 2019-2022 The OSCAR Team.
+                Attribution from OSCAR repository materials: SleepyHead copyright (C) 2011-2018 Mark Watkins; portions of OSCAR copyright (C) 2019-2026 The OSCAR Team.
               </li>
               <li>
                 Distribution requirement: if you distribute this app, or modified versions that include GPL-covered OSCAR-derived code, provide corresponding source code and preserve GPLv3 terms and attribution notices.
@@ -1210,6 +1298,10 @@ export function QuickReportApp() {
                 References:{" "}
                 <a href="https://www.sleepfiles.com/OSCAR/" target="_blank" rel="noopener noreferrer">
                   OSCAR project
+                </a>
+                {" | "}
+                <a href="https://gitlab.com/CrimsonNape/OSCAR-SQL" target="_blank" rel="noopener noreferrer">
+                  OSCAR-SQL source
                 </a>
                 {" | "}
                 <a href="https://www.gnu.org/licenses/gpl-3.0.html" target="_blank" rel="noopener noreferrer">
