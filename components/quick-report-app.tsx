@@ -7,7 +7,6 @@ import { ReportWorkerClient } from "@/lib/report-worker-client";
 import { REPORT_RANGE_OPTIONS, type ReportRangeDays } from "@/lib/report-orchestrator";
 import { OLDER_HISTORY_IMPORT_LOOKBACK_DAYS } from "@/lib/source-files";
 import {
-  LAST_SD_CARD_IDENTITY_KEY,
   WARN_ON_DIFFERENT_SD_CARD_KEY,
   isDifferentSdCard,
   sdCardIdentityLabel
@@ -16,6 +15,7 @@ import { daysSinceIsoDate, staleDataAgeClassName, staleDataSeverity } from "@/li
 import { ParseProgress, QuickReportMetrics, TherapySettingsPeriod } from "@/lib/types";
 
 const SOURCE_SELECTION_CANCEL_TIMEOUT_MS = 20000;
+const LEGACY_LAST_SD_CARD_IDENTITY_KEY = "cpap-quickreport.last-sd-card-identity";
 const CARD_READER_PRODUCTS = [
   {
     title: "Acer Dual USB-C and USB-A Card Reader",
@@ -59,6 +59,17 @@ function revokeGeneratedReportUrls(reports: GeneratedReports) {
       URL.revokeObjectURL(artifact.previewUrl);
     }
   }
+}
+
+function closeOpenedPreviewWindows(previewWindows: Window[]) {
+  for (const previewWindow of previewWindows) {
+    try {
+      if (!previewWindow.closed) previewWindow.close();
+    } catch {
+      // Best effort only.
+    }
+  }
+  previewWindows.length = 0;
 }
 
 function toIsoDateParts(year: number, month: number, day: number): string | null {
@@ -286,16 +297,11 @@ async function clearSiteData(): Promise<void> {
 
 function clearUnloadSafeSiteData() {
   let preservedWarnPreference: string | null = null;
-  let preservedLastSdCardIdentity: string | null = null;
   try {
     preservedWarnPreference = window.localStorage?.getItem(WARN_ON_DIFFERENT_SD_CARD_KEY) ?? null;
-    preservedLastSdCardIdentity = window.localStorage?.getItem(LAST_SD_CARD_IDENTITY_KEY) ?? null;
     window.localStorage?.clear();
     if (preservedWarnPreference !== null) {
       window.localStorage?.setItem(WARN_ON_DIFFERENT_SD_CARD_KEY, preservedWarnPreference);
-    }
-    if (preservedLastSdCardIdentity !== null) {
-      window.localStorage?.setItem(LAST_SD_CARD_IDENTITY_KEY, preservedLastSdCardIdentity);
     }
   } catch {
     // Best effort only.
@@ -320,6 +326,9 @@ export function QuickReportApp() {
   const sourceSelectionAttemptRef = useRef(0);
   const parseProgressRafRef = useRef<number | null>(null);
   const queuedParseProgressRef = useRef<ParseProgress | null>(null);
+  const generatedReportsRef = useRef<GeneratedReports>({});
+  const lastSdCardIdentityRef = useRef<string | null>(null);
+  const previewWindowsRef = useRef<Window[]>([]);
 
   const [patientName, setPatientName] = useState("");
   const [dateOfBirthInput, setDateOfBirthInput] = useState("");
@@ -359,6 +368,7 @@ export function QuickReportApp() {
 
   useEffect(() => {
     try {
+      window.localStorage?.removeItem(LEGACY_LAST_SD_CARD_IDENTITY_KEY);
       setWarnOnDifferentSdCard(window.localStorage?.getItem(WARN_ON_DIFFERENT_SD_CARD_KEY) !== "false");
     } catch {
       setWarnOnDifferentSdCard(true);
@@ -373,22 +383,53 @@ export function QuickReportApp() {
         window.cancelAnimationFrame(parseProgressRafRef.current);
         parseProgressRafRef.current = null;
       }
+      const activeClient = workerClientRef.current;
       workerClientRef.current = null;
+      if (activeClient && activeClient !== client) activeClient.dispose();
       client.dispose();
     };
   }, []);
 
   useEffect(() => {
-    const handleUnload = () => clearUnloadSafeSiteData();
+    const handleUnload = () => {
+      sourceSelectionAttemptRef.current += 1;
+      if (parseProgressRafRef.current !== null) {
+        window.cancelAnimationFrame(parseProgressRafRef.current);
+        parseProgressRafRef.current = null;
+      }
+      queuedParseProgressRef.current = null;
+
+      const client = workerClientRef.current;
+      workerClientRef.current = null;
+      client?.dispose();
+
+      revokeGeneratedReportUrls(generatedReportsRef.current);
+      generatedReportsRef.current = {};
+      closeOpenedPreviewWindows(previewWindowsRef.current);
+      lastSdCardIdentityRef.current = null;
+      if (folderInputRef.current) folderInputRef.current.value = "";
+      if (zipInputRef.current) zipInputRef.current.value = "";
+      if (headerInputRef.current) headerInputRef.current.value = "";
+      clearUnloadSafeSiteData();
+    };
+    const handlePageShow = (event: PageTransitionEvent) => {
+      if (event.persisted) {
+        window.location.reload();
+      }
+    };
+
     window.addEventListener("pagehide", handleUnload);
     window.addEventListener("beforeunload", handleUnload);
+    window.addEventListener("pageshow", handlePageShow);
     return () => {
       window.removeEventListener("pagehide", handleUnload);
       window.removeEventListener("beforeunload", handleUnload);
+      window.removeEventListener("pageshow", handlePageShow);
     };
   }, []);
 
   useEffect(() => {
+    generatedReportsRef.current = generatedReports;
     return () => {
       revokeGeneratedReportUrls(generatedReports);
     };
@@ -538,6 +579,8 @@ export function QuickReportApp() {
 
   const resetResultState = () => {
     revokeGeneratedReportUrls(generatedReports);
+    generatedReportsRef.current = {};
+    closeOpenedPreviewWindows(previewWindowsRef.current);
     setGeneratedReports({});
     setActiveReportDays(90);
     setErrors([]);
@@ -557,6 +600,13 @@ export function QuickReportApp() {
     setShowPreviousTherapyReview(false);
   };
 
+  const replaceWorkerClient = () => {
+    const previousClient = workerClientRef.current;
+    workerClientRef.current = null;
+    previousClient?.dispose();
+    workerClientRef.current = new ReportWorkerClient();
+  };
+
   const confirmAndRememberSdCard = async (loaded: {
     selectedLoader: string;
     sourceDeviceIdentity?: string;
@@ -564,12 +614,7 @@ export function QuickReportApp() {
     const currentIdentity = loaded.sourceDeviceIdentity?.trim();
     if (!currentIdentity) return true;
 
-    let previousIdentity: string | null = null;
-    try {
-      previousIdentity = window.localStorage?.getItem(LAST_SD_CARD_IDENTITY_KEY) ?? null;
-    } catch {
-      // Continue without the previous-card check when browser storage is unavailable.
-    }
+    const previousIdentity = lastSdCardIdentityRef.current;
 
     if (
       warnOnDifferentSdCard &&
@@ -581,17 +626,13 @@ export function QuickReportApp() {
           `Continue importing this card?`
       )
     ) {
-      await workerClientRef.current?.reset();
+      replaceWorkerClient();
       resetResultState();
       setStatusMessage("SD-CARD import canceled because a different machine was detected.");
       return false;
     }
 
-    try {
-      window.localStorage?.setItem(LAST_SD_CARD_IDENTITY_KEY, currentIdentity);
-    } catch {
-      // The import remains usable when browser storage is unavailable.
-    }
+    lastSdCardIdentityRef.current = currentIdentity;
     return true;
   };
 
@@ -599,35 +640,46 @@ export function QuickReportApp() {
     if (status === "working") return;
     sourceSelectionAttemptRef.current += 1;
 
-    setStatus("working");
-    setErrors([]);
-    setStatusMessage("Clearing local data...");
-    setParseProgressImmediate({ phase: "reset", detail: "Clearing local cache and storage...", percent: 12 });
-    setIsSourceLoading(true);
-    await new Promise((resolve) => window.setTimeout(resolve, 0));
-
+    let workerReplacementError: unknown = null;
     try {
-      await clearSiteData();
-      await workerClientRef.current?.reset();
+      replaceWorkerClient();
+    } catch (error) {
+      workerReplacementError = error;
+    }
 
+    flushSync(() => {
       resetResultState();
       setSourceFileCount(0);
       setPatientName("");
       setDateOfBirthInput("");
       setWarnOnDifferentSdCard(true);
-      clearSourceInputs();
-      setParseProgressImmediate({ phase: "idle", detail: "Idle", percent: 0 });
-      setStatus("idle");
-      setStatusMessage("Local data cleared.");
+      setStatus("working");
+      setStatusMessage("Clearing local data...");
+      setParseProgressImmediate({ phase: "reset", detail: "Clearing local cache and storage...", percent: 12 });
+      setIsSourceLoading(true);
+    });
+    lastSdCardIdentityRef.current = null;
+    clearSourceInputs();
+
+    let resetError = workerReplacementError;
+    try {
+      await clearSiteData();
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Could not clear local data.";
+      resetError ??= error;
+    }
+
+    if (resetError) {
+      const message = resetError instanceof Error ? resetError.message : "Could not clear local data.";
       setStatus("error");
       setErrors([message]);
       setStatusMessage("Reset / Clear All failed.");
       setParseProgressImmediate({ phase: "error", detail: "Reset failed", percent: 0 });
-    } finally {
-      setIsSourceLoading(false);
+    } else {
+      setParseProgressImmediate({ phase: "idle", detail: "Idle", percent: 0 });
+      setStatus("idle");
+      setStatusMessage("Local data cleared.");
     }
+    setIsSourceLoading(false);
   };
 
   const handleFolderSelection: React.ChangeEventHandler<HTMLInputElement> = async (event) => {
@@ -670,6 +722,7 @@ export function QuickReportApp() {
       setPreviousTherapyReview(null);
       setShowPreviousTherapyReview(false);
       revokeGeneratedReportUrls(generatedReports);
+      closeOpenedPreviewWindows(previewWindowsRef.current);
       setGeneratedReports({});
       setActiveReportDays(90);
       setErrors([]);
@@ -751,6 +804,7 @@ export function QuickReportApp() {
       setPreviousTherapyReview(null);
       setShowPreviousTherapyReview(false);
       revokeGeneratedReportUrls(generatedReports);
+      closeOpenedPreviewWindows(previewWindowsRef.current);
       setGeneratedReports({});
       setActiveReportDays(90);
       setErrors([]);
@@ -829,6 +883,7 @@ export function QuickReportApp() {
       setStatus("idle");
       setStatusMessage(loaded.statusMessage);
       revokeGeneratedReportUrls(generatedReports);
+      closeOpenedPreviewWindows(previewWindowsRef.current);
       setGeneratedReports({});
       setActiveReportDays(90);
       setErrors([]);
@@ -940,6 +995,8 @@ export function QuickReportApp() {
       }
 
       revokeGeneratedReportUrls(generatedReports);
+      closeOpenedPreviewWindows(previewWindowsRef.current);
+      generatedReportsRef.current = generated;
       setGeneratedReports(generated);
       const largestAvailableTab = REPORT_RANGE_OPTIONS.find((days) => Boolean(generated[days])) ?? 7;
       setActiveReportDays(largestAvailableTab);
@@ -970,7 +1027,15 @@ export function QuickReportApp() {
 
   const openPreviewInNewTab = () => {
     if (!activeReport?.previewUrl) return;
-    window.open(activeReport.previewUrl, "_blank", "noopener,noreferrer");
+    const previewWindow = window.open(activeReport.previewUrl, "_blank");
+    if (!previewWindow) return;
+    try {
+      previewWindow.opener = null;
+    } catch {
+      // The parent still retains the window reference needed for privacy cleanup.
+    }
+    previewWindowsRef.current = previewWindowsRef.current.filter((candidate) => !candidate.closed);
+    previewWindowsRef.current.push(previewWindow);
   };
 
   return (
@@ -995,7 +1060,7 @@ export function QuickReportApp() {
           </div>
           <div className="setup-fields">
             <label htmlFor="patientName"><span>Patient name {isPatientNameMissing ? "*" : ""}</span><input id="patientName" className="input" value={patientName} onChange={(e) => setPatientName(e.target.value)} placeholder="First Last" autoComplete="off" /></label>
-            <label htmlFor="dob"><span>Date of birth {isDobMissing ? "*" : ""}</span><input id="dob" className="date-input" type="text" inputMode="numeric" placeholder="MM/DD/YYYY" value={dateOfBirthInput} onChange={(e) => setDateOfBirthInput(formatDobTyping(e.target.value))} /></label>
+            <label htmlFor="dob"><span>Date of birth {isDobMissing ? "*" : ""}</span><input id="dob" className="date-input" type="text" inputMode="numeric" placeholder="MM/DD/YYYY" value={dateOfBirthInput} onChange={(e) => setDateOfBirthInput(formatDobTyping(e.target.value))} autoComplete="off" /></label>
           </div>
           <div className="setup-actions">
             <button
@@ -1038,7 +1103,7 @@ export function QuickReportApp() {
               />
               <span>
                 <strong>Warn when SD-CARD is from a different machine</strong>
-                <small>Compares the detected device with the last successfully imported SD-CARD.</small>
+                <small>Compares devices only within this browser tab. The detected identity is removed when the tab closes.</small>
               </span>
             </label>
           </details>

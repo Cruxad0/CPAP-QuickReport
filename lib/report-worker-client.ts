@@ -73,6 +73,11 @@ export class ReportWorkerClient {
     this.worker.removeEventListener("message", this.handleMessage);
     this.worker.removeEventListener("error", this.handleError);
     this.worker.terminate();
+    const cancellation = new Error("Background worker request canceled.");
+    cancellation.name = "AbortError";
+    for (const pending of this.pending.values()) {
+      pending.reject(cancellation);
+    }
     this.pending.clear();
   }
 

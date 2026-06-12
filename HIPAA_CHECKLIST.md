@@ -25,6 +25,7 @@ This checklist is for implementation readiness, not legal advice.
 - [ ] HTTPS/TLS enforced end-to-end.
 - [ ] Disk encryption on all work computers.
 - [ ] Encrypt any backup artifacts containing PHI.
+- [ ] Verify browser/OS crash recovery and swap behavior on managed clinical endpoints.
 
 ## 5) Audit and monitoring
 
@@ -34,9 +35,12 @@ This checklist is for implementation readiness, not legal advice.
 
 ## 6) Application controls
 
-- [ ] No PHI in client/server logs.
+- [x] No PHI in client/server logs in the current default path.
 - [ ] Input validation for user-provided metadata.
-- [ ] Security headers and CSP enabled.
+- [x] Security headers and CSP enabled.
+- [x] No persistent browser storage of raw or analyzed therapy data in the current default path.
+- [x] Reset destroys the in-memory worker and clears patient/source inputs, generated PDF URLs, app-opened preview tabs, and site storage; clinician branding remains only in volatile memory.
+- [x] Page close/navigation performs best-effort worker, object URL, and session cleanup.
 - [ ] Dependency vulnerability scanning enabled.
 
 ## 7) Business continuity

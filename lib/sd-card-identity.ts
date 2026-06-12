@@ -1,5 +1,4 @@
 export const WARN_ON_DIFFERENT_SD_CARD_KEY = "cpap-quickreport.warn-on-different-sd-card";
-export const LAST_SD_CARD_IDENTITY_KEY = "cpap-quickreport.last-sd-card-identity";
 
 export function normalizeSdCardIdentity(identity: string | null | undefined): string | null {
   const normalized = identity?.trim().replace(/\s+/g, " ").replace(/\s*\|\s*/g, "|").toLowerCase();
