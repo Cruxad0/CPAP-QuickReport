@@ -1,14 +1,11 @@
 import type { FolderSourceEntry } from "@/lib/source-files";
 import type {
-  DataSourceKind,
   GeneratedPdfArtifact,
   ParseProgress,
   QuickReportMetrics,
   SourceFileSummary,
   TherapySettingsPeriod
 } from "@/lib/types";
-
-export type SourceSelectionKind = "folder" | "zip";
 
 export type ReportWorkerRequest =
   | {
@@ -33,13 +30,6 @@ export type ReportWorkerRequest =
   | {
       requestId: number;
       type: "load-folder-finish";
-    }
-  | {
-      requestId: number;
-      type: "load-zip";
-      zipFile: File;
-      importLookbackDays: number;
-      parseLookbackDays: number;
     }
   | {
       requestId: number;
@@ -70,7 +60,7 @@ export type ReportWorkerResponse =
   | {
       requestId: number;
       type: "source-ready";
-      sourceKind: DataSourceKind;
+      sourceKind: "folder";
       files: SourceFileSummary[];
       totalFileCount: number;
       totalBytes: number;

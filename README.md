@@ -6,7 +6,7 @@ The app is designed to run on any work computer, process device data locally in 
 
 ## What the app does
 
-- Imports PAP / NIMV data from an SD-card root folder or ZIP snapshot.
+- Imports PAP / NIMV data from an SD-card root folder.
 - Detects the device family from card structure and uses a family-specific parser.
 - Builds `90 / 60 / 30 / 7` day reports from one prepared dataset.
 - Uses a noon-to-noon clinical day.

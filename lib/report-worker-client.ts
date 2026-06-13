@@ -8,7 +8,7 @@ import type { ReportWorkerRequest, ReportWorkerResponse } from "@/lib/report-wor
 import type { GeneratedPdfArtifact, ParseProgress, QuickReportMetrics, SourceFileSummary, TherapySettingsPeriod } from "@/lib/types";
 
 type LoadSourceResult = {
-  sourceKind: "folder" | "zip";
+  sourceKind: "folder";
   files: SourceFileSummary[];
   totalFileCount: number;
   totalBytes: number;
@@ -27,7 +27,7 @@ type GenerateReportsResult = {
 
 type PendingRequest =
   | {
-      type: "load-folder" | "load-zip";
+      type: "load-folder";
       onProgress?: (progress: ParseProgress) => void;
       resolve: (value: LoadSourceResult) => void;
       reject: (reason?: unknown) => void;
@@ -402,29 +402,6 @@ export class ReportWorkerClient {
     await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
   }
 
-  async loadZip(
-    zipFile: File,
-    options: { importLookbackDays: number; parseLookbackDays: number; onProgress?: (progress: ParseProgress) => void }
-  ): Promise<LoadSourceResult> {
-    const requestId = this.nextRequestId++;
-    return await new Promise<LoadSourceResult>((resolve, reject) => {
-      this.pending.set(requestId, {
-        type: "load-zip",
-        onProgress: options.onProgress,
-        resolve,
-        reject
-      });
-      const request: ReportWorkerRequest = {
-        requestId,
-        type: "load-zip",
-        zipFile,
-        importLookbackDays: options.importLookbackDays,
-        parseLookbackDays: options.parseLookbackDays
-      };
-      this.worker.postMessage(request);
-    });
-  }
-
   async generateReports(
     params: {
       patientName: string;
@@ -507,7 +484,7 @@ export class ReportWorkerClient {
       return;
     }
 
-    if (message.type === "source-ready" && (pending.type === "load-folder" || pending.type === "load-zip")) {
+    if (message.type === "source-ready" && pending.type === "load-folder") {
       this.pending.delete(message.requestId);
       pending.resolve({
         sourceKind: message.sourceKind,

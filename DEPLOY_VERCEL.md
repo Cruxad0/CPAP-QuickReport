@@ -25,6 +25,6 @@ No runtime secrets are required for the current local-first architecture.
 ## 5) Smoke test after deploy
 
 1. Open deployed URL.
-2. Import sample ZIP/folder.
+2. Import a sample SD-card folder.
 3. Generate PDF.
 4. Confirm no network egress of PHI fields in browser DevTools.

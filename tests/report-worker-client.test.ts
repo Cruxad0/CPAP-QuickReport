@@ -3,7 +3,7 @@ import test from "node:test";
 
 import { ReportWorkerClient } from "../lib/report-worker-client";
 
-test("disposing the report worker rejects pending analysis requests", async () => {
+test("disposing the report worker rejects pending analysis and folder import requests", async () => {
   const originalWorker = globalThis.Worker;
   let terminated = false;
 
@@ -23,10 +23,15 @@ test("disposing the report worker rejects pending analysis requests", async () =
 
   try {
     const client = new ReportWorkerClient();
+    const pendingImport = client.loadFolderEntries([], {
+      importLookbackDays: 181,
+      parseLookbackDays: 181
+    });
     const pendingReset = client.reset();
 
     client.dispose();
 
+    await assert.rejects(pendingImport, (error: unknown) => error instanceof Error && error.name === "AbortError");
     await assert.rejects(pendingReset, (error: unknown) => error instanceof Error && error.name === "AbortError");
     assert.equal(terminated, true);
   } finally {

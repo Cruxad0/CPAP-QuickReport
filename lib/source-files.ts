@@ -1,5 +1,3 @@
-import JSZip from "jszip";
-
 import { hasBmcBundleStructure } from "@/lib/parsers/families/bmc";
 import { rankParserFamilies } from "@/lib/parsers/families";
 import type { ParseProgress, SourceFile, SourceFileSummary } from "@/lib/types";
@@ -521,49 +519,6 @@ export async function createCachedSourceFilesFromFolder(
       emit(onProgress, {
         phase: "scan",
         detail: `Indexing files... ${end}/${entries.length}`,
-        percent: pct
-      });
-    }
-    await new Promise((resolve) => setTimeout(resolve, 0));
-  }
-
-  return mapped;
-}
-
-export async function createCachedSourceFilesFromZip(
-  zipFile: File,
-  onProgress?: ProgressCallback
-): Promise<SourceFile[]> {
-  emit(onProgress, { phase: "zip", detail: "Opening ZIP file...", percent: 8 });
-  const archive = await JSZip.loadAsync(zipFile);
-  const entries = Object.values(archive.files)
-    .filter((entry) => !entry.dir)
-    .slice(0, 2500);
-
-  const mapped: SourceFile[] = [];
-  const chunkSize = 40;
-  let chunkCount = 0;
-  for (let start = 0; start < entries.length; start += chunkSize) {
-    chunkCount += 1;
-    const end = Math.min(start + chunkSize, entries.length);
-    for (let i = start; i < end; i += 1) {
-      const entry = entries[i];
-      const sizeMaybe = Number((entry as unknown as { _data?: { uncompressedSize?: number } })._data?.uncompressedSize ?? 0);
-      mapped.push(
-        createCachedSourceFile({
-          name: entry.name.split("/").pop() ?? entry.name,
-          path: entry.name,
-          size: Number.isFinite(sizeMaybe) ? sizeMaybe : 0,
-          loadText: async () => await entry.async("string"),
-          loadBytes: async () => await entry.async("uint8array")
-        })
-      );
-    }
-    if (chunkCount % 4 === 0 || end === entries.length) {
-      const pct = Math.min(45, 9 + Math.round((end / entries.length) * 36));
-      emit(onProgress, {
-        phase: "zip",
-        detail: `Indexing ZIP entries... ${end}/${entries.length}`,
         percent: pct
       });
     }

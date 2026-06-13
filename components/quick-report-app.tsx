@@ -8,6 +8,7 @@ import { REPORT_RANGE_OPTIONS, type ReportRangeDays } from "@/lib/report-orchest
 import { OLDER_HISTORY_IMPORT_LOOKBACK_DAYS } from "@/lib/source-files";
 import { daysSinceIsoDate, staleDataAgeClassName, staleDataSeverity } from "@/lib/stale-data";
 import { ParseProgress, QuickReportMetrics, TherapySettingsPeriod } from "@/lib/types";
+import { shouldClearPatientDetailsForSourceImport } from "@/lib/ui-workflow";
 
 const SOURCE_SELECTION_CANCEL_TIMEOUT_MS = 20000;
 const CARD_READER_PRODUCTS = [
@@ -147,6 +148,7 @@ type UiIconName =
   | "history"
   | "info"
   | "report"
+  | "sd-card"
   | "warning";
 
 function UiIcon({ name, size = 24 }: { name: UiIconName; size?: number }) {
@@ -171,6 +173,8 @@ function UiIcon({ name, size = 24 }: { name: UiIconName; size?: number }) {
       return <svg {...common}><circle cx="12" cy="12" r="9" /><path d="m8 12 2.6 2.6L16.5 9" /></svg>;
     case "device":
       return <svg {...common}><rect x="3" y="5" width="15" height="12" rx="2" /><path d="M7 9h7v4H7zM7 15h.01M11 15h.01M18 12h2a2 2 0 0 1 2 2v3" /></svg>;
+    case "sd-card":
+      return <svg {...common}><path d="M6 3h8l5 5v13H5V4a1 1 0 0 1 1-1Z" /><path d="M8 4v5M11 4v5M14 4v3M8 15h8v3H8z" /></svg>;
     case "calendar":
       return <svg {...common}><rect x="4" y="5" width="16" height="15" rx="2" /><path d="M8 3v4M16 3v4M4 9h16M8 13h.01M12 13h.01M16 13h.01M8 17h.01M12 17h.01" /></svg>;
     case "database":
@@ -307,9 +311,12 @@ function isPickerAbort(error: unknown) {
   return error instanceof DOMException && error.name === "AbortError";
 }
 
+function isAbortError(error: unknown) {
+  return error instanceof Error && error.name === "AbortError";
+}
+
 export function QuickReportApp() {
   const folderInputRef = useRef<HTMLInputElement>(null);
-  const zipInputRef = useRef<HTMLInputElement>(null);
   const headerInputRef = useRef<HTMLInputElement>(null);
   const workerClientRef = useRef<ReportWorkerClient | null>(null);
   const sourceSelectionAttemptRef = useRef(0);
@@ -344,7 +351,7 @@ export function QuickReportApp() {
   const [isPreviewCollapsed, setIsPreviewCollapsed] = useState(false);
   const [errors, setErrors] = useState<string[]>([]);
   const [isSourceLoading, setIsSourceLoading] = useState(false);
-  const [pendingSourceSelection, setPendingSourceSelection] = useState<"folder" | "zip" | null>(null);
+  const [pendingSourceSelection, setPendingSourceSelection] = useState<"folder" | null>(null);
 
   useEffect(() => {
     if (folderInputRef.current) {
@@ -385,7 +392,6 @@ export function QuickReportApp() {
       generatedReportsRef.current = {};
       closeOpenedPreviewWindows(previewWindowsRef.current);
       if (folderInputRef.current) folderInputRef.current.value = "";
-      if (zipInputRef.current) zipInputRef.current.value = "";
       if (headerInputRef.current) headerInputRef.current.value = "";
       clearUnloadSafeSiteData();
     };
@@ -463,31 +469,25 @@ export function QuickReportApp() {
     sourceFileCount > 0 &&
     status !== "working";
   const isDataSourceLoading = status === "working" || isSourceLoading || pendingSourceSelection !== null;
-  const dataSourceOverlayText = isSourceLoading
-    ? "Loading data. Please wait..."
-    : pendingSourceSelection
-      ? pendingSourceSelection === "folder"
-        ? "Opening folder picker..."
-        : "Opening file picker..."
-      : "Generating report. Please wait...";
+  const isSetupLocked = status === "working" && !isSourceLoading;
 
-  const beginSourceSelection = (kind: "folder" | "zip") => {
-    const activeInput = kind === "folder" ? folderInputRef.current : zipInputRef.current;
+  const beginSourceSelection = () => {
+    const activeInput = folderInputRef.current;
     if (activeInput) {
       // Clearing value allows selecting the same folder/file again to trigger onChange.
       activeInput.value = "";
     }
 
-    const openingMessage = kind === "folder" ? "Opening SD-CARD folder..." : "Opening ZIP file...";
+    const openingMessage = "Opening SD-CARD folder...";
     const previousStatusMessage = statusMessage;
     const clearPendingSelection = () => {
-      setPendingSourceSelection((current) => (current === kind ? null : current));
+      setPendingSourceSelection(null);
       setIsSourceLoading(false);
       setStatusMessage((current) => (current === openingMessage ? previousStatusMessage : current));
     };
 
     flushSync(() => {
-      setPendingSourceSelection(kind);
+      setPendingSourceSelection("folder");
       setIsSourceLoading(true);
       setStatusMessage(openingMessage);
     });
@@ -508,7 +508,7 @@ export function QuickReportApp() {
           activeInput?.removeEventListener("cancel", onInputCancel);
           return;
         }
-        const input = kind === "folder" ? folderInputRef.current : zipInputRef.current;
+        const input = folderInputRef.current;
         const hasChosenFiles = (input?.files?.length ?? 0) > 0;
         if (hasChosenFiles) {
           activeInput?.removeEventListener("cancel", onInputCancel);
@@ -531,7 +531,6 @@ export function QuickReportApp() {
 
   const clearSourceInputs = () => {
     if (folderInputRef.current) folderInputRef.current.value = "";
-    if (zipInputRef.current) zipInputRef.current.value = "";
   };
 
   const setParseProgressImmediate = useCallback((progress: ParseProgress) => {
@@ -554,19 +553,13 @@ export function QuickReportApp() {
     });
   }, []);
 
-  const resetResultState = () => {
+  const clearLoadedSourceState = (clearPatientDetails = false) => {
     revokeGeneratedReportUrls(generatedReports);
     generatedReportsRef.current = {};
     closeOpenedPreviewWindows(previewWindowsRef.current);
     setGeneratedReports({});
     setActiveReportDays(90);
-    setErrors([]);
-    setStatus("idle");
-    setStatusMessage("Awaiting data source.");
-    setParseProgressImmediate({ phase: "idle", detail: "Idle", percent: 0 });
     setIsPreviewCollapsed(false);
-    setIsSourceLoading(false);
-    setPendingSourceSelection(null);
     setSourceFileCount(0);
     setLoadedSourceLoader(null);
     setLoadedSourceLatestClinicalDayIso(null);
@@ -575,6 +568,30 @@ export function QuickReportApp() {
     setTherapySettingsPeriods([]);
     setPreviousTherapyReview(null);
     setShowPreviousTherapyReview(false);
+    if (clearPatientDetails) {
+      setPatientName("");
+      setDateOfBirthInput("");
+    }
+  };
+
+  const prepareForSourceImport = () => {
+    const isReplacingLoadedSource = shouldClearPatientDetailsForSourceImport({
+      sourceFileCount,
+      loadedSourceLoader,
+      hasGeneratedReports
+    });
+    clearLoadedSourceState(isReplacingLoadedSource);
+    setErrors([]);
+  };
+
+  const resetResultState = () => {
+    clearLoadedSourceState();
+    setErrors([]);
+    setStatus("idle");
+    setStatusMessage("Awaiting data source.");
+    setParseProgressImmediate({ phase: "idle", detail: "Idle", percent: 0 });
+    setIsSourceLoading(false);
+    setPendingSourceSelection(null);
   };
 
   const replaceWorkerClient = () => {
@@ -603,7 +620,6 @@ export function QuickReportApp() {
       setStatus("working");
       setStatusMessage("Clearing local data...");
       setParseProgressImmediate({ phase: "reset", detail: "Clearing local cache and storage...", percent: 12 });
-      setIsSourceLoading(true);
     });
     clearSourceInputs();
 
@@ -628,25 +644,45 @@ export function QuickReportApp() {
     setIsSourceLoading(false);
   };
 
-  const handleFolderSelection: React.ChangeEventHandler<HTMLInputElement> = async (event) => {
+  const handleCancelSourceImport = () => {
+    if (!isSourceLoading || status !== "working") return;
+
     sourceSelectionAttemptRef.current += 1;
+    try {
+      replaceWorkerClient();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not cancel the SD-CARD import.";
+      setStatus("error");
+      setErrors([message]);
+      setStatusMessage("SD-CARD import cancellation failed.");
+      setParseProgressImmediate({ phase: "error", detail: "Cancellation failed", percent: 0 });
+      setIsSourceLoading(false);
+      return;
+    }
+    clearSourceInputs();
+    setPendingSourceSelection(null);
+    setIsSourceLoading(false);
+    setStatus("idle");
+    setErrors([]);
+    setStatusMessage("SD-CARD import canceled.");
+    setParseProgressImmediate({ phase: "idle", detail: "Import canceled", percent: 0 });
+  };
+
+  const handleFolderSelection: React.ChangeEventHandler<HTMLInputElement> = async (event) => {
+    const attemptId = sourceSelectionAttemptRef.current + 1;
+    sourceSelectionAttemptRef.current = attemptId;
     setPendingSourceSelection(null);
     const files = event.target.files;
     if (!files || files.length === 0) {
       setIsSourceLoading(false);
-      setStatus("idle");
-      setStatusMessage("Awaiting data source.");
-      setParseProgressImmediate({ phase: "idle", detail: "Idle", percent: 0 });
       return;
     }
 
+    prepareForSourceImport();
     setIsSourceLoading(true);
     setStatus("working");
     setStatusMessage("Loading SD folder...");
     setParseProgressImmediate({ phase: "scan", detail: "Loading SD folder...", percent: 4 });
-    setLoadedSourceLoader(null);
-    setLoadedSourceLatestClinicalDayIso(null);
-    setLoadedSourceWarnings([]);
     await new Promise((resolve) => window.setTimeout(resolve, 0));
 
     try {
@@ -657,6 +693,8 @@ export function QuickReportApp() {
         parseLookbackDays: OLDER_HISTORY_IMPORT_LOOKBACK_DAYS,
         onProgress: (progress) => queueParseProgress(progress)
       });
+      if (sourceSelectionAttemptRef.current !== attemptId) return;
+
       setSourceFileCount(loaded.totalFileCount);
       setLoadedSourceLoader(loaded.selectedLoader);
       setLoadedSourceLatestClinicalDayIso(loaded.latestClinicalDayIso);
@@ -665,42 +703,36 @@ export function QuickReportApp() {
       setTherapySettingsPeriods(loaded.therapySettingsPeriods);
       setPreviousTherapyReview(null);
       setShowPreviousTherapyReview(false);
-      revokeGeneratedReportUrls(generatedReports);
-      closeOpenedPreviewWindows(previewWindowsRef.current);
-      setGeneratedReports({});
-      setActiveReportDays(90);
       setErrors([]);
-      setIsPreviewCollapsed(false);
       setStatus("idle");
       setStatusMessage(loaded.statusMessage);
     } catch (error) {
+      if (sourceSelectionAttemptRef.current !== attemptId || isAbortError(error)) return;
       const message = error instanceof Error ? error.message : "Could not load selected folder.";
-      setLoadedSourceLoader(null);
-      setLoadedSourceLatestClinicalDayIso(null);
-      setLoadedSourceWarnings([]);
       setStatus("error");
       setErrors([message]);
       setStatusMessage("Folder load failed.");
       setParseProgressImmediate({ phase: "error", detail: "Folder load failed", percent: 0 });
     } finally {
-      setIsSourceLoading(false);
+      if (sourceSelectionAttemptRef.current === attemptId) setIsSourceLoading(false);
     }
   };
 
   const handleDirectoryPickerSelection = async () => {
-    sourceSelectionAttemptRef.current += 1;
+    const attemptId = sourceSelectionAttemptRef.current + 1;
+    sourceSelectionAttemptRef.current = attemptId;
     setPendingSourceSelection("folder");
 
     try {
       const rootHandle = await pickDirectoryHandle(() => {
+        prepareForSourceImport();
         setIsSourceLoading(true);
         setStatus("working");
         setStatusMessage("Loading SD-CARD...");
         setParseProgressImmediate({ phase: "scan", detail: "Loading SD-CARD...", percent: 1 });
-        setLoadedSourceLoader(null);
-        setLoadedSourceLatestClinicalDayIso(null);
-        setLoadedSourceWarnings([]);
       });
+      if (sourceSelectionAttemptRef.current !== attemptId) return;
+
       const client = workerClientRef.current;
       if (!client) throw new Error("Background worker is not available.");
 
@@ -719,13 +751,15 @@ export function QuickReportApp() {
         const enumeration = await enumerateDeferredFolderEntries(rootHandle, OLDER_HISTORY_IMPORT_LOOKBACK_DAYS, (progress) =>
           queueParseProgress(progress)
         );
+        if (sourceSelectionAttemptRef.current !== attemptId) return;
+
         if (enumeration.entries.length === 0) {
           setPendingSourceSelection(null);
           setIsSourceLoading(false);
           setStatus("idle");
           setStatusMessage("Directory picker returned no files. Falling back to browser folder selection...");
           setParseProgressImmediate({ phase: "idle", detail: "Idle", percent: 0 });
-          beginSourceSelection("folder");
+          beginSourceSelection();
           folderInputRef.current?.click();
           return;
         }
@@ -737,6 +771,8 @@ export function QuickReportApp() {
           onProgress: (progress) => queueParseProgress(progress)
         });
       }
+      if (sourceSelectionAttemptRef.current !== attemptId) return;
+
       setSourceFileCount(loaded.totalFileCount);
       setLoadedSourceLoader(loaded.selectedLoader);
       setLoadedSourceLatestClinicalDayIso(loaded.latestClinicalDayIso);
@@ -745,33 +781,22 @@ export function QuickReportApp() {
       setTherapySettingsPeriods(loaded.therapySettingsPeriods);
       setPreviousTherapyReview(null);
       setShowPreviousTherapyReview(false);
-      revokeGeneratedReportUrls(generatedReports);
-      closeOpenedPreviewWindows(previewWindowsRef.current);
-      setGeneratedReports({});
-      setActiveReportDays(90);
       setErrors([]);
-      setIsPreviewCollapsed(false);
       setStatus("idle");
       setStatusMessage(loaded.statusMessage);
     } catch (error) {
-      if (isPickerAbort(error)) {
-        setStatus("idle");
-        setStatusMessage("Awaiting data source.");
-        setParseProgressImmediate({ phase: "idle", detail: "Idle", percent: 0 });
-        return;
-      }
+      if (sourceSelectionAttemptRef.current !== attemptId || isPickerAbort(error) || isAbortError(error)) return;
 
       const message = error instanceof Error ? error.message : "Could not load selected folder.";
-      setLoadedSourceLoader(null);
-      setLoadedSourceLatestClinicalDayIso(null);
-      setLoadedSourceWarnings([]);
       setStatus("error");
       setErrors([message]);
       setStatusMessage("Folder load failed.");
       setParseProgressImmediate({ phase: "error", detail: "Folder load failed", percent: 0 });
     } finally {
-      setPendingSourceSelection(null);
-      setIsSourceLoading(false);
+      if (sourceSelectionAttemptRef.current === attemptId) {
+        setPendingSourceSelection(null);
+        setIsSourceLoading(false);
+      }
     }
   };
 
@@ -781,67 +806,8 @@ export function QuickReportApp() {
       return;
     }
 
-    beginSourceSelection("folder");
+    beginSourceSelection();
     folderInputRef.current?.click();
-  };
-
-  const handleZipSelection: React.ChangeEventHandler<HTMLInputElement> = async (event) => {
-    sourceSelectionAttemptRef.current += 1;
-    setPendingSourceSelection(null);
-    const zipFile = event.target.files?.[0];
-    if (!zipFile) {
-      setIsSourceLoading(false);
-      setStatus("idle");
-      setStatusMessage("Awaiting data source.");
-      setParseProgressImmediate({ phase: "idle", detail: "Idle", percent: 0 });
-      return;
-    }
-
-    setIsSourceLoading(true);
-    setStatus("working");
-    setStatusMessage("Reading ZIP archive locally...");
-    setParseProgressImmediate({ phase: "zip", detail: "Opening ZIP file...", percent: 8 });
-    setLoadedSourceLoader(null);
-    setLoadedSourceLatestClinicalDayIso(null);
-    setLoadedSourceWarnings([]);
-
-    try {
-      const client = workerClientRef.current;
-      if (!client) throw new Error("Background worker is not available.");
-      const loaded = await client.loadZip(zipFile, {
-        importLookbackDays: OLDER_HISTORY_IMPORT_LOOKBACK_DAYS,
-        parseLookbackDays: OLDER_HISTORY_IMPORT_LOOKBACK_DAYS,
-        onProgress: (progress) => queueParseProgress(progress)
-      });
-
-      setSourceFileCount(loaded.totalFileCount);
-      setLoadedSourceLoader(loaded.selectedLoader);
-      setLoadedSourceLatestClinicalDayIso(loaded.latestClinicalDayIso);
-      setLoadedSourceWarnings(loaded.warnings);
-      setOlderHistoryLoaded(false);
-      setTherapySettingsPeriods(loaded.therapySettingsPeriods);
-      setPreviousTherapyReview(null);
-      setShowPreviousTherapyReview(false);
-      setStatus("idle");
-      setStatusMessage(loaded.statusMessage);
-      revokeGeneratedReportUrls(generatedReports);
-      closeOpenedPreviewWindows(previewWindowsRef.current);
-      setGeneratedReports({});
-      setActiveReportDays(90);
-      setErrors([]);
-      setIsPreviewCollapsed(false);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Could not parse ZIP file.";
-      setLoadedSourceLoader(null);
-      setLoadedSourceLatestClinicalDayIso(null);
-      setLoadedSourceWarnings([]);
-      setStatus("error");
-      setErrors([message]);
-      setStatusMessage("ZIP import failed.");
-      setParseProgressImmediate({ phase: "error", detail: "ZIP import failed", percent: 0 });
-    } finally {
-      setIsSourceLoading(false);
-    }
   };
 
   const handleHeaderUpload: React.ChangeEventHandler<HTMLInputElement> = async (event) => {
@@ -991,18 +957,18 @@ export function QuickReportApp() {
             <div className="therapy-history-heading">
               <span className="section-heading-icon"><UiIcon name="report" size={27} /></span>
               <div>
-                <h2>Therapy Data</h2>
+                <h2>Data Review</h2>
               </div>
             </div>
 
-        <section id="setup-panel" className={`dashboard-setup ${isDataSourceLoading ? "card-loading" : ""}`} aria-busy={isDataSourceLoading}>
-          {isDataSourceLoading ? <div className="loading-overlay">{dataSourceOverlayText}</div> : null}
+        <section id="setup-panel" className={`dashboard-setup ${isSetupLocked ? "card-loading" : ""}`} aria-busy={isSetupLocked}>
+          {isSetupLocked ? <div className="loading-overlay">{statusMessage}</div> : null}
           <div className="setup-heading">
             <div><strong>Patient &amp; Device Details</strong><span>Complete these fields to generate the therapy report.</span></div>
           </div>
           <div className="setup-fields">
-            <label htmlFor="patientName"><span>Patient name {isPatientNameMissing ? "*" : ""}</span><input id="patientName" className="input" value={patientName} onChange={(e) => setPatientName(e.target.value)} placeholder="First Last" autoComplete="off" /></label>
-            <label htmlFor="dob"><span>Date of birth {isDobMissing ? "*" : ""}</span><input id="dob" className="date-input" type="text" inputMode="numeric" placeholder="MM/DD/YYYY" value={dateOfBirthInput} onChange={(e) => setDateOfBirthInput(formatDobTyping(e.target.value))} autoComplete="off" /></label>
+            <label htmlFor="patientName"><span>Patient name {isPatientNameMissing ? "*" : ""}</span><input id="patientName" className="input" value={patientName} onChange={(e) => setPatientName(e.target.value)} placeholder="First Last" autoComplete="off" disabled={isSetupLocked} /></label>
+            <label htmlFor="dob"><span>Date of birth {isDobMissing ? "*" : ""}</span><input id="dob" className="date-input" type="text" inputMode="numeric" placeholder="MM/DD/YYYY" value={dateOfBirthInput} onChange={(e) => setDateOfBirthInput(formatDobTyping(e.target.value))} autoComplete="off" disabled={isSetupLocked} /></label>
           </div>
           <div className="setup-actions">
             <button
@@ -1015,17 +981,19 @@ export function QuickReportApp() {
             >
               <UiIcon name="database" size={20} /> Select SD-CARD
             </button>
+            {isSourceLoading && status === "working" ? (
+              <button type="button" className="btn btn-secondary" onClick={handleCancelSourceImport}>Cancel Import</button>
+            ) : null}
             <button type="button" className="btn btn-danger" onClick={handleResetClearAll} disabled={status === "working"}>Reset / Clear All</button>
           </div>
           <input ref={folderInputRef} type="file" multiple onChange={handleFolderSelection} style={{ display: "none" }} />
-          <input ref={zipInputRef} type="file" accept=".zip" onChange={handleZipSelection} style={{ display: "none" }} />
           <details className="setup-more">
             <summary>Branding</summary>
             <div className="setup-more-grid">
-              <label htmlFor="physician"><span>Physician name</span><input id="physician" className="input" value={physicianName} onChange={(e) => setPhysicianName(e.target.value)} autoComplete="off" /></label>
-              <label htmlFor="header-upload"><span>Optional PDF header image</span><input id="header-upload" ref={headerInputRef} type="file" accept="image/png,image/jpeg" onChange={handleHeaderUpload} /></label>
+              <label htmlFor="physician"><span>Physician name</span><input id="physician" className="input" value={physicianName} onChange={(e) => setPhysicianName(e.target.value)} autoComplete="off" disabled={isSetupLocked} /></label>
+              <label htmlFor="header-upload"><span>Optional PDF header image</span><input id="header-upload" ref={headerInputRef} type="file" accept="image/png,image/jpeg" onChange={handleHeaderUpload} disabled={isSetupLocked} /></label>
             </div>
-            {headerDataUrl ? <button type="button" className="link-button subtle-link-button" onClick={clearBrandingImage}>Clear branding image</button> : null}
+            {headerDataUrl ? <button type="button" className="link-button subtle-link-button" onClick={clearBrandingImage} disabled={isSetupLocked}>Clear branding image</button> : null}
           </details>
           <div className="progress-wrap" role="status" aria-live="polite">
             <div className="progress-track">
@@ -1223,7 +1191,7 @@ export function QuickReportApp() {
         <article className="card affiliate-card">
           <details className="affiliate-disclosure">
             <summary>
-              <span className="affiliate-summary-icon"><UiIcon name="device" size={25} /></span>
+              <span className="affiliate-summary-icon"><UiIcon name="sd-card" size={25} /></span>
               <span className="affiliate-summary-copy">
                 <span className="affiliate-summary-title">SD Card Readers</span>
                 <span className="affiliate-summary-description">Compatible options for importing therapy data</span>

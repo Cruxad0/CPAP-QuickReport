@@ -5,7 +5,6 @@ import { buildReportArtifactsFromPreparedSource } from "@/lib/report-orchestrato
 import {
   bytesToLabel,
   createCachedSourceFilesFromFolder,
-  createCachedSourceFilesFromZip,
   createSourceFileSummary,
   extractDatedLeafDirectoryDate,
   filterDatedFolderScanTargets,
@@ -14,7 +13,7 @@ import {
   shouldIgnorePathEarly
 } from "@/lib/source-files";
 import type { ReportWorkerRequest, ReportWorkerResponse } from "@/lib/report-worker-types";
-import type { DataSourceKind, PreparedQuickReportSource } from "@/lib/types";
+import type { PreparedQuickReportSource } from "@/lib/types";
 import type { DeferredFolderSourceEntry, FolderSourceEntry } from "@/lib/source-files";
 
 declare const self: DedicatedWorkerGlobalScope;
@@ -24,7 +23,6 @@ type WorkerDirectoryHandle = FileSystemDirectoryHandle & {
 };
 
 let preparedSource: PreparedQuickReportSource | null = null;
-let loadedSourceKind: DataSourceKind | null = null;
 let loadedSourceSummaries: Array<ReturnType<typeof createSourceFileSummary>> = [];
 const folderLoadState = new Map<
   number,
@@ -156,7 +154,6 @@ async function loadFolderFromDirectoryHandle(
 
   await loadSource(
     requestId,
-    "folder",
     async () =>
       await createCachedSourceFilesFromFolder(filteredEntries.entries, (progress) => emitProgress(requestId, progress.phase, progress.detail, progress.percent)),
     importLookbackDays,
@@ -167,22 +164,21 @@ async function loadFolderFromDirectoryHandle(
 
 async function loadSource(
   requestId: number,
-  sourceKind: DataSourceKind,
   loader: () => Promise<import("@/lib/types").SourceFile[]>,
   importLookbackDays: number,
   parseLookbackDays: number,
   knownOlderDatedData = false
 ) {
-  emitProgress(requestId, sourceKind === "folder" ? "scan" : "zip", sourceKind === "folder" ? "Loading SD folder..." : "Opening ZIP file...", 4);
+  emitProgress(requestId, "scan", "Loading SD folder...", 4);
   const mapped = await loader();
 
-  emitProgress(requestId, sourceKind === "folder" ? "scan" : "zip", `Keeping recent ${importLookbackDays}-day window...`, 50);
+  emitProgress(requestId, "scan", `Keeping recent ${importLookbackDays}-day window...`, 50);
   const filtered = filterSourceFilesToRecentWindow(mapped, importLookbackDays);
   const hasOlderDatedData = knownOlderDatedData || filtered.hasOlderDatedData;
 
   emitProgress(requestId, "parse", "Preparing parsed therapy dataset...", 54);
   const prepared = await prepareQuickReportSource({
-    sourceKind,
+    sourceKind: "folder",
     files: filtered.files,
     lookbackDays: parseLookbackDays,
     onProgress: (progress) => {
@@ -192,7 +188,6 @@ async function loadSource(
   });
 
   preparedSource = prepared;
-  loadedSourceKind = sourceKind;
   const totalFileCount = filtered.files.length;
   const totalBytes = filtered.files.reduce((sum, file) => sum + file.size, 0);
   loadedSourceSummaries = filtered.files.slice(0, 25).map(createSourceFileSummary);
@@ -201,19 +196,19 @@ async function loadSource(
   if (filtered.hadDatedFiles) {
     const latestDateText = filtered.latestDateIso ? formatIsoAsUsDate(filtered.latestDateIso) : "unknown";
     if (filtered.filteredOutCount > 0) {
-      statusMessage = `${sourceKind === "folder" ? "Folder" : "ZIP"} loaded: ${filtered.files.length} files ready (recent ${importLookbackDays}-day import window; latest dated file ${latestDateText}). Filtered out ${filtered.filteredOutCount} older files (${bytesToLabel(filtered.filteredOutBytes)}).`;
+      statusMessage = `Folder loaded: ${filtered.files.length} files ready (recent ${importLookbackDays}-day import window; latest dated file ${latestDateText}). Filtered out ${filtered.filteredOutCount} older files (${bytesToLabel(filtered.filteredOutBytes)}).`;
     } else {
-      statusMessage = `${sourceKind === "folder" ? "Folder" : "ZIP"} loaded: ${filtered.files.length} files ready (latest dated file ${latestDateText}).`;
+      statusMessage = `Folder loaded: ${filtered.files.length} files ready (latest dated file ${latestDateText}).`;
     }
   } else {
-    statusMessage = `${sourceKind === "folder" ? "Folder" : "ZIP"} loaded: ${mapped.length} files ready for parsing.`;
+    statusMessage = `Folder loaded: ${mapped.length} files ready for parsing.`;
   }
 
-  emitProgress(requestId, "ready", sourceKind === "folder" ? "Folder ready" : "ZIP ready", 100);
+  emitProgress(requestId, "ready", "Folder ready", 100);
   postMessageSafe({
     requestId,
     type: "source-ready",
-    sourceKind,
+    sourceKind: "folder",
     files: loadedSourceSummaries,
     totalFileCount,
     totalBytes,
@@ -232,7 +227,6 @@ self.onmessage = async (event: MessageEvent<ReportWorkerRequest>) => {
   try {
     if (request.type === "load-folder-start") {
       preparedSource = null;
-      loadedSourceKind = "folder";
       loadedSourceSummaries = [];
       folderLoadState.set(request.requestId, {
         files: [],
@@ -246,7 +240,6 @@ self.onmessage = async (event: MessageEvent<ReportWorkerRequest>) => {
 
     if (request.type === "load-folder-handle") {
       preparedSource = null;
-      loadedSourceKind = "folder";
       loadedSourceSummaries = [];
       await loadFolderFromDirectoryHandle(
         request.requestId,
@@ -270,7 +263,6 @@ self.onmessage = async (event: MessageEvent<ReportWorkerRequest>) => {
       folderLoadState.delete(request.requestId);
       await loadSource(
         request.requestId,
-        "folder",
         async () =>
           await createCachedSourceFilesFromFolder(state.files, (progress) =>
             emitProgress(request.requestId, progress.phase, progress.detail, progress.percent)
@@ -278,23 +270,6 @@ self.onmessage = async (event: MessageEvent<ReportWorkerRequest>) => {
         state.importLookbackDays,
         state.parseLookbackDays,
         state.hasOlderDatedData
-      );
-      return;
-    }
-
-    if (request.type === "load-zip") {
-      preparedSource = null;
-      loadedSourceKind = "zip";
-      loadedSourceSummaries = [];
-      await loadSource(
-        request.requestId,
-        "zip",
-        async () =>
-          await createCachedSourceFilesFromZip(request.zipFile, (progress) =>
-            emitProgress(request.requestId, progress.phase, progress.detail, progress.percent)
-          ),
-        request.importLookbackDays,
-        request.parseLookbackDays
       );
       return;
     }
@@ -345,7 +320,6 @@ self.onmessage = async (event: MessageEvent<ReportWorkerRequest>) => {
 
     if (request.type === "reset") {
       preparedSource = null;
-      loadedSourceKind = null;
       loadedSourceSummaries = [];
       folderLoadState.clear();
       postMessageSafe({
