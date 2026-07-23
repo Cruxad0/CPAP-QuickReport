@@ -89,9 +89,11 @@ const RESVENT_THERAPY = path.join(process.cwd(), "Card Samples", "Resvent", "THE
 const LUNA2_ROOT = path.join(process.cwd(), "Card Samples", "Luna2");
 const LOCAL_LUNA2_DUPLICATE_ROOT = path.join(process.cwd(), "Card Samples", "Luna2 -2");
 const LOCAL_LUNA2_SHORT_ROOT = path.join(process.cwd(), "Card Samples", "Luna 2 -3");
+const LOCAL_LUNA2_FOUR_ROOT = path.join(process.cwd(), "Card Samples", "Luna 2 - 4");
 const DREAMSTATION_ROOT = path.join(process.cwd(), "Card Samples", "Dreamstation");
 const LOCAL_DREAMSTATION_ROOT = path.join(process.cwd(), "Card Samples", "Dreamstation2");
 const LOCAL_MIXED_DREAMSTATION_ROOT = path.join(process.cwd(), "Card Samples", "Dreamstation 2 -2");
+const LOCAL_REMSTAR_SE_ROOT = path.join(process.cwd(), "Card Samples", "REMstar SE");
 const RESMED_AIRSENSE11_ROOT = path.join(process.cwd(), "Card Samples", "ResMed", "AirSense", "11", "APAP");
 const RESMED_AIRCURVE10_ROOT = path.join(process.cwd(), "Card Samples", "ResMed", "AirCurve", "10", "VAuto");
 const RESMED_AIRBREAK_AS10_ROOT = path.join(process.cwd(), "Card Samples", "ResMed", "AirBreak", "AS10", "ASVAuto");
@@ -100,6 +102,7 @@ const LOCAL_RESMED_CPAP_ROOT = path.join(process.cwd(), "Card Samples", "ResMed 
 const LOCAL_RESMED_AIRCURVE10_ROOT = path.join(process.cwd(), "Card Samples", "ResMed -3");
 const LOCAL_RESMED_AIRCURVE10_ST_ROOT = path.join(process.cwd(), "Card Samples", "ResMed -4");
 const LOCAL_RESMED_AIRSENSE10_SHORT_ROOT = path.join(process.cwd(), "Card Samples", "Airsense 10");
+const LOCAL_RESMED_AIRSENSE10_THIRD_ROOT = path.join(process.cwd(), "Card Samples", "Airsense 10 - 3");
 const LOCAL_RESMED_AIRSENSE11_CPAP_ROOT = path.join(process.cwd(), "Card Samples", "Airsense 11 CPAP2");
 
 const maybeResventTest = existsSync(RESVENT_ROOT) ? test : test.skip;
@@ -108,9 +111,11 @@ const maybeResventTherapyTest = existsSync(RESVENT_THERAPY) ? test : test.skip;
 const maybeLunaTest = existsSync(LUNA2_ROOT) ? test : test.skip;
 const maybeLocalLunaDuplicateTest = existsSync(LUNA2_ROOT) && existsSync(LOCAL_LUNA2_DUPLICATE_ROOT) ? test : test.skip;
 const maybeLocalLunaShortTest = existsSync(LOCAL_LUNA2_SHORT_ROOT) ? test : test.skip;
+const maybeLocalLunaFourTest = existsSync(LOCAL_LUNA2_FOUR_ROOT) ? test : test.skip;
 const maybeDreamstationTest = existsSync(DREAMSTATION_ROOT) ? test : test.skip;
 const maybeLocalDreamstationTest = existsSync(LOCAL_DREAMSTATION_ROOT) ? test : test.skip;
 const maybeLocalMixedDreamstationTest = existsSync(LOCAL_MIXED_DREAMSTATION_ROOT) ? test : test.skip;
+const maybeLocalRemstarSeTest = existsSync(LOCAL_REMSTAR_SE_ROOT) ? test : test.skip;
 const maybeAirSense11Test = existsSync(RESMED_AIRSENSE11_ROOT) ? test : test.skip;
 const maybeAirCurve10Test = existsSync(RESMED_AIRCURVE10_ROOT) ? test : test.skip;
 const maybeAirBreakTest = existsSync(RESMED_AIRBREAK_AS10_ROOT) ? test : test.skip;
@@ -119,6 +124,7 @@ const maybeLocalResMedCpapTest = existsSync(LOCAL_RESMED_CPAP_ROOT) ? test : tes
 const maybeLocalAirCurve10Test = existsSync(LOCAL_RESMED_AIRCURVE10_ROOT) ? test : test.skip;
 const maybeLocalAirCurve10StTest = existsSync(LOCAL_RESMED_AIRCURVE10_ST_ROOT) ? test : test.skip;
 const maybeLocalAirSense10ShortTest = existsSync(LOCAL_RESMED_AIRSENSE10_SHORT_ROOT) ? test : test.skip;
+const maybeLocalAirSense10ThirdTest = existsSync(LOCAL_RESMED_AIRSENSE10_THIRD_ROOT) ? test : test.skip;
 const maybeLocalAirSense11CpapTest = existsSync(LOCAL_RESMED_AIRSENSE11_CPAP_ROOT) ? test : test.skip;
 
 maybeResventTest("Resvent sample card preserves APAP config and metrics", async () => {
@@ -262,6 +268,30 @@ maybeLocalLunaShortTest("short Luna II card still generates an adjusted 7-day re
   assert.ok(result.reports[0].blob.size > 0);
 });
 
+maybeLocalLunaFourTest("Luna 2 - 4 short card loads all available BMC bundle data", async () => {
+  const { prepared, metrics } = await loadFixture(LOCAL_LUNA2_FOUR_ROOT);
+  assert.equal(prepared.selectedLoader, "Apex / BMC / Luna");
+  assert.deepEqual(Object.keys(prepared.dayBuckets).sort(), ["2026-03-19", "2026-03-24"]);
+  assert.equal(prepared.machine.device, "G2S A20 (ES422A33105)");
+  assert.equal(prepared.machine.mode, "APAP");
+  assert.equal(prepared.machine.pressureMin, "7 cmH2O");
+  assert.equal(prepared.machine.pressureMax, "20 cmH2O");
+  assert.equal(prepared.machine.rampTime, "10 minutes");
+  assert.equal(prepared.machine.rampPressure, "4 cmH2O");
+  assert.equal(prepared.latestClinicalDayIso, "2026-03-24");
+  assert.equal(metrics.daysInWindow, 6);
+  assert.equal(metrics.daysWithData, 2);
+  assert.equal(metrics.daysWithUsage, 2);
+  assert.equal(metrics.compliantDays, 0);
+  assertApprox(metrics.avgUsageHours, 0.025, 0.001, "avg usage");
+  assertApprox(metrics.avgLeak, 70.2671, 0.1, "avg leak");
+  assertApprox(metrics.leak95th, 84.8896, 0.1, "95th leak");
+  assertApprox(metrics.maxLeak30m, 100, 0.1, "30 min leak");
+  assertApprox(metrics.maxLeak60m, 100, 0.1, "60 min leak");
+  assertApprox(metrics.machine.pressureAvg ?? null, 4.4539, 0.02, "avg pressure");
+  assertApprox(metrics.machine.pressure95th ?? null, 5.9, 0.02, "95th pressure");
+});
+
 maybeDreamstationTest("DreamStation sample card preserves active-root APAP settings and leak metrics", async () => {
   const { prepared, metrics } = await loadFixture(DREAMSTATION_ROOT);
   assert.equal(prepared.selectedLoader, "Philips Respironics System One / DreamStation");
@@ -326,6 +356,20 @@ maybeLocalMixedDreamstationTest("DreamStation folder follows LAST.TXT to the act
   assertApprox(metrics.leak95th, 52.5013, 0.1, "95th leak");
   assertApprox(metrics.maxLeak30m, 128.4689, 0.1, "30 min leak");
   assertApprox(metrics.maxLeak60m, 128.4689, 0.1, "60 min leak");
+});
+
+maybeLocalRemstarSeTest("REMstar SE P-Series sample parses as PRS1 CPAP history", async () => {
+  const { prepared, metrics } = await loadFixture(LOCAL_REMSTAR_SE_ROOT);
+  assert.equal(prepared.selectedLoader, "Philips Respironics System One / DreamStation");
+  assert.equal(prepared.machine.device, "REMstar SE (P15163264B067)");
+  assert.equal(prepared.machine.mode, "CPAP");
+  assert.equal(prepared.machine.pressure, "11 cmH2O");
+  assert.equal(prepared.machine.pressureRelief, "Flex: 3");
+  assert.equal(prepared.latestClinicalDayIso, "2020-03-18");
+  assert.equal(metrics.daysWithData, 25);
+  assert.equal(metrics.daysWithUsage, 25);
+  assert.equal(metrics.compliantDays, 0);
+  assertApprox(metrics.avgUsageHours, 0.2885, 0.001, "avg usage");
 });
 
 maybeAirSense11Test("ResMed AirSense 11 public fixture loads with active CPAP profile", async () => {
@@ -428,6 +472,35 @@ maybeLocalAirSense10ShortTest("filtered AirSense 10 summary coverage generates a
   });
   assert.deepEqual(result.reports.map((report) => report.days), [90, 60, 30, 7]);
   assert.ok(result.reports.every((report) => report.blob.size > 0));
+});
+
+maybeLocalAirSense10ThirdTest("Airsense 10 - 3 filtered import keeps recent ResMed data and settings", async () => {
+  const { filtered, prepared, metrics } = await loadFilteredFixture(LOCAL_RESMED_AIRSENSE10_THIRD_ROOT);
+  assert.equal(filtered.originalCount, 681);
+  assert.equal(filtered.files.length, 298);
+  assert.equal(filtered.latestDateIso, "2026-06-01");
+  assert.equal(filtered.hasOlderDatedData, true);
+  assert.equal(prepared.selectedLoader, "ResMed");
+  assert.deepEqual(Object.keys(prepared.dayBuckets).sort(), ["2026-05-31", "2026-06-01"]);
+  assert.equal(prepared.machine.device, "AirSense 10 AutoSet");
+  assert.equal(prepared.machine.mode, "CPAP");
+  assert.equal(prepared.machine.pressure, "Fixed 8 cmH2O");
+  assert.equal(prepared.machine.rampTime, "Off");
+  assert.equal(prepared.machine.pressureRelief, "EPR: On 3");
+  assert.equal(prepared.historyStartClinicalDayIso, "2025-06-01");
+  assert.equal(prepared.latestClinicalDayIso, "2026-06-01");
+  assert.equal(metrics.daysInWindow, 90);
+  assert.equal(metrics.daysWithData, 2);
+  assert.equal(metrics.daysWithUsage, 2);
+  assert.equal(metrics.compliantDays, 0);
+  assertApprox(metrics.avgUsageHours, 0.2583, 0.001, "avg usage");
+  assertApprox(metrics.avgAhi, 1.4, 0.01, "avg AHI");
+  assertApprox(metrics.avgLeak, 23.4, 0.1, "avg leak");
+  assertApprox(metrics.leak95th, 54.6, 0.1, "95th leak");
+  assertApprox(metrics.maxLeak30m, 80.4, 0.1, "30 min leak");
+  assertApprox(metrics.maxLeak60m, 80.4, 0.1, "60 min leak");
+  assertApprox(metrics.machine.pressureAvg ?? null, 4.68, 0.02, "avg pressure");
+  assertApprox(metrics.machine.pressure95th ?? null, 5.712, 0.02, "95th pressure");
 });
 
 maybeLocalAirSense10ShortTest("older dated files without a settings change do not offer previous therapy", async () => {

@@ -54,6 +54,7 @@ const PRS1_MASK_LEAK_AT_4_CM = 20.167;
 const PRS1_MASK_LEAK_AT_20_CM = 48.333;
 
 const PRS1_EXACT_MODELS = new Map<string, { label: string; mode: CanonicalMode }>([
+  ["220P", { label: "REMstar SE", mode: "CPAP" }],
   ["251P", { label: "REMstar Plus (System One)", mode: "CPAP" }],
   ["450P", { label: "REMstar Pro (System One)", mode: "CPAP" }],
   ["451P", { label: "REMstar Pro (System One)", mode: "CPAP" }],
