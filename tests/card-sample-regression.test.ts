@@ -284,6 +284,14 @@ maybeLocalLunaFourTest("Luna 2 - 4 short card loads all available BMC bundle dat
   assert.equal(metrics.daysWithUsage, 2);
   assert.equal(metrics.compliantDays, 0);
   assertApprox(metrics.avgUsageHours, 0.025, 0.001, "avg usage");
+  assert.equal(metrics.avgAhi, 0);
+  assert.equal(metrics.ahi95th, 0);
+  assert.equal(metrics.avgResidualApneas, 0);
+  assert.equal(metrics.residualApneas95th, 0);
+  assert.equal(metrics.avgCentralApneas, 0);
+  assert.equal(metrics.centralApneas95th, 0);
+  assert.equal(metrics.avgReraIndex, null);
+  assert.equal(metrics.rera95th, null);
   assertApprox(metrics.avgLeak, 70.2671, 0.1, "avg leak");
   assertApprox(metrics.leak95th, 84.8896, 0.1, "95th leak");
   assertApprox(metrics.maxLeak30m, 100, 0.1, "30 min leak");
@@ -370,6 +378,27 @@ maybeLocalRemstarSeTest("REMstar SE P-Series sample parses as PRS1 CPAP history"
   assert.equal(metrics.daysWithUsage, 25);
   assert.equal(metrics.compliantDays, 0);
   assertApprox(metrics.avgUsageHours, 0.2885, 0.001, "avg usage");
+  assert.equal(metrics.avgAhi, null);
+  assert.equal(metrics.ahi95th, null);
+  assert.equal(metrics.avgResidualApneas, null);
+  assert.equal(metrics.residualApneas95th, null);
+  assert.equal(metrics.avgCentralApneas, null);
+  assert.equal(metrics.centralApneas95th, null);
+  assert.equal(metrics.avgReraIndex, null);
+  assert.equal(metrics.rera95th, null);
+  assert.equal(metrics.avgLeak, null);
+  assert.equal(metrics.leak95th, null);
+  assert.equal(metrics.maxLeak, null);
+  assert.equal(metrics.maxLeak30m, null);
+  assert.equal(metrics.maxLeak60m, null);
+  assert.deepEqual(leakMetricRows(metrics), [
+    ["Avg Leak", "Data point not available"],
+    ["95th Leak", "Data point not available"],
+    ["Longest Sustained Leak", "Data point not available"],
+    ["Max Leak", "Data point not available"]
+  ]);
+  assert.ok(metrics.warnings.includes("AHI metrics were not detected from the selected files."));
+  assert.ok(metrics.warnings.includes("Leak metrics were not detected from the selected files."));
 });
 
 maybeAirSense11Test("ResMed AirSense 11 public fixture loads with active CPAP profile", async () => {

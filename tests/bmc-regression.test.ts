@@ -63,3 +63,45 @@ test("BMC historic session consumes the sentinel payload before parsing event bl
   assert.equal(record.residualApneas, 0.5);
   assert.equal(record.centralApneas, 1);
 });
+
+test("BMC historic session keeps respiratory metrics absent without event blocks", () => {
+  const session = new Uint8Array(0x80);
+  session[0] = 0xe1;
+  writeU16(session, 0x07, encodeBmcDate(2026, 3, 15));
+  writeU16(session, 0x0f, 60);
+  session[0x45] = 0xff;
+  writeU32(session, 0x46, 0xffffffff);
+
+  const record = parseBmcHistoricSession(session);
+  assert.ok(record);
+  assert.equal(record.usageHours, 1);
+  assert.equal(record.ahi, undefined);
+  assert.equal(record.residualApneas, undefined);
+  assert.equal(record.centralApneas, undefined);
+});
+
+test("BMC historic session preserves explicit zero respiratory event counts", () => {
+  const session = new Uint8Array(0xa0);
+  session[0] = 0xe1;
+  writeU16(session, 0x07, encodeBmcDate(2026, 3, 15));
+  writeU16(session, 0x0f, 60);
+
+  let pos = 0x45;
+  session[pos] = 0xff;
+  writeU32(session, pos + 1, 0xffffffff);
+  pos += 5;
+
+  for (const type of [0x83, 0x84, 0x87]) {
+    session[pos] = type;
+    writeU16(session, pos + 1, 0);
+    writeU16(session, pos + 3, 0);
+    pos += 5;
+  }
+
+  const record = parseBmcHistoricSession(session);
+  assert.ok(record);
+  assert.equal(record.usageHours, 1);
+  assert.equal(record.ahi, 0);
+  assert.equal(record.residualApneas, 0);
+  assert.equal(record.centralApneas, 0);
+});

@@ -229,6 +229,10 @@ test("PRS1 leak samples populate leak duration fields for CPAP, APAP, and BiPAP 
 
     assert.equal(prepared.selectedLoader, "Philips Respironics System One / DreamStation");
     assert.equal(prepared.machine.mode, mode);
+    assert.equal(metrics.avgAhi, null);
+    assert.equal(metrics.avgResidualApneas, null);
+    assert.equal(metrics.avgCentralApneas, null);
+    assert.equal(metrics.avgReraIndex, null);
     assert.equal(metrics.avgLeak, 42.5);
     assert.equal(metrics.maxLeak, 45);
     assert.ok(Math.abs((metrics.maxLeakMinutes ?? 0) - 20) < 0.0001);

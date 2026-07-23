@@ -480,6 +480,7 @@ export function parseBmcHistoricSession(sessionBytes: Uint8Array): ParsedRecord 
   let obstructiveApneas = 0;
   let hypopneas = 0;
   let centralApneas = 0;
+  let hasRespiratoryEventData = false;
 
   while (pos + 5 <= sessionBytes.length) {
     const msgType = sessionBytes[pos];
@@ -488,6 +489,7 @@ export function parseBmcHistoricSession(sessionBytes: Uint8Array): ParsedRecord 
 
     if (msgType === 0x83 || msgType === 0x84 || msgType === 0x87) {
       if (pos + count * 3 > sessionBytes.length) break;
+      hasRespiratoryEventData = true;
       if (msgType === 0x83) obstructiveApneas += count;
       else if (msgType === 0x84) hypopneas += count;
       else if (msgType === 0x87) centralApneas += count;
@@ -505,13 +507,14 @@ export function parseBmcHistoricSession(sessionBytes: Uint8Array): ParsedRecord 
     pos += count * 2;
   }
 
-  const ahi = usageHours && usageHours > 0 ? (obstructiveApneas + centralApneas + hypopneas) / usageHours : undefined;
+  const ahi =
+    hasRespiratoryEventData && usageHours && usageHours > 0 ? (obstructiveApneas + centralApneas + hypopneas) / usageHours : undefined;
   return {
     date: startDate,
     usageHours: usageHours && usageHours > 0 && usageHours <= 24 ? usageHours : undefined,
     ahi,
-    residualApneas: usageHours && usageHours > 0 ? obstructiveApneas / usageHours : undefined,
-    centralApneas: usageHours && usageHours > 0 ? centralApneas / usageHours : undefined
+    residualApneas: hasRespiratoryEventData && usageHours && usageHours > 0 ? obstructiveApneas / usageHours : undefined,
+    centralApneas: hasRespiratoryEventData && usageHours && usageHours > 0 ? centralApneas / usageHours : undefined
   };
 }
 

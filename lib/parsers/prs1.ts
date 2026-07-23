@@ -37,6 +37,7 @@ type Prs1SessionAccumulator = {
   pressureReliefMode?: string;
   pressureReliefLevel?: number;
   usageSeconds: number;
+  hasEventData: boolean;
   obstructiveApneaCount: number;
   centralApneaCount: number;
   hypopneaCount: number;
@@ -535,6 +536,7 @@ function getOrCreateSession(
     pressureAvgSum: 0,
     pressureAvgCount: 0,
     usageSeconds: 0,
+    hasEventData: false,
     obstructiveApneaCount: 0,
     centralApneaCount: 0,
     hypopneaCount: 0,
@@ -1203,12 +1205,15 @@ function parseEventChunk(chunk: Prs1Chunk, session: Prs1SessionAccumulator) {
   switch (chunk.familyVersion) {
     case 2:
     case 3:
+      session.hasEventData = true;
       parseEventsF0V23(chunk, session);
       break;
     case 4:
+      session.hasEventData = true;
       parseEventsF0V4(chunk, session);
       break;
     case 6:
+      session.hasEventData = true;
       parseEventsF0V6(chunk, session);
       break;
     default:
@@ -1375,10 +1380,10 @@ function toParsedRecord(session: Prs1SessionAccumulator): ParsedRecord | null {
   const obstructiveLikeCount = session.obstructiveApneaCount + session.hypopneaCount;
   const totalAhiCount = obstructiveLikeCount + session.centralApneaCount;
 
-  const ahi = usageHours && usageHours > 0 ? totalAhiCount / usageHours : undefined;
-  const residualApneas = usageHours && usageHours > 0 ? obstructiveLikeCount / usageHours : undefined;
-  const centralApneas = usageHours && usageHours > 0 ? session.centralApneaCount / usageHours : undefined;
-  const reraIndex = usageHours && usageHours > 0 ? session.reraCount / usageHours : undefined;
+  const ahi = session.hasEventData && usageHours && usageHours > 0 ? totalAhiCount / usageHours : undefined;
+  const residualApneas = session.hasEventData && usageHours && usageHours > 0 ? obstructiveLikeCount / usageHours : undefined;
+  const centralApneas = session.hasEventData && usageHours && usageHours > 0 ? session.centralApneaCount / usageHours : undefined;
+  const reraIndex = session.hasEventData && usageHours && usageHours > 0 ? session.reraCount / usageHours : undefined;
   const leak = session.leakCount > 0 ? session.leakSum / session.leakCount : undefined;
   const leakSampleMinutes =
     session.usageSeconds > 0 && session.leakSeries.length > 0 ? session.usageSeconds / 60 / session.leakSeries.length : undefined;
