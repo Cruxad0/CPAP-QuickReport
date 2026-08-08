@@ -4,6 +4,8 @@ import type { ParsedRecord } from "@/lib/types";
 
 type IntelliPapAggregate = {
   date: Date;
+  therapySessionStart?: Date;
+  therapySessionEnd?: Date;
   usageHours?: number;
   ahi?: number;
   residualApneas?: number;
@@ -193,6 +195,8 @@ function parseDv5Records(bytes: Uint8Array, sessions: Dv5Session[]): IntelliPapA
     const ahi = usageHours > 0 ? (aggregate.obstructiveApneas + aggregate.hypopneas) / usageHours : undefined;
     return {
       date,
+      therapySessionStart: date,
+      therapySessionEnd: new Date(aggregate.end * 1000),
       usageHours,
       ahi,
       residualApneas: usageHours > 0 ? aggregate.obstructiveApneas / usageHours : undefined,
@@ -280,6 +284,9 @@ function parseDv6Summaries(bytes: Uint8Array, machine: FamilyParserContext["mach
     const hyp = bytes[pos + 38] / 4;
     records.push({
       date: start,
+      therapySessionStart: start,
+      therapySessionEnd:
+        end && end > start ? end : new Date(start.getTime() + usageHours * 3_600_000),
       usageHours,
       ahi: oa + ca + hyp,
       residualApneas: oa,
@@ -292,8 +299,6 @@ function parseDv6Summaries(bytes: Uint8Array, machine: FamilyParserContext["mach
       therapySettingsLabel: therapySettings?.label,
       therapySettingsMachine: therapySettings?.machine
     });
-
-    void end;
   }
 
   return records;

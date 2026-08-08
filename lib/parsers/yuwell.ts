@@ -148,6 +148,8 @@ function toRecord(values: SessionValues): ParsedRecord | null {
   const ahiEvents = values.obstructiveEvents + values.centralEvents + values.hypopneaEvents;
   return {
     date: values.start,
+    therapySessionStart: values.start,
+    therapySessionEnd: values.end,
     usageHours: elapsedHours,
     ahi: ahiEvents > 0 ? ahiEvents / elapsedHours : 0,
     residualApneas: values.obstructiveEvents > 0 ? values.obstructiveEvents / elapsedHours : 0,

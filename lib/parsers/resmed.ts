@@ -1075,8 +1075,16 @@ function parseResMedPldEdf(candidate: FamilyParserCandidate, bytes: Uint8Array):
 
   if (!leakStats && !respiratoryRateStats && !tidalVolumeStats) return null;
 
+  const sessionDurationSeconds = edf.numRecords * edf.recordDurationSeconds;
+  const hasSessionTiming =
+    Number.isFinite(sessionDurationSeconds) && sessionDurationSeconds > 0 && sessionDurationSeconds <= 24 * 3600;
+
   return {
     date: new Date(edf.startDate),
+    therapySessionStart: hasSessionTiming ? new Date(edf.startDate) : undefined,
+    therapySessionEnd: hasSessionTiming
+      ? new Date(edf.startDate.getTime() + sessionDurationSeconds * 1000)
+      : undefined,
     maxLeakDurationValue: leakStats?.maxLeakValue,
     maxLeakMinutes: leakStats?.maxLeakMinutes,
     sustainedLeakMax: leakStats?.sustainedLeakMax,

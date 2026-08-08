@@ -460,6 +460,9 @@ function buildPrismaRecord(bundle: PrismaSessionBundle): ParsedRecord | null {
 
   return {
     date,
+    therapySessionStart: date,
+    therapySessionEnd:
+      usageHours && usageHours > 0 ? new Date(date.getTime() + usageHours * 3_600_000) : undefined,
     usageHours: usageHours !== undefined && usageHours > 0 && usageHours <= 24 ? usageHours : undefined,
     ahi: usageHours && totalAhiEvents > 0 ? totalAhiEvents / usageHours : undefined,
     residualApneas: usageHours && counts && counts.obstructiveApneas > 0 ? counts.obstructiveApneas / usageHours : undefined,

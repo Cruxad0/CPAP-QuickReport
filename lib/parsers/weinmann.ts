@@ -4,6 +4,8 @@ import type { ParsedRecord, QuickReportMetrics } from "@/lib/types";
 
 type WeinmannEntry = {
   date: Date;
+  therapySessionStart?: Date;
+  therapySessionEnd?: Date;
   usageHours?: number;
   pressureAvg?: number;
   pressure95th?: number;
@@ -125,6 +127,8 @@ function buildEntry(bytes: Uint8Array, offset: number): WeinmannEntry | null {
 
   return {
     date,
+    therapySessionStart: usageHours && usageHours > 0 ? date : undefined,
+    therapySessionEnd: usageHours && usageHours > 0 ? new Date(date.getTime() + usageHours * 3_600_000) : undefined,
     usageHours,
     pressureAvg,
     pressure95th,

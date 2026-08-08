@@ -233,6 +233,9 @@ function finalizeRecords(aggregates: Map<number, IconAggregate>): ParsedRecord[]
 
     records.push({
       date: aggregate.date,
+      therapySessionStart: usageHours && usageHours > 0 ? aggregate.date : undefined,
+      therapySessionEnd:
+        usageHours && usageHours > 0 ? new Date(aggregate.date.getTime() + usageHours * 3_600_000) : undefined,
       usageHours,
       ahi,
       residualApneas: usageHours && usageHours > 0 ? aggregate.obstructiveApneas / usageHours : undefined,

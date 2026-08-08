@@ -37,6 +37,7 @@ type Prs1SessionAccumulator = {
   pressureReliefMode?: string;
   pressureReliefLevel?: number;
   usageSeconds: number;
+  therapyIntervals: Array<{ startOffsetSeconds: number; endOffsetSeconds: number }>;
   hasEventData: boolean;
   obstructiveApneaCount: number;
   centralApneaCount: number;
@@ -536,6 +537,7 @@ function getOrCreateSession(
     pressureAvgSum: 0,
     pressureAvgCount: 0,
     usageSeconds: 0,
+    therapyIntervals: [],
     hasEventData: false,
     obstructiveApneaCount: 0,
     centralApneaCount: 0,
@@ -756,6 +758,10 @@ function addUsageSlice(session: Prs1SessionAccumulator, currentTime: number, mas
   if (maskOnStartedAt === null) return null;
   if (currentTime > maskOnStartedAt) {
     session.usageSeconds += currentTime - maskOnStartedAt;
+    session.therapyIntervals.push({
+      startOffsetSeconds: maskOnStartedAt,
+      endOffsetSeconds: currentTime
+    });
   }
   return null;
 }
@@ -1634,6 +1640,16 @@ async function parsePrs1BinaryCandidates(context: FamilyParserContext, deps: Fam
   for (const session of orderedSessions) {
     const record = toParsedRecord(session);
     if (record) context.records.push(record);
+    const sessionStart = asDateFromUnix(session.timestamp);
+    if (!sessionStart) continue;
+    for (const interval of session.therapyIntervals) {
+      if (interval.endOffsetSeconds <= interval.startOffsetSeconds) continue;
+      context.records.push({
+        date: sessionStart,
+        therapySessionStart: new Date(sessionStart.getTime() + interval.startOffsetSeconds * 1000),
+        therapySessionEnd: new Date(sessionStart.getTime() + interval.endOffsetSeconds * 1000)
+      });
+    }
   }
 }
 

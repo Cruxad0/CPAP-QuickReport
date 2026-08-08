@@ -5,6 +5,7 @@ import {
   isAutoPapLikeMode,
   isFixedCpapLikeMode
 } from "@/lib/machine-mode";
+import { formatClockMinutes } from "@/lib/sleep-inference";
 import { QuickReportMetrics } from "@/lib/types";
 
 const PAGE_WIDTH_A4 = 595.28;
@@ -1064,13 +1065,46 @@ export function leakMetricRows(report: QuickReportMetrics): TableRow[] {
 function buildTherapySummaryRows(report: QuickReportMetrics): TableRow[] {
   const belowMedicareCompliance = isBelowMedicareComplianceThreshold(report);
   const belowMedicareNightlyUse = isBelowMedicareNightlyUseThreshold(report);
+  const timing = report.sleepTimingAnalysis;
+  const complianceLabel = timing
+    ? "CMS-correlated days (principal episode >= 4h)"
+    : "Compliant days (daily total >= 4h)";
   const usageRows: TableRow[] = [
     ["Date range", `${report.dateRangeStart} to ${report.dateRangeEnd}`],
     ["Days with data", `${report.daysWithData} / ${report.daysInWindow}`],
     ["Usage days (% of range)", `${report.usageDaysPercent.toFixed(1)}%`],
-    ["Compliant days (>= 4h)", `${report.compliantDays} / ${report.daysInWindow}`, belowMedicareCompliance],
+    [
+      "Total therapy time",
+      report.totalTherapyHours === null || report.totalTherapyHours === undefined
+        ? NO_DATA_FALLBACK
+        : `${formatReportMetricValue(report.totalTherapyHours)} h`
+    ],
+    ...(timing
+      ? [
+          [
+            "Expected principal-sleep therapy",
+            report.expectedSleepTherapyHours === null || report.expectedSleepTherapyHours === undefined
+              ? NO_DATA_FALLBACK
+              : `${formatReportMetricValue(report.expectedSleepTherapyHours)} h`
+          ] as TableRow,
+          [
+            "Suspected nap therapy",
+            report.suspectedNapTherapyHours === null || report.suspectedNapTherapyHours === undefined
+              ? NO_DATA_FALLBACK
+              : `${formatReportMetricValue(report.suspectedNapTherapyHours)} h`
+          ] as TableRow,
+          ...((report.unclassifiedTherapyHours ?? 0) >= 0.05
+            ? [["Unclassified session timing", `${formatReportMetricValue(report.unclassifiedTherapyHours)} h`] as TableRow]
+            : []),
+          [
+            "Inferred principal sleep window",
+            `${formatClockMinutes(timing.sleepWindowStartMinutes)} to ${formatClockMinutes(timing.sleepWindowEndMinutes)} (${timing.confidence} confidence)`
+          ] as TableRow
+        ]
+      : []),
+    [complianceLabel, `${report.compliantDays} / ${report.daysInWindow}`, belowMedicareCompliance],
     ["Compliance (% of range)", `${report.compliancePercent.toFixed(1)}%`, belowMedicareCompliance],
-    ["Avg usage per day", report.avgUsageHours === null ? NO_DATA_FALLBACK : `${formatReportMetricValue(report.avgUsageHours)} h`, belowMedicareNightlyUse]
+    ["Avg total therapy per used day", report.avgUsageHours === null ? NO_DATA_FALLBACK : `${formatReportMetricValue(report.avgUsageHours)} h`, belowMedicareNightlyUse]
   ];
   const ventilationRows = bipapVentilationRows(report);
   const eventRows: TableRow[] = [

@@ -5,6 +5,7 @@ import { flushSync } from "react-dom";
 import { enumerateDeferredFolderEntries, pickDirectoryHandle, supportsDirectoryPicker } from "@/lib/directory-picker";
 import { ReportWorkerClient } from "@/lib/report-worker-client";
 import { REPORT_RANGE_OPTIONS, type ReportRangeDays } from "@/lib/report-orchestrator";
+import { formatClockMinutes } from "@/lib/sleep-inference";
 import { OLDER_HISTORY_IMPORT_LOOKBACK_DAYS } from "@/lib/source-files";
 import { daysSinceIsoDate, staleDataAgeClassName, staleDataSeverity } from "@/lib/stale-data";
 import { ParseProgress, QuickReportMetrics, TherapySettingsPeriod } from "@/lib/types";
@@ -1092,11 +1093,35 @@ export function QuickReportApp() {
             <div className="previous-review-metrics">
               <div className="review-metric review-metric-usage">
                 <span className="review-metric-icon"><UiIcon name="clock" size={33} /></span>
-                <span><small>Usage</small><strong>{formatMetric(dashboardMetrics?.avgUsageHours, " hrs")}</strong><em>nightly average</em></span>
+                <span>
+                  <small>Total Therapy Time</small>
+                  <strong>{formatMetric(dashboardMetrics?.totalTherapyHours, " hrs")}</strong>
+                  <em>{dashboardMetrics ? `${dashboardMetrics.daysInWindow}-day report range` : "selected report range"}</em>
+                  {dashboardMetrics?.sleepTimingAnalysis ? (
+                    <span className="review-metric-breakdown">
+                      <em>Expected sleep: {formatMetric(dashboardMetrics.expectedSleepTherapyHours, " hrs")}</em>
+                      <em>Suspected naps: {formatMetric(dashboardMetrics.suspectedNapTherapyHours, " hrs")}</em>
+                      {(dashboardMetrics.unclassifiedTherapyHours ?? 0) >= 0.05 ? (
+                        <em>Unclassified timing: {formatMetric(dashboardMetrics.unclassifiedTherapyHours, " hrs")}</em>
+                      ) : null}
+                    </span>
+                  ) : (
+                    <em>Session timing split unavailable</em>
+                  )}
+                </span>
               </div>
               <div className="review-metric review-metric-compliance">
                 <span className="review-metric-icon"><UiIcon name="check" size={33} /></span>
-                <span><small>Compliance</small><strong>{formatMetric(dashboardMetrics?.compliancePercent, "%")}</strong><em>days used ≥ 4 hrs</em></span>
+                <span>
+                  <small>Compliance</small>
+                  <strong>{formatMetric(dashboardMetrics?.compliancePercent, "%")}</strong>
+                  <em>{dashboardMetrics?.sleepTimingAnalysis ? "principal sleep episode ≥ 4 hrs" : "daily total ≥ 4 hrs (fallback)"}</em>
+                  {dashboardMetrics?.sleepTimingAnalysis ? (
+                    <em>
+                      Window: {formatClockMinutes(dashboardMetrics.sleepTimingAnalysis.sleepWindowStartMinutes)}–{formatClockMinutes(dashboardMetrics.sleepTimingAnalysis.sleepWindowEndMinutes)} · {dashboardMetrics.sleepTimingAnalysis.confidence} confidence
+                    </em>
+                  ) : null}
+                </span>
               </div>
               <div className="review-metric review-metric-ahi">
                 <span className="review-metric-icon"><UiIcon name="activity" size={33} /></span>

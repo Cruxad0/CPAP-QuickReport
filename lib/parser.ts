@@ -31,6 +31,11 @@ import { parseSleepStyleFamily } from "@/lib/parsers/sleepstyle";
 import { runTextFamilyParser } from "@/lib/parsers/text-family-runner";
 import type { FamilyParserDeps } from "@/lib/parsers/text-family-types";
 import { createCalendarDateNoonAtUtcOffset, extractExplicitUtcOffsetMinutes } from "@/lib/timezone";
+import {
+  buildSleepTimingAnalysis,
+  classifyTherapySessions,
+  inferSleepTimingProfile
+} from "@/lib/sleep-inference";
 import { parseVremFamily } from "@/lib/parsers/vrem";
 import { parseWeinmannFamily } from "@/lib/parsers/weinmann";
 import { parseYuwellFamily } from "@/lib/parsers/yuwell";
@@ -45,6 +50,7 @@ import {
   PreparedQuickReportSource,
   QuickReportMetrics,
   SourceFile,
+  TherapyUsageSession,
   TherapySettingsPeriod
 } from "@/lib/types";
 
@@ -103,6 +109,8 @@ type ReportSummaryAggregationPolicy = {
 };
 
 const LARGE_LEAK_THRESHOLD_LPM = 30;
+const MIN_SESSION_TIMING_COVERAGE_PERCENT = 70;
+const MAX_SESSION_TIMING_COVERAGE_PERCENT = 105;
 
 const RESVENT_MODE_FROM_FILE = new Map<string, string>([
   ["N_CPAP", "CPAP"],
@@ -311,6 +319,36 @@ function toClinicalDay(date: Date): Date {
 
 function toClinicalIsoDate(date: Date): string {
   return toIsoDate(toClinicalDay(date));
+}
+
+function extractTherapyUsageSessions(records: ParsedRecord[]): TherapyUsageSession[] {
+  const sessions = records
+    .map((record) => {
+      const start = record.therapySessionStart;
+      const end = record.therapySessionEnd;
+      if (!start || !end) return null;
+      const startMs = start.getTime();
+      const endMs = end.getTime();
+      if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs || endMs - startMs > 24 * 3600 * 1000) {
+        return null;
+      }
+      return {
+        startIso: start.toISOString(),
+        endIso: end.toISOString(),
+        sourceClinicalDayIso: toClinicalIsoDate(record.date)
+      };
+    })
+    .filter(
+      (session): session is { startIso: string; endIso: string; sourceClinicalDayIso: string } => session !== null
+    )
+    .sort((a, b) => a.startIso.localeCompare(b.startIso) || a.endIso.localeCompare(b.endIso));
+
+  return sessions.filter(
+    (session, index) =>
+      index === 0 ||
+      session.startIso !== sessions[index - 1].startIso ||
+      session.endIso !== sessions[index - 1].endIso
+  );
 }
 
 function percentile(values: number[], p: number): number {
@@ -1357,6 +1395,7 @@ function parseResventStatText(text: string, fallbackDate: Date): ParsedRecord | 
   const num = (key: string): number | undefined => safeNumber(kv.get(key) ?? kvLower.get(key.toLowerCase()));
 
   const secUsed = num("secUsed");
+  const secStart = num("secStart");
   const cntAHI = num("cntAHI");
   const cntOAI = num("cntOAI");
   const cntCAI = num("cntCAI");
@@ -1369,6 +1408,10 @@ function parseResventStatText(text: string, fallbackDate: Date): ParsedRecord | 
   if (Number.isNaN(recordDate.getTime())) return null;
 
   const usageHours = secUsed !== undefined ? secUsed / 3600 : undefined;
+  const therapySessionStart =
+    secStart !== undefined && secStart > 0 ? new Date(secStart * 1000) : undefined;
+  const hasValidTherapySessionStart =
+    therapySessionStart !== undefined && !Number.isNaN(therapySessionStart.getTime());
 
   let ahi: number | undefined;
   let residualApneas: number | undefined;
@@ -1495,6 +1538,11 @@ function parseResventStatText(text: string, fallbackDate: Date): ParsedRecord | 
 
   return {
     date: recordDate,
+    therapySessionStart: hasValidTherapySessionStart ? therapySessionStart : undefined,
+    therapySessionEnd:
+      hasValidTherapySessionStart && therapySessionStart && secUsed !== undefined && secUsed > 0
+        ? new Date(therapySessionStart.getTime() + secUsed * 1000)
+        : undefined,
     usageHours: usageHours !== undefined && usageHours >= 0 && usageHours <= 24 ? usageHours : undefined,
     ahi: ahi !== undefined && ahi >= 0 && ahi < 200 ? ahi : undefined,
     residualApneas: residualApneas !== undefined && residualApneas >= 0 && residualApneas < 200 ? residualApneas : undefined,
@@ -2167,6 +2215,7 @@ function parseResventLeakFromBytes(bytes: Uint8Array): LeakStats | null {
 function pickResventCandidates(files: SourceMeta[], warnings: string[], lookbackDays: number): {
   configFiles: SourceMeta[];
   statFiles: SourceMeta[];
+  sessionStatFiles: SourceMeta[];
   summaryStatFiles: SourceMeta[];
   evByDayUsage: Map<string, SourceMeta>;
   pFiles: SourceMeta[];
@@ -2191,6 +2240,10 @@ function pickResventCandidates(files: SourceMeta[], warnings: string[], lookback
   const usageStatFiles = inWindow.filter(isResventStatUsageFile).filter((m) => m.file.size <= MAX_FILE_SIZE_BYTES);
   const summaryStatFiles = inWindow.filter(isResventStatSummaryFile).filter((m) => m.file.size <= MAX_FILE_SIZE_BYTES);
   const statFiles = summaryStatFiles.length > 0 ? summaryStatFiles : usageStatFiles;
+  // Plain STAT is the authoritative daily summary, but it collapses separate
+  // mask-on intervals. When both forms exist, keep STATxx exclusively as
+  // session-timing evidence so naps and long interruptions remain visible.
+  const sessionStatFiles = summaryStatFiles.length > 0 ? usageStatFiles : [];
   if (summaryStatFiles.length === 0 && usageStatFiles.length > 0) {
     warnings.push("STAT daily summary files were not found; using STATxx session files for daily usage parsing.");
   }
@@ -2259,6 +2312,7 @@ function pickResventCandidates(files: SourceMeta[], warnings: string[], lookback
   return {
     configFiles,
     statFiles,
+    sessionStatFiles,
     summaryStatFiles,
     evByDayUsage,
     pFiles,
@@ -2974,7 +3028,7 @@ async function prepareQuickReportSourceInternal(request: PrepareQuickReportSourc
       latestPathDate = selected.latestDate;
 
       const totalResventWork =
-        selected.configFiles.length + selected.statFiles.length + selected.summaryStatFiles.length + selected.pFiles.length;
+        selected.configFiles.length + selected.statFiles.length + selected.sessionStatFiles.length + selected.pFiles.length;
       let processed = 0;
 
       const resventConfigByBase = new Map<string, SourceMeta>();
@@ -3088,10 +3142,42 @@ async function prepareQuickReportSourceInternal(request: PrepareQuickReportSourc
                 }
               }
             }
+            if (selected.sessionStatFiles.length > 0 && isResventStatSummaryFile(statFile)) {
+              parsed.therapySessionStart = undefined;
+              parsed.therapySessionEnd = undefined;
+            }
             records.push(parsed);
           }
         } catch {
           warnings.push(`Could not read ${statFile.normalizedPath}`);
+        }
+
+        if (processed % 20 === 0) {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        }
+      }
+
+      for (const statFile of selected.sessionStatFiles) {
+        processed += 1;
+        const pct = 8 + Math.round((processed / Math.max(1, totalResventWork)) * 62);
+        emit(onProgress, {
+          phase: "parse",
+          detail: `Reading session timing from ${statFile.normalizedPath}`,
+          percent: Math.min(70, pct)
+        });
+
+        try {
+          const bytes = await statFile.file.readBytes();
+          if (statFile.recordDate === null) continue;
+          const parsed = parseResventStatFromBytes(bytes, statFile.recordDate);
+          if (!parsed?.therapySessionStart || !parsed.therapySessionEnd) continue;
+          records.push({
+            date: parsed.date,
+            therapySessionStart: parsed.therapySessionStart,
+            therapySessionEnd: parsed.therapySessionEnd
+          });
+        } catch {
+          warnings.push(`Could not read session timing from ${statFile.normalizedPath}`);
         }
 
         if (processed % 20 === 0) {
@@ -3320,6 +3406,7 @@ async function prepareQuickReportSourceInternal(request: PrepareQuickReportSourc
   emit(onProgress, { phase: "verify", detail: "Verifying therapy mode...", percent: 81 });
   resolveTherapyModeOrThrow(machine, selectedFamily.label);
 
+  const therapySessions = extractTherapyUsageSessions(records);
   const dedupedRecords = dedupeParsedRecords(records);
   if (dedupedRecords.length < records.length) {
     warnings.push(`Deduplicated ${records.length - dedupedRecords.length} overlapping daily records.`);
@@ -3376,6 +3463,26 @@ async function prepareQuickReportSourceInternal(request: PrepareQuickReportSourc
     warnings.unshift(`Detected OSCAR-compatible loader signatures: ${likelyLoaders.join(", ")}.`);
   }
 
+  const therapySettingsPeriods = buildTherapySettingsPeriods(dayMap);
+  const currentTherapyPeriod = therapySettingsPeriods.find((period) => period.kind === "current");
+  const currentTherapySessions = currentTherapyPeriod
+    ? therapySessions.filter((session) => {
+        if (session.sourceClinicalDayIso) {
+          return (
+            session.sourceClinicalDayIso >= currentTherapyPeriod.startClinicalDayIso &&
+            session.sourceClinicalDayIso <= currentTherapyPeriod.endClinicalDayIso
+          );
+        }
+        const start = new Date(session.startIso);
+        const clinicalDay = toClinicalIsoDate(start);
+        const calendarDay = toIsoDate(start);
+        return (
+          (clinicalDay >= currentTherapyPeriod.startClinicalDayIso && clinicalDay <= currentTherapyPeriod.endClinicalDayIso) ||
+          (calendarDay >= currentTherapyPeriod.startClinicalDayIso && calendarDay <= currentTherapyPeriod.endClinicalDayIso)
+        );
+      })
+    : therapySessions;
+
   return {
     selectedLoader: selectedFamily.label,
     machine: cloneMachineSettings(machine),
@@ -3384,7 +3491,9 @@ async function prepareQuickReportSourceInternal(request: PrepareQuickReportSourc
     historyStartClinicalDayIso: familyParserContext.historyStartClinicalDayIso,
     latestClinicalDayIso: toIsoDate(latest),
     maxLookbackDays: normalizedLookbackDays,
-    therapySettingsPeriods: buildTherapySettingsPeriods(dayMap),
+    therapySettingsPeriods,
+    therapySessions,
+    sleepTimingProfile: inferSleepTimingProfile(currentTherapySessions),
     dayBuckets: Object.fromEntries(dayMap.entries())
   };
 }
@@ -3647,9 +3756,95 @@ export function buildQuickReportMetricsFromPreparedSource(
   const daysWithDataRaw = dayMap.size;
   const daysWithData = Math.min(daysWithDataRaw, effectiveWindowDays);
   const daysWithUsage = usageValues.length;
-  const compliantDays = usageValues.filter((u) => u >= 4).length;
+  let compliantDays = usageValues.filter((u) => u >= 4).length;
   const complianceBaseDays = Math.max(1, effectiveWindowDays);
   const avgUsageHours = usageValues.length > 0 ? usageValues.reduce((a, b) => a + b, 0) / usageValues.length : null;
+  const dailyTotalTherapyHours = usageValues.reduce((sum, hours) => sum + hours, 0);
+  const sessionPeriod = selectedTherapyPeriod
+    ? prepared.therapySessions?.filter((session) => {
+        if (session.sourceClinicalDayIso) {
+          return (
+            session.sourceClinicalDayIso >= selectedTherapyPeriod.startClinicalDayIso &&
+            session.sourceClinicalDayIso <= selectedTherapyPeriod.endClinicalDayIso
+          );
+        }
+        const start = new Date(session.startIso);
+        const clinicalDay = toClinicalIsoDate(start);
+        const calendarDay = toIsoDate(start);
+        return (
+          (clinicalDay >= selectedTherapyPeriod.startClinicalDayIso && clinicalDay <= selectedTherapyPeriod.endClinicalDayIso) ||
+          (calendarDay >= selectedTherapyPeriod.startClinicalDayIso && calendarDay <= selectedTherapyPeriod.endClinicalDayIso)
+        );
+      }) ?? []
+    : prepared.therapySessions ?? [];
+  const reportSessions = sessionPeriod.filter((session) => {
+    if (session.sourceClinicalDayIso) {
+      return session.sourceClinicalDayIso >= effectiveWindowStartIso && session.sourceClinicalDayIso < windowEndIso;
+    }
+    const clinicalDay = toClinicalIsoDate(new Date(session.startIso));
+    return clinicalDay >= effectiveWindowStartIso && clinicalDay < windowEndIso;
+  });
+  const sleepTimingProfile =
+    therapyPeriodKind === "current" && prepared.sleepTimingProfile
+      ? prepared.sleepTimingProfile
+      : inferSleepTimingProfile(sessionPeriod);
+  const sleepClassification = sleepTimingProfile
+    ? classifyTherapySessions(reportSessions, sleepTimingProfile)
+    : null;
+  const sessionTherapyHours = sleepClassification ? sleepClassification.totalTherapyMinutes / 60 : 0;
+  const rawTimingCoveragePercent =
+    dailyTotalTherapyHours > 0 ? (sessionTherapyHours / dailyTotalTherapyHours) * 100 : 0;
+  const timingCoveragePercent = Math.min(100, rawTimingCoveragePercent);
+  const hasUsableSessionTiming =
+    sleepTimingProfile !== null &&
+    sleepClassification !== null &&
+    sleepClassification.days.length >= 1 &&
+    rawTimingCoveragePercent >= MIN_SESSION_TIMING_COVERAGE_PERCENT &&
+    rawTimingCoveragePercent <= MAX_SESSION_TIMING_COVERAGE_PERCENT;
+  const sleepTimingAnalysis =
+    hasUsableSessionTiming && sleepTimingProfile
+      ? buildSleepTimingAnalysis(sleepTimingProfile, timingCoveragePercent)
+      : null;
+  const totalTherapyHours = hasUsableSessionTiming
+    ? Math.max(dailyTotalTherapyHours, sessionTherapyHours)
+    : dailyTotalTherapyHours;
+  const expectedSleepTherapyHours = hasUsableSessionTiming && sleepClassification
+    ? sleepClassification.expectedSleepMinutes / 60
+    : null;
+  const suspectedNapTherapyHours = hasUsableSessionTiming && sleepClassification
+    ? sleepClassification.suspectedNapMinutes / 60
+    : null;
+  const unclassifiedTherapyHours = hasUsableSessionTiming
+    ? Math.max(0, totalTherapyHours - sessionTherapyHours)
+    : null;
+  const timedUsageDays = sleepClassification?.days.filter((day) => day.totalTherapyMinutes > 0).length ?? 0;
+  const avgExpectedSleepTherapyHours =
+    expectedSleepTherapyHours !== null && timedUsageDays > 0 ? expectedSleepTherapyHours / timedUsageDays : null;
+  const avgSuspectedNapTherapyHours =
+    suspectedNapTherapyHours !== null && timedUsageDays > 0 ? suspectedNapTherapyHours / timedUsageDays : null;
+
+  if (hasUsableSessionTiming && sleepClassification && sleepTimingProfile) {
+    compliantDays = Math.min(complianceBaseDays, sleepClassification.compliantDays);
+    warnings.push(
+      `CMS 4+ correlation uses the inferred principal therapy episode for each patient-specific sleep day; separate suspected naps are excluded and therapy interruptions of up to 30 minutes are grouped.`
+    );
+    if (sleepTimingProfile.scheduleDriftDetected) {
+      warnings.push(
+        "The patient's recent therapy timing differs from the earlier imported pattern; the inferred sleep window is low-confidence and should be clinically reviewed."
+      );
+    } else if (sleepTimingProfile.confidence === "low") {
+      warnings.push("The inferred sleep window has low confidence because therapy start times were inconsistent.");
+    }
+  } else if (dailyTotalTherapyHours > 0) {
+    if (rawTimingCoveragePercent > MAX_SESSION_TIMING_COVERAGE_PERCENT) {
+      warnings.push(
+        `Session intervals exceeded device-reported therapy by ${Math.round(rawTimingCoveragePercent - 100)}%; sleep timing was not inferred from inconsistent source data.`
+      );
+    }
+    warnings.push(
+      "Session-level timing was unavailable or incomplete for this report; 4+ usage uses device-reported daily totals, which may include naps."
+    );
+  }
   let ahiWeightedAcrossWindow = 0;
   let ahiWeightHoursAcrossWindow = 0;
   const ahiFallbackValues: number[] = [];
@@ -3869,6 +4064,18 @@ export function buildQuickReportMetricsFromPreparedSource(
     compliantDays,
     compliancePercent: finite((compliantDays / complianceBaseDays) * 100),
     avgUsageHours: avgUsageHours === null ? null : finite(avgUsageHours),
+    totalTherapyHours: finite(totalTherapyHours),
+    expectedSleepTherapyHours:
+      expectedSleepTherapyHours === null ? null : finite(expectedSleepTherapyHours),
+    suspectedNapTherapyHours:
+      suspectedNapTherapyHours === null ? null : finite(suspectedNapTherapyHours),
+    unclassifiedTherapyHours:
+      unclassifiedTherapyHours === null ? null : finite(unclassifiedTherapyHours),
+    avgExpectedSleepTherapyHours:
+      avgExpectedSleepTherapyHours === null ? null : finite(avgExpectedSleepTherapyHours),
+    avgSuspectedNapTherapyHours:
+      avgSuspectedNapTherapyHours === null ? null : finite(avgSuspectedNapTherapyHours),
+    sleepTimingAnalysis,
     avgAhi: avgAhi === null ? null : finite(avgAhi),
     avgResidualApneas: avgResidualApneas === null ? null : finite(avgResidualApneas),
     avgCentralApneas: avgCentralApneas === null ? null : finite(avgCentralApneas),

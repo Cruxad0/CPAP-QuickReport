@@ -220,10 +220,10 @@ function applyLatestSettings(days: G3xDay[], machine: QuickReportMetrics["machin
   }
 }
 
-function summarizeMaskOnUsage(samples: G3xWaveSample[]): number | undefined {
-  if (samples.length === 0) return undefined;
+function splitMaskOnSessions(samples: G3xWaveSample[]): Array<{ startMs: number; endMs: number }> {
+  if (samples.length === 0) return [];
   const sorted = [...samples].sort((a, b) => a.timestampMs - b.timestampMs);
-  let totalMs = 0;
+  const sessions: Array<{ startMs: number; endMs: number }> = [];
   let sessionStart = 0;
 
   const finishSession = (startIndex: number, endIndex: number) => {
@@ -238,12 +238,12 @@ function summarizeMaskOnUsage(samples: G3xWaveSample[]): number | undefined {
     const startMs = sorted[startIndex].timestampMs;
     const lastMs = sorted[endIndex].timestampMs + 1000;
     if (lastActive < 0) {
-      totalMs += Math.max(0, lastMs - startMs);
+      if (lastMs > startMs) sessions.push({ startMs, endMs: lastMs });
       return;
     }
     const inactiveSeconds = (sorted[endIndex].timestampMs - sorted[lastActive].timestampMs) / 1000;
     const endMs = inactiveSeconds >= G3X_MASK_OFF_SUSTAIN_SECONDS ? sorted[lastActive].timestampMs : lastMs;
-    totalMs += Math.max(0, endMs - startMs);
+    if (endMs > startMs) sessions.push({ startMs, endMs });
   };
 
   for (let i = 1; i < sorted.length; i += 1) {
@@ -253,6 +253,11 @@ function summarizeMaskOnUsage(samples: G3xWaveSample[]): number | undefined {
     }
   }
   finishSession(sessionStart, sorted.length - 1);
+  return sessions;
+}
+
+function summarizeMaskOnUsage(samples: G3xWaveSample[]): number | undefined {
+  const totalMs = splitMaskOnSessions(samples).reduce((sum, session) => sum + session.endMs - session.startMs, 0);
   return totalMs > 0 ? totalMs / 3_600_000 : undefined;
 }
 
@@ -430,13 +435,24 @@ export async function parseBmcG3xFamily(context: FamilyParserContext, deps: Fami
     }
   }
 
+  const timingRecords: ParsedRecord[] = [];
   for (const [dayIso, samples] of samplesByDay) {
     const record = records.get(dayIso);
     if (!record) continue;
     Object.assign(record, summarizeWaveSamples(samples));
+    for (const session of splitMaskOnSessions(samples)) {
+      const start = new Date(session.startMs);
+      timingRecords.push({
+        date: start,
+        therapySessionStart: start,
+        therapySessionEnd: new Date(session.endMs)
+      });
+    }
   }
 
-  context.records.push(...[...records.values()].sort((a, b) => a.date.getTime() - b.date.getTime()));
+  context.records.push(
+    ...[...records.values(), ...timingRecords].sort((a, b) => a.date.getTime() - b.date.getTime())
+  );
   if (!context.machine.device) context.machine.device = "ReactHealth / BMC G3X";
   if (context.records.length === 0) {
     context.warnings.push("BMC G3X structure was detected, but no valid IDX daily records were found.");

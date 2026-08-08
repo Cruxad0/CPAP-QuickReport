@@ -1641,6 +1641,20 @@ main {
   font-style: normal;
 }
 
+.review-metric-breakdown {
+  display: grid;
+  gap: 1px;
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid #d9e4ee;
+}
+
+.previous-review-metrics .review-metric .review-metric-breakdown em {
+  color: #294f73;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
 .review-detail-row {
   display: grid;
   grid-template-columns: 1.1fr 1.3fr 1fr;

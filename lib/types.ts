@@ -22,6 +22,13 @@ export interface ParseProgress {
 
 export interface ParsedRecord {
   date: Date;
+  /**
+   * Present only when the source exposes an actual therapy-session boundary.
+   * Daily summaries and dates inferred from folder names intentionally leave
+   * these unset so they cannot be mistaken for session-level evidence.
+   */
+  therapySessionStart?: Date;
+  therapySessionEnd?: Date;
   usageHours?: number;
   ahi?: number;
   residualApneas?: number;
@@ -107,6 +114,13 @@ export interface QuickReportMetrics {
   compliantDays: number;
   compliancePercent: number;
   avgUsageHours: number | null;
+  totalTherapyHours?: number | null;
+  expectedSleepTherapyHours?: number | null;
+  suspectedNapTherapyHours?: number | null;
+  unclassifiedTherapyHours?: number | null;
+  avgExpectedSleepTherapyHours?: number | null;
+  avgSuspectedNapTherapyHours?: number | null;
+  sleepTimingAnalysis?: SleepTimingAnalysis | null;
   avgAhi: number | null;
   avgResidualApneas: number | null;
   avgCentralApneas: number | null;
@@ -225,7 +239,36 @@ export interface PreparedQuickReportSource {
   latestClinicalDayIso: string;
   maxLookbackDays: number;
   therapySettingsPeriods?: TherapySettingsPeriod[];
+  therapySessions?: TherapyUsageSession[];
+  sleepTimingProfile?: SleepTimingProfile | null;
   dayBuckets: Record<string, PreparedDayBucket>;
+}
+
+export interface TherapyUsageSession {
+  startIso: string;
+  endIso: string;
+  sourceClinicalDayIso?: string;
+}
+
+export type SleepTimingConfidence = "high" | "moderate" | "low";
+
+export interface SleepTimingProfile {
+  anchorMinutes: number;
+  typicalDurationMinutes: number;
+  sleepWindowStartMinutes: number;
+  sleepWindowEndMinutes: number;
+  sleepDayBoundaryMinutes: number;
+  confidence: SleepTimingConfidence;
+  confidenceScore: number;
+  supportingDays: number;
+  observedDays: number;
+  scheduleDriftDetected: boolean;
+}
+
+export interface SleepTimingAnalysis extends SleepTimingProfile {
+  method: "inferred-session-timing" | "daily-total-fallback";
+  timingCoveragePercent: number;
+  cmsShortBreakMinutes: number;
 }
 
 export interface GeneratedPdfArtifact {

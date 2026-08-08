@@ -88,6 +88,7 @@ const LOCAL_RESVENT_BIPAP_ROOT = path.join(process.cwd(), "Card Samples", "Resve
 const RESVENT_THERAPY = path.join(process.cwd(), "Card Samples", "Resvent", "THERAPY");
 const LUNA2_ROOT = path.join(process.cwd(), "Card Samples", "Luna2");
 const LOCAL_LUNA2_DUPLICATE_ROOT = path.join(process.cwd(), "Card Samples", "Luna2 -2");
+const LOCAL_LUNA2_REAL_ROOT = path.join(process.cwd(), "Card Samples", "Luna2 -1");
 const LOCAL_LUNA2_SHORT_ROOT = path.join(process.cwd(), "Card Samples", "Luna 2 -3");
 const LOCAL_LUNA2_FOUR_ROOT = path.join(process.cwd(), "Card Samples", "Luna 2 - 4");
 const DREAMSTATION_ROOT = path.join(process.cwd(), "Card Samples", "Dreamstation");
@@ -110,6 +111,7 @@ const maybeLocalResventBipapTest = existsSync(LOCAL_RESVENT_BIPAP_ROOT) ? test :
 const maybeResventTherapyTest = existsSync(RESVENT_THERAPY) ? test : test.skip;
 const maybeLunaTest = existsSync(LUNA2_ROOT) ? test : test.skip;
 const maybeLocalLunaDuplicateTest = existsSync(LUNA2_ROOT) && existsSync(LOCAL_LUNA2_DUPLICATE_ROOT) ? test : test.skip;
+const maybeLocalLunaRealTest = existsSync(LOCAL_LUNA2_REAL_ROOT) ? test : test.skip;
 const maybeLocalLunaShortTest = existsSync(LOCAL_LUNA2_SHORT_ROOT) ? test : test.skip;
 const maybeLocalLunaFourTest = existsSync(LOCAL_LUNA2_FOUR_ROOT) ? test : test.skip;
 const maybeDreamstationTest = existsSync(DREAMSTATION_ROOT) ? test : test.skip;
@@ -139,7 +141,12 @@ maybeResventTest("Resvent sample card preserves APAP config and metrics", async 
   assert.equal(metrics.dateRangeStart, "March 22, 2026");
   assert.equal(metrics.daysWithData, 18);
   assert.equal(metrics.daysWithUsage, 18);
-  assert.equal(metrics.compliantDays, 18);
+  assert.equal(metrics.compliantDays, 17);
+  assert.equal(metrics.sleepTimingAnalysis?.method, "inferred-session-timing");
+  assert.equal(metrics.sleepTimingAnalysis?.anchorMinutes, 901);
+  assertApprox(metrics.totalTherapyHours ?? null, 156.662, 0.02, "total therapy");
+  assertApprox(metrics.expectedSleepTherapyHours ?? null, 137.737, 0.02, "expected sleep therapy");
+  assertApprox(metrics.suspectedNapTherapyHours ?? null, 18.925, 0.02, "suspected nap therapy");
   assertApprox(metrics.avgUsageHours, 8.7034, 0.02, "avg usage");
   assertApprox(metrics.avgAhi, 2.0682, 0.02, "avg AHI");
   assertApprox(metrics.avgLeak, 0, 0.02, "median leak");
@@ -153,7 +160,7 @@ maybeResventTest("Resvent 60-day report tracks the machine summary conventions",
   assert.equal(metrics.dateRangeStart, "March 22, 2026");
   assert.equal(metrics.daysWithData, 18);
   assert.equal(metrics.daysWithUsage, 18);
-  assert.equal(metrics.compliantDays, 18);
+  assert.equal(metrics.compliantDays, 17);
   assertApprox(metrics.avgUsageHours, 8.7034, 0.02, "avg usage");
   assertApprox(metrics.avgAhi, 2.0682, 0.02, "avg AHI");
   assertApprox(metrics.avgResidualApneas, 1.6979, 0.02, "avg residual apneas");
@@ -190,7 +197,11 @@ maybeLocalResventBipapTest("local Resvent Auto S30 sample preserves auto-bilevel
   assert.equal(prepared.latestClinicalDayIso, "2026-03-23");
   assert.equal(metrics.daysWithData, 75);
   assert.equal(metrics.daysWithUsage, 75);
-  assert.equal(metrics.compliantDays, 54);
+  assert.equal(metrics.compliantDays, 53);
+  assert.equal(metrics.sleepTimingAnalysis?.method, "inferred-session-timing");
+  assert.equal(metrics.sleepTimingAnalysis?.anchorMinutes, 807);
+  assertApprox(metrics.expectedSleepTherapyHours ?? null, 461.219, 0.02, "expected sleep therapy");
+  assertApprox(metrics.suspectedNapTherapyHours ?? null, 28.268, 0.02, "suspected nap therapy");
   assertApprox(metrics.avgUsageHours, 6.5265, 0.02, "avg usage");
   assertApprox(metrics.avgAhi, 9.3567, 0.02, "avg AHI");
   assertApprox(metrics.avgResidualApneas, 2.9030, 0.02, "avg residual apneas");
@@ -241,6 +252,18 @@ maybeLocalLunaDuplicateTest("local Luna II duplicate folder matches the primary 
   assertApprox(duplicate.metrics.avgUsageHours, root.metrics.avgUsageHours as number, 0.0001, "avg usage");
   assertApprox(duplicate.metrics.avgAhi, root.metrics.avgAhi as number, 0.0001, "avg AHI");
   assertApprox(duplicate.metrics.avgLeak, root.metrics.avgLeak as number, 0.0001, "avg leak");
+});
+
+maybeLocalLunaRealTest("legacy Luna II uses the safe daily-total fallback when exact mask-on intervals are unavailable", async () => {
+  const { prepared, metrics } = await loadFixture(LOCAL_LUNA2_REAL_ROOT);
+  assert.equal(prepared.selectedLoader, "Apex / BMC / Luna");
+  assert.equal(prepared.therapySessions?.length ?? 0, 0);
+  assert.equal(prepared.sleepTimingProfile, null);
+  assert.equal(metrics.compliantDays, 32);
+  assert.equal(metrics.sleepTimingAnalysis, null);
+  assert.equal(metrics.expectedSleepTherapyHours, null);
+  assert.equal(metrics.suspectedNapTherapyHours, null);
+  assert.ok(metrics.warnings.some((warning) => warning.includes("4+ usage uses device-reported daily totals")));
 });
 
 maybeLocalLunaShortTest("short Luna II card still generates an adjusted 7-day report", async () => {
@@ -311,6 +334,11 @@ maybeDreamstationTest("DreamStation sample card preserves active-root APAP setti
   assert.equal(metrics.daysWithData, 90);
   assert.equal(metrics.daysWithUsage, 90);
   assert.equal(metrics.compliantDays, 90);
+  assert.equal(metrics.sleepTimingAnalysis?.method, "inferred-session-timing");
+  assert.equal(metrics.sleepTimingAnalysis?.anchorMinutes, 264);
+  assert.ok((metrics.sleepTimingAnalysis?.timingCoveragePercent ?? 0) > 99.9);
+  assertApprox(metrics.expectedSleepTherapyHours ?? null, 771.02, 0.02, "expected sleep therapy");
+  assertApprox(metrics.suspectedNapTherapyHours ?? null, 5.235, 0.02, "suspected nap therapy");
   assertApprox(metrics.avgAhi, 0.6972, 0.01, "avg AHI");
   assertApprox(metrics.avgLeak, 27.8245, 0.1, "avg leak");
   assertApprox(metrics.maxLeak30m, 88.2707, 0.1, "30 min leak");
@@ -328,6 +356,11 @@ maybeLocalDreamstationTest("local DreamStation sample reports selected-window pr
   assert.equal(metrics.daysWithData, 90);
   assert.equal(metrics.daysWithUsage, 90);
   assert.equal(metrics.compliantDays, 90);
+  assert.equal(metrics.sleepTimingAnalysis?.method, "inferred-session-timing");
+  assert.equal(metrics.sleepTimingAnalysis?.anchorMinutes, 264);
+  assert.ok((metrics.sleepTimingAnalysis?.timingCoveragePercent ?? 0) > 99.9);
+  assertApprox(metrics.expectedSleepTherapyHours ?? null, 771.02, 0.02, "expected sleep therapy");
+  assertApprox(metrics.suspectedNapTherapyHours ?? null, 5.235, 0.02, "suspected nap therapy");
   assertApprox(metrics.avgUsageHours, 8.6251, 0.02, "avg usage");
   assertApprox(metrics.avgAhi, 3.1734, 0.02, "avg AHI");
   assertApprox(metrics.machine.pressureAvg ?? null, 11.4159, 0.02, "avg pressure");
@@ -345,6 +378,20 @@ maybeLocalDreamstationTest("local DreamStation sample reports selected-window pr
     ["Longest Sustained Leak", "71.3 L/min for 240.8 min", true],
     ["Max Leak", "88.3 L/min for 2.0 min", true]
   ]);
+
+  const sevenDayMetrics = buildQuickReportMetricsFromPreparedSource(prepared, {
+    patientName: "Fixture Patient",
+    dateOfBirthIso: "1970-01-01",
+    physicianName: "",
+    lookbackDays: 7,
+    windowEndClinicalDayIso: nextClinicalDayIso(prepared.latestClinicalDayIso)
+  });
+  assert.equal(sevenDayMetrics.sleepTimingAnalysis?.method, "inferred-session-timing");
+  assert.equal(sevenDayMetrics.sleepTimingAnalysis?.timingCoveragePercent, 100);
+  assert.equal(sevenDayMetrics.compliantDays, 7);
+  assertApprox(sevenDayMetrics.totalTherapyHours ?? null, 64.874, 0.02, "7-day total usage");
+  assertApprox(sevenDayMetrics.expectedSleepTherapyHours ?? null, 64.874, 0.02, "7-day expected sleep therapy");
+  assert.ok(!sevenDayMetrics.warnings.some((warning) => warning.includes("Session intervals exceeded")));
 });
 
 maybeLocalMixedDreamstationTest("DreamStation folder follows LAST.TXT to the active Philips therapy root", async () => {
@@ -357,13 +404,30 @@ maybeLocalMixedDreamstationTest("DreamStation folder follows LAST.TXT to the act
   assert.equal(prepared.latestClinicalDayIso, "2026-04-19");
   assert.equal(metrics.daysWithData, 90);
   assert.equal(metrics.daysWithUsage, 90);
-  assert.equal(metrics.compliantDays, 64);
+  assert.equal(metrics.compliantDays, 62);
+  assert.equal(metrics.sleepTimingAnalysis?.method, "inferred-session-timing");
+  assert.ok((metrics.suspectedNapTherapyHours ?? 0) > 3);
   assertApprox(metrics.avgUsageHours, 4.6313, 0.02, "avg usage");
   assertApprox(metrics.avgAhi, 0.2292, 0.02, "avg AHI");
   assertApprox(metrics.avgLeak, 29.2406, 0.1, "avg leak");
   assertApprox(metrics.leak95th, 52.5013, 0.1, "95th leak");
   assertApprox(metrics.maxLeak30m, 128.4689, 0.1, "30 min leak");
   assertApprox(metrics.maxLeak60m, 128.4689, 0.1, "60 min leak");
+
+  const sevenDayMetrics = buildQuickReportMetricsFromPreparedSource(prepared, {
+    patientName: "Fixture Patient",
+    dateOfBirthIso: "1970-01-01",
+    physicianName: "",
+    lookbackDays: 7,
+    windowEndClinicalDayIso: nextClinicalDayIso(prepared.latestClinicalDayIso)
+  });
+  assert.equal(sevenDayMetrics.sleepTimingAnalysis?.method, "inferred-session-timing");
+  assert.equal(sevenDayMetrics.sleepTimingAnalysis?.timingCoveragePercent, 100);
+  assert.equal(sevenDayMetrics.compliantDays, 6);
+  assertApprox(sevenDayMetrics.totalTherapyHours ?? null, 40.094, 0.02, "7-day total usage");
+  assertApprox(sevenDayMetrics.expectedSleepTherapyHours ?? null, 40.085, 0.02, "7-day expected sleep therapy");
+  assertApprox(sevenDayMetrics.suspectedNapTherapyHours ?? null, 0.009, 0.02, "7-day suspected nap therapy");
+  assert.ok(!sevenDayMetrics.warnings.some((warning) => warning.includes("Session intervals exceeded")));
 });
 
 maybeLocalRemstarSeTest("REMstar SE P-Series sample parses as PRS1 CPAP history", async () => {
@@ -467,6 +531,11 @@ maybeLocalAirSense10Test("local ResMed AirSense 10 CPAP sample reports selected-
   assert.equal(metrics.daysWithData, 90);
   assert.equal(metrics.daysWithUsage, 90);
   assert.equal(metrics.compliantDays, 89);
+  assert.equal(metrics.sleepTimingAnalysis?.method, "inferred-session-timing");
+  assert.equal(metrics.sleepTimingAnalysis?.anchorMinutes, 1344);
+  assert.ok((metrics.sleepTimingAnalysis?.timingCoveragePercent ?? 0) > 99);
+  assertApprox(metrics.totalTherapyHours ?? null, 661.133, 0.02, "total therapy");
+  assertApprox(metrics.unclassifiedTherapyHours ?? null, 2.033, 0.02, "unclassified therapy timing");
   assertApprox(metrics.avgUsageHours, 7.3459, 0.02, "avg usage");
   assertApprox(metrics.avgAhi, 0.75, 0.02, "avg AHI");
   assertApprox(metrics.avgReraIndex, 0.8074, 0.02, "avg RERA index");

@@ -242,6 +242,8 @@ function toRecord(accumulator: VremAccumulator): ParsedRecord | null {
 
   return {
     date,
+    therapySessionStart: date,
+    therapySessionEnd: new Date(accumulator.session.endMs),
     usageHours,
     ahi,
     residualApneas: accumulator.apneaCount / usageHours,
