@@ -10,10 +10,10 @@
         "selectedLoaderIncludes": "Resvent",
         "mode": "APAP",
         "deviceIncludes": "iBreeze 20A",
-        "pressureMin": "8.5 cmH2O",
-        "pressureMax": "11 cmH2O",
-        "minDaysWithData": 18,
-        "minDaysWithUsage": 18
+        "pressureMin": "8 cmH2O",
+        "pressureMax": "10 cmH2O",
+        "minDaysWithData": 90,
+        "minDaysWithUsage": 90
       }
     },
     {

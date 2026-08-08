@@ -1094,13 +1094,13 @@ export function QuickReportApp() {
               <div className="review-metric review-metric-usage">
                 <span className="review-metric-icon"><UiIcon name="clock" size={33} /></span>
                 <span>
-                  <small>Total Therapy Time</small>
+                  <small>Total Time</small>
                   <strong>{formatMetric(dashboardMetrics?.totalTherapyHours, " hrs")}</strong>
                   <em>{dashboardMetrics ? `${dashboardMetrics.daysInWindow}-day report range` : "selected report range"}</em>
                   {dashboardMetrics?.sleepTimingAnalysis ? (
                     <span className="review-metric-breakdown">
-                      <em>Expected sleep: {formatMetric(dashboardMetrics.expectedSleepTherapyHours, " hrs")}</em>
-                      <em>Suspected naps: {formatMetric(dashboardMetrics.suspectedNapTherapyHours, " hrs")}</em>
+                      <em>Total sleep / therapy time: {formatMetric(dashboardMetrics.expectedSleepTherapyHours, " hrs")}</em>
+                      <em>Total nap time: {formatMetric(dashboardMetrics.suspectedNapTherapyHours, " hrs")}</em>
                       {(dashboardMetrics.unclassifiedTherapyHours ?? 0) >= 0.05 ? (
                         <em>Unclassified timing: {formatMetric(dashboardMetrics.unclassifiedTherapyHours, " hrs")}</em>
                       ) : null}

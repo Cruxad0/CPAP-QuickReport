@@ -11,7 +11,8 @@ import {
   machineSettingRows,
   optionalEventMetricRows,
   shouldDisplayRespiratoryRate,
-  therapyPressureRows
+  therapyPressureRows,
+  usageSummaryRows
 } from "../lib/pdf";
 import type { QuickReportMetrics } from "../lib/types";
 
@@ -63,6 +64,36 @@ test("report metric formatter rounds summary values to tenths", () => {
   assert.equal(formatReportMetricValue(2.25), "2.3");
   assert.equal(formatReportMetricValue(117.4), "117.4");
   assert.equal(formatReportMetricValue(null), "Data point not available");
+});
+
+test("usage summary shows total time with sleep and nap subcategories", () => {
+  const report: QuickReportMetrics = {
+    ...reportWithMachine({ mode: "APAP" }),
+    totalTherapyHours: 10,
+    expectedSleepTherapyHours: 8,
+    suspectedNapTherapyHours: 2,
+    sleepTimingAnalysis: {
+      anchorMinutes: 900,
+      typicalDurationMinutes: 480,
+      sleepWindowStartMinutes: 900,
+      sleepWindowEndMinutes: 1380,
+      sleepDayBoundaryMinutes: 420,
+      confidence: "high",
+      confidenceScore: 0.9,
+      supportingDays: 7,
+      observedDays: 7,
+      scheduleDriftDetected: false,
+      method: "inferred-session-timing",
+      timingCoveragePercent: 100,
+      cmsShortBreakMinutes: 30
+    }
+  };
+
+  assert.deepEqual(usageSummaryRows(report).slice(3, 6), [
+    ["Total time", "10.0 h"],
+    ["  Total sleep / therapy time", "8.0 h"],
+    ["  Total nap time", "2.0 h"]
+  ]);
 });
 
 test("central apnea rows state when the card does not provide them", () => {

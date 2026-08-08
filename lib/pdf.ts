@@ -1062,37 +1062,37 @@ export function leakMetricRows(report: QuickReportMetrics): TableRow[] {
   ];
 }
 
-function buildTherapySummaryRows(report: QuickReportMetrics): TableRow[] {
+export function usageSummaryRows(report: QuickReportMetrics): TableRow[] {
   const belowMedicareCompliance = isBelowMedicareComplianceThreshold(report);
   const belowMedicareNightlyUse = isBelowMedicareNightlyUseThreshold(report);
   const timing = report.sleepTimingAnalysis;
   const complianceLabel = timing
     ? "CMS-correlated days (principal episode >= 4h)"
     : "Compliant days (daily total >= 4h)";
-  const usageRows: TableRow[] = [
+  return [
     ["Date range", `${report.dateRangeStart} to ${report.dateRangeEnd}`],
     ["Days with data", `${report.daysWithData} / ${report.daysInWindow}`],
     ["Usage days (% of range)", `${report.usageDaysPercent.toFixed(1)}%`],
     [
-      "Total therapy time",
+      "Total time",
       report.totalTherapyHours === null || report.totalTherapyHours === undefined
         ? NO_DATA_FALLBACK
         : `${formatReportMetricValue(report.totalTherapyHours)} h`
     ],
+    [
+      "  Total sleep / therapy time",
+      report.expectedSleepTherapyHours === null || report.expectedSleepTherapyHours === undefined
+        ? NO_DATA_FALLBACK
+        : `${formatReportMetricValue(report.expectedSleepTherapyHours)} h`
+    ],
+    [
+      "  Total nap time",
+      report.suspectedNapTherapyHours === null || report.suspectedNapTherapyHours === undefined
+        ? NO_DATA_FALLBACK
+        : `${formatReportMetricValue(report.suspectedNapTherapyHours)} h`
+    ],
     ...(timing
       ? [
-          [
-            "Expected principal-sleep therapy",
-            report.expectedSleepTherapyHours === null || report.expectedSleepTherapyHours === undefined
-              ? NO_DATA_FALLBACK
-              : `${formatReportMetricValue(report.expectedSleepTherapyHours)} h`
-          ] as TableRow,
-          [
-            "Suspected nap therapy",
-            report.suspectedNapTherapyHours === null || report.suspectedNapTherapyHours === undefined
-              ? NO_DATA_FALLBACK
-              : `${formatReportMetricValue(report.suspectedNapTherapyHours)} h`
-          ] as TableRow,
           ...((report.unclassifiedTherapyHours ?? 0) >= 0.05
             ? [["Unclassified session timing", `${formatReportMetricValue(report.unclassifiedTherapyHours)} h`] as TableRow]
             : []),
@@ -1106,6 +1106,10 @@ function buildTherapySummaryRows(report: QuickReportMetrics): TableRow[] {
     ["Compliance (% of range)", `${report.compliancePercent.toFixed(1)}%`, belowMedicareCompliance],
     ["Avg total therapy per used day", report.avgUsageHours === null ? NO_DATA_FALLBACK : `${formatReportMetricValue(report.avgUsageHours)} h`, belowMedicareNightlyUse]
   ];
+}
+
+function buildTherapySummaryRows(report: QuickReportMetrics): TableRow[] {
+  const usageRows = usageSummaryRows(report);
   const ventilationRows = bipapVentilationRows(report);
   const eventRows: TableRow[] = [
     ...ahiMetricRows(report),
