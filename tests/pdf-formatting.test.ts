@@ -91,9 +91,44 @@ test("usage summary shows total time with sleep and nap subcategories", () => {
 
   assert.deepEqual(usageSummaryRows(report).slice(3, 6), [
     ["Total time", "10.0 h"],
-    ["  Total sleep / therapy time", "8.0 h"],
-    ["  Total nap time", "2.0 h"]
+    ["  Total sleep / therapy time", "8.0 h (80.0%)"],
+    ["  Total nap time", "2.0 h (20.0%)"]
   ]);
+});
+
+test("sleep-window confidence rows carry the requested color tone", () => {
+  const timing = {
+    anchorMinutes: 900,
+    typicalDurationMinutes: 480,
+    sleepWindowStartMinutes: 900,
+    sleepWindowEndMinutes: 1380,
+    sleepDayBoundaryMinutes: 420,
+    confidenceScore: 0.9,
+    supportingDays: 7,
+    observedDays: 7,
+    scheduleDriftDetected: false,
+    method: "inferred-session-timing" as const,
+    timingCoveragePercent: 100,
+    cmsShortBreakMinutes: 30
+  };
+
+  for (const [confidence, tone] of [
+    ["high", "success"],
+    ["moderate", "warning"],
+    ["low", "danger"]
+  ] as const) {
+    const rows = usageSummaryRows({
+      ...reportWithMachine({ mode: "APAP" }),
+      sleepTimingAnalysis: { ...timing, confidence }
+    });
+    const confidenceRow = rows.find((row) => Array.isArray(row) && row[0] === "Sleep-window confidence");
+    assert.deepEqual(confidenceRow, [
+      "Sleep-window confidence",
+      `${confidence[0].toUpperCase()}${confidence.slice(1)} confidence`,
+      false,
+      tone
+    ]);
+  }
 });
 
 test("central apnea rows state when the card does not provide them", () => {
@@ -152,6 +187,23 @@ test("leak rows show sustained and max leak durations when available", () => {
       ["Max Leak", "120.0 L/min for 42.3 min", true]
     ]
   );
+});
+
+test("a Max Leak lasting under one minute is treated as an auto-off transient", () => {
+  const baseReport = {
+    ...reportWithMachine({ mode: "APAP" }),
+    maxLeak: 120
+  };
+
+  assert.deepEqual(leakMetricRows({ ...baseReport, maxLeakMinutes: 0.2 }).at(-1), [
+    "Max Leak",
+    "Transient under 1 min ignored"
+  ]);
+  assert.deepEqual(leakMetricRows({ ...baseReport, maxLeakMinutes: 1 }).at(-1), [
+    "Max Leak",
+    "120.0 L/min for 1.0 min",
+    true
+  ]);
 });
 
 test("BiPAP ventilation rows show Vt and RR metrics when available", () => {

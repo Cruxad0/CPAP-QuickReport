@@ -30,7 +30,11 @@ import { applyResMedCurrentSettingsJson, parseResMedFamily } from "@/lib/parsers
 import { parseSleepStyleFamily } from "@/lib/parsers/sleepstyle";
 import { runTextFamilyParser } from "@/lib/parsers/text-family-runner";
 import type { FamilyParserDeps } from "@/lib/parsers/text-family-types";
-import { createCalendarDateNoonAtUtcOffset, extractExplicitUtcOffsetMinutes } from "@/lib/timezone";
+import {
+  createCalendarDateNoonAtUtcOffset,
+  extractExplicitUtcOffsetMinutes,
+  normalizeUtcOffsetMinutes
+} from "@/lib/timezone";
 import {
   buildSleepTimingAnalysis,
   classifyTherapySessions,
@@ -111,6 +115,65 @@ type ReportSummaryAggregationPolicy = {
 const LARGE_LEAK_THRESHOLD_LPM = 30;
 const MIN_SESSION_TIMING_COVERAGE_PERCENT = 70;
 const MAX_SESSION_TIMING_COVERAGE_PERCENT = 105;
+const RESVENT_DEVICE_EPOCH_OFFSET_MINUTES = 8 * 60;
+
+type ResventTimedRecord = {
+  record: ParsedRecord;
+  sourceFile: SourceFile;
+};
+
+function localWallClockTimestamp(timestampMs: number): number {
+  const date = new Date(timestampMs);
+  const utcOffsetMinutes = -date.getTimezoneOffset();
+  return timestampMs + utcOffsetMinutes * 60 * 1000;
+}
+
+function resolveResventSessionClockOffset(entries: ResventTimedRecord[]): {
+  offsetMinutes: number;
+  verifiedFileCount: number;
+} {
+  const candidates: number[] = [];
+  for (const entry of entries) {
+    const end = entry.record.therapySessionEnd;
+    const lastModifiedMs = entry.sourceFile.lastModifiedMs;
+    if (!end || typeof lastModifiedMs !== "number" || !Number.isFinite(lastModifiedMs)) continue;
+
+    const rawOffsetMinutes = (localWallClockTimestamp(lastModifiedMs) - end.getTime()) / 60_000;
+    const roundedOffsetMinutes = Math.round(rawOffsetMinutes / 15) * 15;
+    if (
+      Math.abs(rawOffsetMinutes - roundedOffsetMinutes) <= 2 &&
+      Math.abs(roundedOffsetMinutes) <= 14 * 60
+    ) {
+      candidates.push(roundedOffsetMinutes);
+    }
+  }
+
+  const counts = new Map<number, number>();
+  for (const candidate of candidates) {
+    counts.set(candidate, (counts.get(candidate) ?? 0) + 1);
+  }
+  const strongest = [...counts.entries()].sort((a, b) => b[1] - a[1] || Math.abs(a[0]) - Math.abs(b[0]))[0];
+  const requiredSupport = Math.max(2, Math.ceil(candidates.length * 0.6));
+  if (strongest && strongest[1] >= requiredSupport) {
+    return { offsetMinutes: strongest[0], verifiedFileCount: strongest[1] };
+  }
+
+  return {
+    offsetMinutes: RESVENT_DEVICE_EPOCH_OFFSET_MINUTES,
+    verifiedFileCount: 0
+  };
+}
+
+function applySessionClockOffset(record: ParsedRecord, offsetMinutes: number) {
+  if (offsetMinutes === 0) return;
+  const offsetMs = offsetMinutes * 60_000;
+  if (record.therapySessionStart) {
+    record.therapySessionStart = new Date(record.therapySessionStart.getTime() + offsetMs);
+  }
+  if (record.therapySessionEnd) {
+    record.therapySessionEnd = new Date(record.therapySessionEnd.getTime() + offsetMs);
+  }
+}
 
 const RESVENT_MODE_FROM_FILE = new Map<string, string>([
   ["N_CPAP", "CPAP"],
@@ -3011,6 +3074,10 @@ async function prepareQuickReportSourceInternal(request: PrepareQuickReportSourc
     throw new Error(`${selectedFamily.label} data is not loadable in this webapp. Only supported CPAP/NIV device layouts are accepted.`);
   }
   sourceTimeZoneOffsetMinutes = await extractSourceTimeZoneOffsetMinutes(selectedFamily, meta);
+  if (sourceTimeZoneOffsetMinutes === null) {
+    sourceTimeZoneOffsetMinutes =
+      normalizeUtcOffsetMinutes(request.userTimeZoneOffsetMinutes ?? -new Date().getTimezoneOffset()) ?? null;
+  }
 
   const hasResventStructure =
     selectedFamily.id === "resvent" &&
@@ -3041,6 +3108,7 @@ async function prepareQuickReportSourceInternal(request: PrepareQuickReportSourc
       let tctrlVentMode: string | null = null;
       let latestStatVentMode: { raw: string; clinicalDayIso: string; normalizedPath: string } | null = null;
       const appliedResventConfigBases = new Set<string>();
+      const resventTimedRecords: ResventTimedRecord[] = [];
 
       const readResventConfigIntoMergedState = async (configFile: SourceMeta) => {
         const baseName = configFile.baseName.toUpperCase();
@@ -3146,6 +3214,9 @@ async function prepareQuickReportSourceInternal(request: PrepareQuickReportSourc
               parsed.therapySessionStart = undefined;
               parsed.therapySessionEnd = undefined;
             }
+            if (parsed.therapySessionStart && parsed.therapySessionEnd) {
+              resventTimedRecords.push({ record: parsed, sourceFile: statFile.file });
+            }
             records.push(parsed);
           }
         } catch {
@@ -3171,11 +3242,13 @@ async function prepareQuickReportSourceInternal(request: PrepareQuickReportSourc
           if (statFile.recordDate === null) continue;
           const parsed = parseResventStatFromBytes(bytes, statFile.recordDate);
           if (!parsed?.therapySessionStart || !parsed.therapySessionEnd) continue;
-          records.push({
+          const timingRecord: ParsedRecord = {
             date: parsed.date,
             therapySessionStart: parsed.therapySessionStart,
             therapySessionEnd: parsed.therapySessionEnd
-          });
+          };
+          resventTimedRecords.push({ record: timingRecord, sourceFile: statFile.file });
+          records.push(timingRecord);
         } catch {
           warnings.push(`Could not read session timing from ${statFile.normalizedPath}`);
         }
@@ -3183,6 +3256,21 @@ async function prepareQuickReportSourceInternal(request: PrepareQuickReportSourc
         if (processed % 20 === 0) {
           await new Promise((resolve) => setTimeout(resolve, 0));
         }
+      }
+
+      if (resventTimedRecords.length > 0) {
+        const clock = resolveResventSessionClockOffset(resventTimedRecords);
+        for (const entry of resventTimedRecords) {
+          applySessionClockOffset(entry.record, clock.offsetMinutes);
+        }
+        const direction = clock.offsetMinutes >= 0 ? "+" : "-";
+        const absoluteMinutes = Math.abs(clock.offsetMinutes);
+        const adjustment = `${direction}${Math.floor(absoluteMinutes / 60)}:${String(absoluteMinutes % 60).padStart(2, "0")}`;
+        warnings.push(
+          clock.verifiedFileCount > 0
+            ? `Resvent session clock normalized by ${adjustment} from the device epoch to machine/computer local wall time (verified against ${clock.verifiedFileCount} STAT file timestamps).`
+            : `Resvent session clock normalized by ${adjustment} using the device format's local-wall-clock convention; STAT file timestamps were unavailable for independent verification.`
+        );
       }
 
       const verifiedResventVentMode = latestStatVentMode?.raw ?? tctrlVentMode;

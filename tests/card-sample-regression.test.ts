@@ -4,7 +4,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { buildQuickReportMetricsFromPreparedSource, prepareQuickReportSource } from "../lib/parser";
-import { leakMetricRows } from "../lib/pdf";
+import { leakMetricRows, usageSummaryRows } from "../lib/pdf";
 import { buildReportArtifactsFromPreparedSource } from "../lib/report-orchestrator";
 import {
   filterSourceFilesToRecentWindow,
@@ -143,7 +143,7 @@ maybeResventTest("Resvent sample card preserves APAP config and metrics", async 
   assert.equal(metrics.daysWithUsage, 90);
   assert.equal(metrics.compliantDays, 89);
   assert.equal(metrics.sleepTimingAnalysis?.method, "inferred-session-timing");
-  assert.equal(metrics.sleepTimingAnalysis?.anchorMinutes, 945);
+  assert.equal(metrics.sleepTimingAnalysis?.anchorMinutes, 1421);
   assertApprox(metrics.totalTherapyHours ?? null, 739.479, 0.02, "total therapy");
   assertApprox(metrics.expectedSleepTherapyHours ?? null, 679.766, 0.02, "expected sleep therapy");
   assertApprox(metrics.suspectedNapTherapyHours ?? null, 59.712, 0.02, "suspected nap therapy");
@@ -152,6 +152,17 @@ maybeResventTest("Resvent sample card preserves APAP config and metrics", async 
   assertApprox(metrics.avgLeak, 0, 0.02, "median leak");
   assertApprox(metrics.maxLeak30m, 17.2049, 0.05, "30 min leak");
   assertApprox(metrics.maxLeak60m, 120, 0.05, "60 min leak");
+  assertApprox(metrics.maxLeakMinutes ?? null, 0.2, 0.01, "max leak minutes");
+  assert.deepEqual(
+    usageSummaryRows(metrics).filter(
+      (row) => Array.isArray(row) && ["  Total sleep / therapy time", "  Total nap time"].includes(row[0])
+    ),
+    [
+      ["  Total sleep / therapy time", "679.8 h (91.9%)"],
+      ["  Total nap time", "59.7 h (8.1%)"]
+    ]
+  );
+  assert.deepEqual(leakMetricRows(metrics).at(-1), ["Max Leak", "Transient under 1 min ignored"]);
   assert.ok(!metrics.warnings.some((warning) => warning.includes("Therapy settings changed within the 90-day report window")));
 });
 
@@ -162,7 +173,7 @@ maybeResventTest("Resvent 60-day report tracks the machine summary conventions",
   assert.equal(metrics.daysWithUsage, 60);
   assert.equal(metrics.compliantDays, 60);
   assert.equal(metrics.sleepTimingAnalysis?.method, "inferred-session-timing");
-  assert.equal(metrics.sleepTimingAnalysis?.anchorMinutes, 941);
+  assert.equal(metrics.sleepTimingAnalysis?.anchorMinutes, 1414);
   assertApprox(metrics.totalTherapyHours ?? null, 497.543, 0.02, "total therapy");
   assertApprox(metrics.expectedSleepTherapyHours ?? null, 451.393, 0.02, "expected sleep therapy");
   assertApprox(metrics.suspectedNapTherapyHours ?? null, 46.149, 0.02, "suspected nap therapy");
@@ -204,7 +215,7 @@ maybeLocalResventBipapTest("local Resvent Auto S30 sample preserves auto-bilevel
   assert.equal(metrics.daysWithUsage, 75);
   assert.equal(metrics.compliantDays, 53);
   assert.equal(metrics.sleepTimingAnalysis?.method, "inferred-session-timing");
-  assert.equal(metrics.sleepTimingAnalysis?.anchorMinutes, 807);
+  assert.equal(metrics.sleepTimingAnalysis?.anchorMinutes, 1285);
   assertApprox(metrics.expectedSleepTherapyHours ?? null, 461.219, 0.02, "expected sleep therapy");
   assertApprox(metrics.suspectedNapTherapyHours ?? null, 28.268, 0.02, "suspected nap therapy");
   assertApprox(metrics.avgUsageHours, 6.5265, 0.02, "avg usage");

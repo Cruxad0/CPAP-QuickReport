@@ -54,21 +54,22 @@ function nextClinicalDayIso(isoDay: string): string {
   return new Date(new Date(`${isoDay}T00:00:00Z`).getTime() + 24 * 3600 * 1000).toISOString().slice(0, 10);
 }
 
-function createSourceFile(path: string, bytes: Uint8Array): SourceFile {
+function createSourceFile(path: string, bytes: Uint8Array, lastModifiedMs?: number): SourceFile {
   return {
     name: path.split("/").pop() ?? path,
     path,
     size: bytes.byteLength,
+    lastModifiedMs,
     readText: async () => new TextDecoder("utf-8", { fatal: false }).decode(bytes),
     readBytes: async () => bytes
   };
 }
 
-function createResventTextFile(path: string, text: string): SourceFile {
+function createResventTextFile(path: string, text: string, lastModifiedMs?: number): SourceFile {
   const payload = new TextEncoder().encode(text);
   const bytes = new Uint8Array(payload.length + 4);
   bytes.set(payload, 4);
-  return createSourceFile(path, bytes);
+  return createSourceFile(path, bytes, lastModifiedMs);
 }
 
 async function loadSyntheticResventFixture(files: SourceFile[]) {
@@ -115,6 +116,43 @@ test("report finalization preserves explicit parser-reported mode labels", () =>
   assert.equal(metrics.machine.mode, "Auto S30");
   assert.equal(metrics.daysWithData, 1);
   assert.equal(metrics.daysWithUsage, 1);
+});
+
+test("Resvent UTC+8 device epochs are normalized to the computer-local machine clock", async () => {
+  const files: SourceFile[] = [
+    createResventTextFile("THERAPY/CONFIG/SYSCFG", ["models=iBreeze 20A", "sn=GB-2B500568"].join("\n")),
+    createResventTextFile("THERAPY/CONFIG/TCTRL", "VentMode=3\n"),
+    createResventTextFile("THERAPY/CONFIG/N_APAP", ["PMin=800", "PMax=1000"].join("\n"))
+  ];
+
+  for (let day = 1; day <= 4; day += 1) {
+    const rawDeviceEpochSeconds = Date.UTC(2026, 7, day, 15, 0, 0) / 1000;
+    const machineLocalEnd = new Date(2026, 7, day + 1, 6, 0, 0).getTime();
+    files.push(
+      createResventTextFile(
+        `THERAPY/RECORD/202608/${String(day).padStart(2, "0")}/STAT01`,
+        ["VentMode=3", `secStart=${rawDeviceEpochSeconds}`, "secUsed=25200", "cntAI=1", "cntHI=1"].join("\n"),
+        machineLocalEnd
+      )
+    );
+  }
+
+  const prepared = await prepareQuickReportSource({
+    sourceKind: "folder",
+    files,
+    lookbackDays: 30,
+    userTimeZoneOffsetMinutes: -240
+  });
+
+  assert.equal(prepared.sourceTimeZoneOffsetMinutes, -240);
+  assert.equal(prepared.sleepTimingProfile?.sleepWindowStartMinutes, 23 * 60);
+  assert.equal(prepared.sleepTimingProfile?.sleepWindowEndMinutes, 6 * 60);
+  assert.equal(prepared.therapySessions?.[0]?.startIso, "2026-08-01T23:00:00.000Z");
+  assert.ok(
+    prepared.warnings.some((warning) =>
+      warning.includes("normalized by +8:00 from the device epoch to machine/computer local wall time")
+    )
+  );
 });
 
 test("Resvent latest STAT VentMode confirms active Auto S30 bilevel mode", async () => {

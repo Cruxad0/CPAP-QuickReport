@@ -52,6 +52,8 @@ type PdfTheme = {
   border: ThemeColor;
   rowAlt: ThemeColor;
   rowBase: ThemeColor;
+  success: ThemeColor;
+  warning: ThemeColor;
   danger: ThemeColor;
   onPrimary: ThemeColor;
 };
@@ -69,12 +71,26 @@ const DEFAULT_PDF_THEME: PdfTheme = {
   border: themeColor(0.82, 0.88, 0.93),
   rowAlt: themeColor(0.965, 0.98, 0.99),
   rowBase: themeColor(1, 1, 1),
+  success: themeColor(0.09, 0.4, 0.2),
+  warning: themeColor(0.52, 0.3, 0.03),
   danger: themeColor(0.73, 0.12, 0.12),
   onPrimary: themeColor(1, 1, 1)
 };
 
 function pdfColor(rgbFn: PdfLibModule["rgb"], color: ThemeColor) {
   return rgbFn(color.r, color.g, color.b);
+}
+
+function tableValueColor(
+  rgbFn: PdfLibModule["rgb"],
+  theme: PdfTheme,
+  emphasize: boolean | undefined,
+  tone: TableValueTone | undefined
+) {
+  if (tone === "success") return pdfColor(rgbFn, theme.success);
+  if (tone === "warning") return pdfColor(rgbFn, theme.warning);
+  if (tone === "danger" || emphasize) return pdfColor(rgbFn, theme.danger);
+  return pdfColor(rgbFn, theme.body);
 }
 
 function clamp01(value: number): number {
@@ -269,6 +285,8 @@ function buildPdfThemeFromColor(baseColor: ThemeColor | null): PdfTheme {
     border,
     rowAlt,
     rowBase: themeColor(1, 1, 1),
+    success: DEFAULT_PDF_THEME.success,
+    warning: DEFAULT_PDF_THEME.warning,
     danger: DEFAULT_PDF_THEME.danger,
     onPrimary
   };
@@ -573,7 +591,8 @@ function drawBottomFooterBlock(
   });
 }
 
-type TableDataRow = [string, string, boolean?];
+type TableValueTone = "success" | "warning" | "danger";
+type TableDataRow = [string, string, boolean?, TableValueTone?];
 type TableGroupRow = { kind: "group"; label: string };
 type TableRow = TableDataRow | TableGroupRow;
 type CompactTableStyle = {
@@ -1044,6 +1063,21 @@ function leakRow(label: string, value: number | null | undefined, minutes?: numb
   return metricRow(label, leakMetricText(value, minutes), value > 30);
 }
 
+function maxLeakRow(report: QuickReportMetrics): TableRow {
+  if (
+    typeof report.maxLeak === "number" &&
+    Number.isFinite(report.maxLeak) &&
+    typeof report.maxLeakMinutes === "number" &&
+    Number.isFinite(report.maxLeakMinutes) &&
+    report.maxLeakMinutes >= 0 &&
+    report.maxLeakMinutes < 1
+  ) {
+    return ["Max Leak", "Transient under 1 min ignored"];
+  }
+
+  return leakRow("Max Leak", report.maxLeak, report.maxLeakMinutes);
+}
+
 function primaryLeakLabel(report: QuickReportMetrics): string {
   if (/^resvent\s*\/\s*hoffrichter$/i.test(report.selectedLoader.trim())) return "Median Leak";
   return "Avg Leak";
@@ -1058,8 +1092,32 @@ export function leakMetricRows(report: QuickReportMetrics): TableRow[] {
     leakRow(primaryLeakLabel(report), report.avgLeak),
     leakRow("95th Leak", report.leak95th),
     leakRow("Longest Sustained Leak", report.sustainedLeakMax ?? report.maxLeak60m, report.sustainedLeakMinutes),
-    leakRow("Max Leak", report.maxLeak, report.maxLeakMinutes)
+    maxLeakRow(report)
   ];
+}
+
+function therapyShareText(
+  value: number | null | undefined,
+  totalTherapyHours: number | null | undefined
+): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return NO_DATA_FALLBACK;
+  const valueText = `${formatReportMetricValue(value)} h`;
+  if (
+    totalTherapyHours === null ||
+    totalTherapyHours === undefined ||
+    !Number.isFinite(totalTherapyHours) ||
+    totalTherapyHours <= 0
+  ) {
+    return valueText;
+  }
+
+  return `${valueText} (${(value / totalTherapyHours * 100).toFixed(1)}%)`;
+}
+
+function confidenceTone(confidence: "high" | "moderate" | "low"): TableValueTone {
+  if (confidence === "high") return "success";
+  if (confidence === "moderate") return "warning";
+  return "danger";
 }
 
 export function usageSummaryRows(report: QuickReportMetrics): TableRow[] {
@@ -1081,15 +1139,11 @@ export function usageSummaryRows(report: QuickReportMetrics): TableRow[] {
     ],
     [
       "  Total sleep / therapy time",
-      report.expectedSleepTherapyHours === null || report.expectedSleepTherapyHours === undefined
-        ? NO_DATA_FALLBACK
-        : `${formatReportMetricValue(report.expectedSleepTherapyHours)} h`
+      therapyShareText(report.expectedSleepTherapyHours, report.totalTherapyHours)
     ],
     [
       "  Total nap time",
-      report.suspectedNapTherapyHours === null || report.suspectedNapTherapyHours === undefined
-        ? NO_DATA_FALLBACK
-        : `${formatReportMetricValue(report.suspectedNapTherapyHours)} h`
+      therapyShareText(report.suspectedNapTherapyHours, report.totalTherapyHours)
     ],
     ...(timing
       ? [
@@ -1097,8 +1151,14 @@ export function usageSummaryRows(report: QuickReportMetrics): TableRow[] {
             ? [["Unclassified session timing", `${formatReportMetricValue(report.unclassifiedTherapyHours)} h`] as TableRow]
             : []),
           [
-            "Inferred principal sleep window",
-            `${formatClockMinutes(timing.sleepWindowStartMinutes)} to ${formatClockMinutes(timing.sleepWindowEndMinutes)} (${timing.confidence} confidence)`
+            "Inferred sleep window (machine/local time)",
+            `${formatClockMinutes(timing.sleepWindowStartMinutes)} to ${formatClockMinutes(timing.sleepWindowEndMinutes)}`
+          ] as TableRow,
+          [
+            "Sleep-window confidence",
+            `${timing.confidence[0].toUpperCase()}${timing.confidence.slice(1)} confidence`,
+            false,
+            confidenceTone(timing.confidence)
           ] as TableRow
         ]
       : []),
@@ -1231,7 +1291,7 @@ function drawCompactTableAt(
       return;
     }
 
-    const [label, value, emphasize] = row;
+    const [label, value, emphasize, tone] = row;
     const labelLines = splitLines(label, fontBold, style.bodyFontSize, leftW - style.insetX * 2);
     const valueLines = splitLines(value, fontRegular, style.bodyFontSize, rightW - style.insetX * 2);
     const lineCount = Math.max(labelLines.length, valueLines.length);
@@ -1266,7 +1326,7 @@ function drawCompactTableAt(
         y: valueStartY - i * style.lineHeight,
         size: style.bodyFontSize,
         font: fontRegular,
-        color: emphasize ? pdfColor(rgbFn, theme.danger) : pdfColor(rgbFn, theme.body)
+        color: tableValueColor(rgbFn, theme, emphasize, tone)
       });
     });
 
@@ -1420,7 +1480,7 @@ function drawCompactTableFlow(
       continue;
     }
 
-    const [label, value, emphasize] = row;
+    const [label, value, emphasize, tone] = row;
     const labelLines = splitLines(label, fontBold, style.bodyFontSize, leftW - style.insetX * 2);
     const valueLines = splitLines(value, fontRegular, style.bodyFontSize, rightW - style.insetX * 2);
     const fill = dataRowIndex % 2 === 0 ? pdfColor(rgbFn, theme.rowAlt) : pdfColor(rgbFn, theme.rowBase);
@@ -1453,7 +1513,7 @@ function drawCompactTableFlow(
         y: valueStartY - i * style.lineHeight,
         size: style.bodyFontSize,
         font: fontRegular,
-        color: emphasize ? pdfColor(rgbFn, theme.danger) : pdfColor(rgbFn, theme.body)
+        color: tableValueColor(rgbFn, theme, emphasize, tone)
       });
     });
 
@@ -1538,7 +1598,7 @@ function drawTable(
       return;
     }
 
-    const [label, value, emphasize] = row;
+    const [label, value, emphasize, tone] = row;
     const labelLines = splitLines(label, fontBold, 10, leftW - insetX * 2);
     const valueLines = splitLines(value, fontRegular, 10, rightW - insetX * 2);
     const lineCount = Math.max(labelLines.length, valueLines.length);
@@ -1575,7 +1635,7 @@ function drawTable(
         y: valueStartY - i * lineHeight,
         size: 10,
         font: fontRegular,
-        color: emphasize ? pdfColor(rgbFn, theme.danger) : pdfColor(rgbFn, theme.body)
+        color: tableValueColor(rgbFn, theme, emphasize, tone)
       });
     });
 

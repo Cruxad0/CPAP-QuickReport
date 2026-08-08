@@ -13,6 +13,7 @@ export type ReportWorkerRequest =
       type: "load-folder-start";
       importLookbackDays: number;
       parseLookbackDays: number;
+      userTimeZoneOffsetMinutes: number;
       hasOlderDatedData?: boolean;
     }
   | {
@@ -21,6 +22,7 @@ export type ReportWorkerRequest =
       rootHandle: FileSystemDirectoryHandle;
       importLookbackDays: number;
       parseLookbackDays: number;
+      userTimeZoneOffsetMinutes: number;
     }
   | {
       requestId: number;

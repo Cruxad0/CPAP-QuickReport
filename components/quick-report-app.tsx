@@ -134,6 +134,24 @@ function formatMetric(value: number | null | undefined, suffix = ""): string {
   return typeof value === "number" && Number.isFinite(value) ? `${Number(value.toFixed(1))}${suffix}` : "Not available";
 }
 
+function formatTherapyShare(
+  value: number | null | undefined,
+  totalTherapyHours: number | null | undefined
+): string {
+  const valueText = formatMetric(value, " hrs");
+  if (
+    typeof value !== "number" ||
+    !Number.isFinite(value) ||
+    typeof totalTherapyHours !== "number" ||
+    !Number.isFinite(totalTherapyHours) ||
+    totalTherapyHours <= 0
+  ) {
+    return valueText;
+  }
+
+  return `${valueText} (${(value / totalTherapyHours * 100).toFixed(1)}%)`;
+}
+
 type UiIconName =
   | "activity"
   | "calendar"
@@ -1099,8 +1117,8 @@ export function QuickReportApp() {
                   <em>{dashboardMetrics ? `${dashboardMetrics.daysInWindow}-day report range` : "selected report range"}</em>
                   {dashboardMetrics?.sleepTimingAnalysis ? (
                     <span className="review-metric-breakdown">
-                      <em>Total sleep / therapy time: {formatMetric(dashboardMetrics.expectedSleepTherapyHours, " hrs")}</em>
-                      <em>Total nap time: {formatMetric(dashboardMetrics.suspectedNapTherapyHours, " hrs")}</em>
+                      <em>Total sleep / therapy time: {formatTherapyShare(dashboardMetrics.expectedSleepTherapyHours, dashboardMetrics.totalTherapyHours)}</em>
+                      <em>Total nap time: {formatTherapyShare(dashboardMetrics.suspectedNapTherapyHours, dashboardMetrics.totalTherapyHours)}</em>
                       {(dashboardMetrics.unclassifiedTherapyHours ?? 0) >= 0.05 ? (
                         <em>Unclassified timing: {formatMetric(dashboardMetrics.unclassifiedTherapyHours, " hrs")}</em>
                       ) : null}
@@ -1118,7 +1136,10 @@ export function QuickReportApp() {
                   <em>{dashboardMetrics?.sleepTimingAnalysis ? "principal sleep episode ≥ 4 hrs" : "daily total ≥ 4 hrs (fallback)"}</em>
                   {dashboardMetrics?.sleepTimingAnalysis ? (
                     <em>
-                      Window: {formatClockMinutes(dashboardMetrics.sleepTimingAnalysis.sleepWindowStartMinutes)}–{formatClockMinutes(dashboardMetrics.sleepTimingAnalysis.sleepWindowEndMinutes)} · {dashboardMetrics.sleepTimingAnalysis.confidence} confidence
+                      Window (machine/local time): {formatClockMinutes(dashboardMetrics.sleepTimingAnalysis.sleepWindowStartMinutes)}–{formatClockMinutes(dashboardMetrics.sleepTimingAnalysis.sleepWindowEndMinutes)} ·{" "}
+                      <span className={`sleep-confidence sleep-confidence-${dashboardMetrics.sleepTimingAnalysis.confidence}`}>
+                        {dashboardMetrics.sleepTimingAnalysis.confidence} confidence
+                      </span>
                     </em>
                   ) : null}
                 </span>

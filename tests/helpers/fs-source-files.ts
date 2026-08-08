@@ -7,6 +7,7 @@ type WalkEntry = {
   absolutePath: string;
   relativePath: string;
   size: number;
+  lastModifiedMs: number;
 };
 
 async function walkDirectory(rootPath: string, currentPath: string, out: WalkEntry[]): Promise<void> {
@@ -27,7 +28,8 @@ async function walkDirectory(rootPath: string, currentPath: string, out: WalkEnt
     out.push({
       absolutePath,
       relativePath,
-      size: stats.size
+      size: stats.size,
+      lastModifiedMs: stats.mtimeMs
     });
   }
 }
@@ -57,6 +59,7 @@ export async function createSourceFilesFromDirectory(rootPath: string): Promise<
       name: path.basename(entry.absolutePath),
       path: entry.relativePath,
       size: entry.size,
+      lastModifiedMs: entry.lastModifiedMs,
       readBytes: loadBytes,
       readText: async () => {
         if (!textPromise) {

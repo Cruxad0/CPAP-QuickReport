@@ -452,6 +452,7 @@ function createCachedSourceFile(
     name: string;
     path: string;
     size: number;
+    lastModifiedMs?: number;
     loadText: () => Promise<string>;
     loadBytes: () => Promise<Uint8Array>;
   }
@@ -463,6 +464,7 @@ function createCachedSourceFile(
     name: params.name,
     path: params.path,
     size: params.size,
+    lastModifiedMs: params.lastModifiedMs,
     readText: async () => {
       if (!textPromise) textPromise = params.loadText();
       return await textPromise;
@@ -508,6 +510,7 @@ export async function createCachedSourceFilesFromFolder(
           name: file.name,
           path: entry.relativePath || file.name,
           size: file.size,
+          lastModifiedMs: file.lastModified,
           loadText: async () => await file.text(),
           loadBytes: async () => new Uint8Array(await file.arrayBuffer())
         })

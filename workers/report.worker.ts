@@ -26,7 +26,13 @@ let preparedSource: PreparedQuickReportSource | null = null;
 let loadedSourceSummaries: Array<ReturnType<typeof createSourceFileSummary>> = [];
 const folderLoadState = new Map<
   number,
-  { files: FolderSourceEntry[]; importLookbackDays: number; parseLookbackDays: number; hasOlderDatedData: boolean }
+  {
+    files: FolderSourceEntry[];
+    importLookbackDays: number;
+    parseLookbackDays: number;
+    userTimeZoneOffsetMinutes: number;
+    hasOlderDatedData: boolean;
+  }
 >();
 const WORKER_DIRECTORY_ENUMERATION_BATCH_SIZE = 64;
 
@@ -139,7 +145,8 @@ async function loadFolderFromDirectoryHandle(
   requestId: number,
   rootHandle: WorkerDirectoryHandle,
   importLookbackDays: number,
-  parseLookbackDays: number
+  parseLookbackDays: number,
+  userTimeZoneOffsetMinutes: number
 ) {
   emitProgress(requestId, "scan", "Loading SD-CARD...", 1);
   const enumeration = await enumerateFolderHandle(requestId, rootHandle, importLookbackDays);
@@ -158,6 +165,7 @@ async function loadFolderFromDirectoryHandle(
       await createCachedSourceFilesFromFolder(filteredEntries.entries, (progress) => emitProgress(requestId, progress.phase, progress.detail, progress.percent)),
     importLookbackDays,
     parseLookbackDays,
+    userTimeZoneOffsetMinutes,
     enumeration.hasOlderDatedData || filteredEntries.hasOlderDatedData
   );
 }
@@ -167,6 +175,7 @@ async function loadSource(
   loader: () => Promise<import("@/lib/types").SourceFile[]>,
   importLookbackDays: number,
   parseLookbackDays: number,
+  userTimeZoneOffsetMinutes: number,
   knownOlderDatedData = false
 ) {
   emitProgress(requestId, "scan", "Loading SD folder...", 4);
@@ -181,6 +190,7 @@ async function loadSource(
     sourceKind: "folder",
     files: filtered.files,
     lookbackDays: parseLookbackDays,
+    userTimeZoneOffsetMinutes,
     onProgress: (progress) => {
       const mappedPercent = Math.min(96, 54 + Math.round((Math.max(0, Math.min(100, progress.percent)) / 100) * 42));
       emitProgress(requestId, progress.phase, progress.detail, mappedPercent);
@@ -232,6 +242,7 @@ self.onmessage = async (event: MessageEvent<ReportWorkerRequest>) => {
         files: [],
         importLookbackDays: request.importLookbackDays,
         parseLookbackDays: request.parseLookbackDays,
+        userTimeZoneOffsetMinutes: request.userTimeZoneOffsetMinutes,
         hasOlderDatedData: request.hasOlderDatedData === true
       });
       emitProgress(request.requestId, "scan", "Receiving SD-CARD selection...", 1);
@@ -245,7 +256,8 @@ self.onmessage = async (event: MessageEvent<ReportWorkerRequest>) => {
         request.requestId,
         request.rootHandle as WorkerDirectoryHandle,
         request.importLookbackDays,
-        request.parseLookbackDays
+        request.parseLookbackDays,
+        request.userTimeZoneOffsetMinutes
       );
       return;
     }
@@ -269,6 +281,7 @@ self.onmessage = async (event: MessageEvent<ReportWorkerRequest>) => {
           ),
         state.importLookbackDays,
         state.parseLookbackDays,
+        state.userTimeZoneOffsetMinutes,
         state.hasOlderDatedData
       );
       return;

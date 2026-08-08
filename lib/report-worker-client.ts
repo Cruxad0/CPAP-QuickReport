@@ -152,7 +152,8 @@ export class ReportWorkerClient {
         type: "load-folder-handle",
         rootHandle,
         importLookbackDays: options.importLookbackDays,
-        parseLookbackDays: options.parseLookbackDays
+        parseLookbackDays: options.parseLookbackDays,
+        userTimeZoneOffsetMinutes: -new Date().getTimezoneOffset()
       };
 
       try {
@@ -185,6 +186,7 @@ export class ReportWorkerClient {
       type: "load-folder-start",
       importLookbackDays: options.importLookbackDays,
       parseLookbackDays: options.parseLookbackDays,
+      userTimeZoneOffsetMinutes: -new Date().getTimezoneOffset(),
       hasOlderDatedData: options.hasOlderDatedData
     };
     this.worker.postMessage(startRequest);

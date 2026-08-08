@@ -1655,6 +1655,31 @@ main {
   font-weight: 700;
 }
 
+.sleep-confidence {
+  display: inline-block;
+  padding: 1px 5px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  font-weight: 800;
+  line-height: 1.25;
+  text-transform: capitalize;
+}
+
+.review-metric em .sleep-confidence-high {
+  color: #166534;
+  background: #dcfce7;
+}
+
+.review-metric em .sleep-confidence-moderate {
+  color: #854d0e;
+  background: #fef9c3;
+}
+
+.review-metric em .sleep-confidence-low {
+  color: #991b1b;
+  background: #fee2e2;
+}
+
 .review-detail-row {
   display: grid;
   grid-template-columns: 1.1fr 1.3fr 1fr;

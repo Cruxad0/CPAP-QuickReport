@@ -4,6 +4,7 @@ export interface SourceFile {
   name: string;
   path: string;
   size: number;
+  lastModifiedMs?: number;
   readText: () => Promise<string>;
   readBytes: () => Promise<Uint8Array>;
 }
@@ -155,6 +156,7 @@ export interface PrepareQuickReportSourceRequest {
   sourceKind: DataSourceKind;
   files: SourceFile[];
   lookbackDays?: number;
+  userTimeZoneOffsetMinutes?: number | null;
   onProgress?: (p: ParseProgress) => void;
 }
 
