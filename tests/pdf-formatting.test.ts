@@ -94,6 +94,10 @@ test("usage summary shows total time with sleep and nap subcategories", () => {
     ["  Total sleep / therapy time", "8.0 h (80.0%)"],
     ["  Total nap time", "2.0 h (20.0%)"]
   ]);
+  assert.deepEqual(
+    usageSummaryRows(report).find((row) => Array.isArray(row) && row[0] === "Inferred sleep window"),
+    ["Inferred sleep window", "3:00 PM to 11:00 PM"]
+  );
 });
 
 test("sleep-window confidence rows carry the requested color tone", () => {
@@ -195,9 +199,21 @@ test("a Max Leak lasting under one minute is treated as an auto-off transient", 
     maxLeak: 120
   };
 
-  assert.deepEqual(leakMetricRows({ ...baseReport, maxLeakMinutes: 0.2 }).at(-1), [
+  assert.equal(
+    leakMetricRows({ ...baseReport, maxLeakMinutes: 0.2 }).some(
+      (row) => Array.isArray(row) && row[0] === "Max Leak"
+    ),
+    false
+  );
+  assert.deepEqual(leakMetricRows({
+    ...baseReport,
+    maxLeakMinutes: 0.2,
+    maxLeakAtLeastOneMinute: 74.2,
+    maxLeakAtLeastOneMinuteMinutes: 1
+  }).at(-1), [
     "Max Leak",
-    "Transient under 1 min ignored"
+    "74.2 L/min for 1.0 min",
+    true
   ]);
   assert.deepEqual(leakMetricRows({ ...baseReport, maxLeakMinutes: 1 }).at(-1), [
     "Max Leak",

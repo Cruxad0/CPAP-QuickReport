@@ -136,6 +136,8 @@ export interface QuickReportMetrics {
   maxLeak30m: number | null;
   maxLeak60m: number | null;
   maxLeakMinutes?: number | null;
+  maxLeakAtLeastOneMinute?: number | null;
+  maxLeakAtLeastOneMinuteMinutes?: number | null;
   sustainedLeakMax?: number | null;
   sustainedLeakMinutes?: number | null;
   machine: MachineSettings;

@@ -153,6 +153,8 @@ maybeResventTest("Resvent sample card preserves APAP config and metrics", async 
   assertApprox(metrics.maxLeak30m, 17.2049, 0.05, "30 min leak");
   assertApprox(metrics.maxLeak60m, 120, 0.05, "60 min leak");
   assertApprox(metrics.maxLeakMinutes ?? null, 0.2, 0.01, "max leak minutes");
+  assertApprox(metrics.maxLeakAtLeastOneMinute ?? null, 74.2, 0.05, "qualifying max leak");
+  assertApprox(metrics.maxLeakAtLeastOneMinuteMinutes ?? null, 1, 0.01, "qualifying max leak minutes");
   assert.deepEqual(
     usageSummaryRows(metrics).filter(
       (row) => Array.isArray(row) && ["  Total sleep / therapy time", "  Total nap time"].includes(row[0])
@@ -162,7 +164,7 @@ maybeResventTest("Resvent sample card preserves APAP config and metrics", async 
       ["  Total nap time", "59.7 h (8.1%)"]
     ]
   );
-  assert.deepEqual(leakMetricRows(metrics).at(-1), ["Max Leak", "Transient under 1 min ignored"]);
+  assert.deepEqual(leakMetricRows(metrics).at(-1), ["Max Leak", "74.2 L/min for 1.0 min", true]);
   assert.ok(!metrics.warnings.some((warning) => warning.includes("Therapy settings changed within the 90-day report window")));
 });
 
@@ -474,8 +476,7 @@ maybeLocalRemstarSeTest("REMstar SE P-Series sample parses as PRS1 CPAP history"
   assert.deepEqual(leakMetricRows(metrics), [
     ["Avg Leak", "Data point not available"],
     ["95th Leak", "Data point not available"],
-    ["Longest Sustained Leak", "Data point not available"],
-    ["Max Leak", "Data point not available"]
+    ["Longest Sustained Leak", "Data point not available"]
   ]);
   assert.ok(metrics.warnings.includes("AHI metrics were not detected from the selected files."));
   assert.ok(metrics.warnings.includes("Leak metrics were not detected from the selected files."));

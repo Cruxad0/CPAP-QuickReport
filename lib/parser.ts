@@ -113,6 +113,7 @@ type ReportSummaryAggregationPolicy = {
 };
 
 const LARGE_LEAK_THRESHOLD_LPM = 30;
+const MIN_REPORTABLE_MAX_LEAK_MINUTES = 1;
 const MIN_SESSION_TIMING_COVERAGE_PERCENT = 70;
 const MAX_SESSION_TIMING_COVERAGE_PERCENT = 105;
 const RESVENT_DEVICE_EPOCH_OFFSET_MINUTES = 8 * 60;
@@ -4005,6 +4006,9 @@ export function buildQuickReportMetricsFromPreparedSource(
             ? 30
             : null;
   const maxLeakMinutes = observedMaxLeakMinutes ?? maxLeakWindowMinutes;
+  const maxLeakAtLeastOneMinuteCandidate = [...maxLeakMinuteCandidates, ...sustainedLeakCandidates]
+    .filter((entry) => entry.minutes >= MIN_REPORTABLE_MAX_LEAK_MINUTES)
+    .sort((a, b) => b.leak - a.leak || b.minutes - a.minutes)[0] ?? null;
   const observedSustainedLeakCandidate =
     sustainedLeakCandidates.sort((a, b) => b.minutes - a.minutes || b.leak - a.leak)[0] ?? null;
   const sustainedLeakWindowCandidate =
@@ -4178,6 +4182,10 @@ export function buildQuickReportMetricsFromPreparedSource(
     maxLeak30m: maxLeak30m === null ? null : finite(maxLeak30m),
     maxLeak60m: maxLeak60m === null ? null : finite(maxLeak60m),
     maxLeakMinutes: maxLeakMinutes === null ? null : finite(maxLeakMinutes),
+    maxLeakAtLeastOneMinute:
+      maxLeakAtLeastOneMinuteCandidate === null ? null : finite(maxLeakAtLeastOneMinuteCandidate.leak),
+    maxLeakAtLeastOneMinuteMinutes:
+      maxLeakAtLeastOneMinuteCandidate === null ? null : finite(maxLeakAtLeastOneMinuteCandidate.minutes),
     sustainedLeakMax: sustainedLeakMax === null ? null : finite(sustainedLeakMax),
     sustainedLeakMinutes: sustainedLeakMinutes === null ? null : finite(sustainedLeakMinutes),
     machine,

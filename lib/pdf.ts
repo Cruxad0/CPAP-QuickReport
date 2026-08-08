@@ -1063,16 +1063,21 @@ function leakRow(label: string, value: number | null | undefined, minutes?: numb
   return metricRow(label, leakMetricText(value, minutes), value > 30);
 }
 
-function maxLeakRow(report: QuickReportMetrics): TableRow {
-  if (
-    typeof report.maxLeak === "number" &&
-    Number.isFinite(report.maxLeak) &&
-    typeof report.maxLeakMinutes === "number" &&
-    Number.isFinite(report.maxLeakMinutes) &&
-    report.maxLeakMinutes >= 0 &&
-    report.maxLeakMinutes < 1
-  ) {
-    return ["Max Leak", "Transient under 1 min ignored"];
+function maxLeakRow(report: QuickReportMetrics): TableRow | null {
+  if (typeof report.maxLeak !== "number" || !Number.isFinite(report.maxLeak)) return null;
+
+  if (typeof report.maxLeakMinutes === "number" && Number.isFinite(report.maxLeakMinutes) && report.maxLeakMinutes < 1) {
+    if (
+      typeof report.maxLeakAtLeastOneMinute !== "number" ||
+      !Number.isFinite(report.maxLeakAtLeastOneMinute) ||
+      typeof report.maxLeakAtLeastOneMinuteMinutes !== "number" ||
+      !Number.isFinite(report.maxLeakAtLeastOneMinuteMinutes) ||
+      report.maxLeakAtLeastOneMinuteMinutes < 1
+    ) {
+      return null;
+    }
+
+    return leakRow("Max Leak", report.maxLeakAtLeastOneMinute, report.maxLeakAtLeastOneMinuteMinutes);
   }
 
   return leakRow("Max Leak", report.maxLeak, report.maxLeakMinutes);
@@ -1088,11 +1093,12 @@ function sectionRows(label: string, rows: TableRow[]): TableRow[] {
 }
 
 export function leakMetricRows(report: QuickReportMetrics): TableRow[] {
+  const reportableMaxLeakRow = maxLeakRow(report);
   return [
     leakRow(primaryLeakLabel(report), report.avgLeak),
     leakRow("95th Leak", report.leak95th),
     leakRow("Longest Sustained Leak", report.sustainedLeakMax ?? report.maxLeak60m, report.sustainedLeakMinutes),
-    maxLeakRow(report)
+    ...(reportableMaxLeakRow ? [reportableMaxLeakRow] : [])
   ];
 }
 
@@ -1151,7 +1157,7 @@ export function usageSummaryRows(report: QuickReportMetrics): TableRow[] {
             ? [["Unclassified session timing", `${formatReportMetricValue(report.unclassifiedTherapyHours)} h`] as TableRow]
             : []),
           [
-            "Inferred sleep window (machine/local time)",
+            "Inferred sleep window",
             `${formatClockMinutes(timing.sleepWindowStartMinutes)} to ${formatClockMinutes(timing.sleepWindowEndMinutes)}`
           ] as TableRow,
           [

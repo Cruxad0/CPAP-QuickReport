@@ -1136,7 +1136,7 @@ export function QuickReportApp() {
                   <em>{dashboardMetrics?.sleepTimingAnalysis ? "principal sleep episode ≥ 4 hrs" : "daily total ≥ 4 hrs (fallback)"}</em>
                   {dashboardMetrics?.sleepTimingAnalysis ? (
                     <em>
-                      Window (machine/local time): {formatClockMinutes(dashboardMetrics.sleepTimingAnalysis.sleepWindowStartMinutes)}–{formatClockMinutes(dashboardMetrics.sleepTimingAnalysis.sleepWindowEndMinutes)} ·{" "}
+                      Window: {formatClockMinutes(dashboardMetrics.sleepTimingAnalysis.sleepWindowStartMinutes)}–{formatClockMinutes(dashboardMetrics.sleepTimingAnalysis.sleepWindowEndMinutes)} ·{" "}
                       <span className={`sleep-confidence sleep-confidence-${dashboardMetrics.sleepTimingAnalysis.confidence}`}>
                         {dashboardMetrics.sleepTimingAnalysis.confidence} confidence
                       </span>
