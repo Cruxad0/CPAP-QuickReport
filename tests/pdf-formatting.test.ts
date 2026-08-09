@@ -96,11 +96,11 @@ test("usage summary shows total time with sleep and nap subcategories", () => {
   ]);
   assert.deepEqual(
     usageSummaryRows(report).find((row) => Array.isArray(row) && row[0] === "Inferred sleep window"),
-    ["Inferred sleep window", "3:00 PM to 11:00 PM"]
+    ["Inferred sleep window", "3:00 PM to 11:00 PM (High confidence)", false, "success"]
   );
 });
 
-test("sleep-window confidence rows carry the requested color tone", () => {
+test("inferred sleep-window rows include the confidence comment and color tone", () => {
   const timing = {
     anchorMinutes: 900,
     typicalDurationMinutes: 480,
@@ -125,13 +125,14 @@ test("sleep-window confidence rows carry the requested color tone", () => {
       ...reportWithMachine({ mode: "APAP" }),
       sleepTimingAnalysis: { ...timing, confidence }
     });
-    const confidenceRow = rows.find((row) => Array.isArray(row) && row[0] === "Sleep-window confidence");
-    assert.deepEqual(confidenceRow, [
-      "Sleep-window confidence",
-      `${confidence[0].toUpperCase()}${confidence.slice(1)} confidence`,
+    const sleepWindowRow = rows.find((row) => Array.isArray(row) && row[0] === "Inferred sleep window");
+    assert.deepEqual(sleepWindowRow, [
+      "Inferred sleep window",
+      `3:00 PM to 11:00 PM (${confidence[0].toUpperCase()}${confidence.slice(1)} confidence)`,
       false,
       tone
     ]);
+    assert.equal(rows.some((row) => Array.isArray(row) && row[0] === "Sleep-window confidence"), false);
   }
 });
 

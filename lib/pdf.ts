@@ -1158,11 +1158,7 @@ export function usageSummaryRows(report: QuickReportMetrics): TableRow[] {
             : []),
           [
             "Inferred sleep window",
-            `${formatClockMinutes(timing.sleepWindowStartMinutes)} to ${formatClockMinutes(timing.sleepWindowEndMinutes)}`
-          ] as TableRow,
-          [
-            "Sleep-window confidence",
-            `${timing.confidence[0].toUpperCase()}${timing.confidence.slice(1)} confidence`,
+            `${formatClockMinutes(timing.sleepWindowStartMinutes)} to ${formatClockMinutes(timing.sleepWindowEndMinutes)} (${timing.confidence[0].toUpperCase()}${timing.confidence.slice(1)} confidence)`,
             false,
             confidenceTone(timing.confidence)
           ] as TableRow
