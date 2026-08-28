@@ -67,7 +67,7 @@ Open [http://localhost:3000](http://localhost:3000).
 4. Do not choose a deep subfolder unless you know the family-specific layout.
 5. Click `Generate Reports`.
 6. Review the `90 / 60 / 30 / 7` day tabs in preview.
-7. Export the PDF when ready.
+7. Click `Save PDF` when ready. Choose `Save` or `Save as` if the browser asks; `Open` uses temporary browser storage.
 
 Root-folder selection is the recommended workflow even for families that can sometimes be detected from a vendor subfolder.
 

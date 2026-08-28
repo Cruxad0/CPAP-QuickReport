@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { enumerateDeferredFolderEntries, pickDirectoryHandle, supportsDirectoryPicker } from "@/lib/directory-picker";
+import { savePdfArtifact } from "@/lib/pdf-save";
 import { ReportWorkerClient } from "@/lib/report-worker-client";
 import { REPORT_RANGE_OPTIONS, type ReportRangeDays } from "@/lib/report-orchestrator";
 import { formatClockMinutes } from "@/lib/sleep-inference";
@@ -43,6 +44,7 @@ const LONG_DATE_FORMATTER = new Intl.DateTimeFormat("en-US", {
 });
 type GeneratedReportArtifact = {
   metrics: QuickReportMetrics;
+  blob: Blob;
   previewUrl: string;
   downloadName: string;
 };
@@ -916,6 +918,7 @@ export function QuickReportApp() {
         const days = artifact.days as ReportRangeDays;
         generated[days] = {
           metrics: artifact.metrics,
+          blob: artifact.blob,
           previewUrl: URL.createObjectURL(artifact.blob),
           downloadName: artifact.filename
         };
@@ -942,14 +945,27 @@ export function QuickReportApp() {
     }
   };
 
-  const triggerDownload = () => {
+  const handleSavePdf = async () => {
     if (!activeReport?.previewUrl) return;
-    const a = document.createElement("a");
-    a.href = activeReport.previewUrl;
-    a.download = activeReport.downloadName;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
+
+    try {
+      const result = await savePdfArtifact(
+        activeReport.blob,
+        activeReport.downloadName,
+        activeReport.previewUrl
+      );
+      if (result === "saved") {
+        setStatusMessage("PDF saved to the selected folder.");
+      } else if (result === "downloaded") {
+        setStatusMessage("PDF sent to browser downloads. If prompted, choose Save or Save as—not Open.");
+      } else {
+        setStatusMessage("PDF save cancelled.");
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not save the PDF.";
+      setErrors((previous) => [message, ...previous]);
+      setStatusMessage("Could not save the PDF.");
+    }
   };
 
   const openPreviewInNewTab = () => {
@@ -1184,7 +1200,7 @@ export function QuickReportApp() {
           <article className="card preview-shell">
             <div>
               <span className="therapy-period-badge">Therapy Overview Reports</span>
-              <p className="subtle">PDF preview and export are available only for the current therapy settings period.</p>
+              <p className="subtle">Saved PDFs are permanent. Browser previews are temporary and available only for the current therapy settings period.</p>
             </div>
             <div className="range-tabs" role="tablist" aria-label="Generated report tabs">
               {generatedReportDays.map((days) => (
@@ -1201,11 +1217,11 @@ export function QuickReportApp() {
               ))}
             </div>
             <div className="actions" style={{ marginTop: 0 }}>
-              <button type="button" className="btn btn-primary" onClick={triggerDownload}>
-                Export PDF
+              <button type="button" className="btn btn-primary" onClick={handleSavePdf}>
+                Save PDF
               </button>
               <button type="button" className="btn btn-secondary" onClick={openPreviewInNewTab}>
-                Open Report
+                Open Temporary Preview
               </button>
               <button
                 type="button"
@@ -1218,6 +1234,7 @@ export function QuickReportApp() {
               </button>
               <span className="subtle">Default filename: {activeReport.downloadName}</span>
             </div>
+            <p className="subtle">Choose Save or Save as if your browser asks. Choosing Open uses temporary browser storage.</p>
             {!isPreviewCollapsed ? (
               <>
                 <iframe
@@ -1226,7 +1243,7 @@ export function QuickReportApp() {
                   src={activeReport.previewUrl}
                   title="PDF preview"
                 />
-                <p className="subtle">If preview is blank on this browser, use Open Report.</p>
+                <p className="subtle">If this preview is blank, use Open Temporary Preview. Preview tabs are cleared when this app session ends.</p>
               </>
             ) : (
               <p className="subtle">Preview collapsed. Use Open Preview to expand.</p>
