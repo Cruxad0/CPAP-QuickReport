@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   classifyTherapySessions,
   formatClockMinutes,
+  formatDurationHoursAsHmm,
   inferSleepTimingProfile
 } from "../lib/sleep-inference";
 import { buildQuickReportMetricsFromPreparedSource } from "../lib/parser";
@@ -76,6 +77,11 @@ test("a one-day outlier does not move the whole-period sleep anchor", () => {
 test("clock formatter handles circular daytime ranges", () => {
   assert.equal(formatClockMinutes(8 * 60), "8:00 AM");
   assert.equal(formatClockMinutes(22 * 60 + 5), "10:05 PM");
+});
+
+test("therapy duration formatter presents decimal hours as H:MM", () => {
+  assert.equal(formatDurationHoursAsHmm(0.2), "0:12");
+  assert.equal(formatDurationHoursAsHmm(2.033), "2:02");
 });
 
 function dayBucket(usageHours: number): PreparedDayBucket {

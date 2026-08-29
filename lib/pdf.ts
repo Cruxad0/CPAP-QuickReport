@@ -5,7 +5,7 @@ import {
   isAutoPapLikeMode,
   isFixedCpapLikeMode
 } from "@/lib/machine-mode";
-import { formatClockMinutes } from "@/lib/sleep-inference";
+import { formatClockMinutes, formatDurationHoursAsHmm } from "@/lib/sleep-inference";
 import { QuickReportMetrics } from "@/lib/types";
 
 const PAGE_WIDTH_A4 = 595.28;
@@ -1154,7 +1154,10 @@ export function usageSummaryRows(report: QuickReportMetrics): TableRow[] {
     ...(timing
       ? [
           ...((report.unclassifiedTherapyHours ?? 0) >= 0.05
-            ? [["Unclassified session timing", `${formatReportMetricValue(report.unclassifiedTherapyHours)} h`] as TableRow]
+            ? [[
+                "Therapy time not assigned to sleep",
+                `${formatDurationHoursAsHmm(report.unclassifiedTherapyHours ?? 0)} (H:MM)`
+              ] as TableRow]
             : []),
           [
             "Inferred sleep window",

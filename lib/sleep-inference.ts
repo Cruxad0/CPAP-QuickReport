@@ -339,3 +339,10 @@ export function formatClockMinutes(minutes: number): string {
   const hour12 = hour24 % 12 || 12;
   return `${hour12}:${String(minute).padStart(2, "0")} ${suffix}`;
 }
+
+export function formatDurationHoursAsHmm(hours: number): string {
+  const totalMinutes = Math.max(0, Math.round(hours * 60));
+  const wholeHours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return `${wholeHours}:${String(minutes).padStart(2, "0")}`;
+}

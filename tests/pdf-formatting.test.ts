@@ -72,6 +72,7 @@ test("usage summary shows total time with sleep and nap subcategories", () => {
     totalTherapyHours: 10,
     expectedSleepTherapyHours: 8,
     suspectedNapTherapyHours: 2,
+    unclassifiedTherapyHours: 0.2,
     sleepTimingAnalysis: {
       anchorMinutes: 900,
       typicalDurationMinutes: 480,
@@ -97,6 +98,12 @@ test("usage summary shows total time with sleep and nap subcategories", () => {
   assert.deepEqual(
     usageSummaryRows(report).find((row) => Array.isArray(row) && row[0] === "Inferred sleep window"),
     ["Inferred sleep window", "3:00 PM to 11:00 PM (High confidence)", false, "success"]
+  );
+  assert.deepEqual(
+    usageSummaryRows(report).find(
+      (row) => Array.isArray(row) && row[0] === "Therapy time not assigned to sleep"
+    ),
+    ["Therapy time not assigned to sleep", "0:12 (H:MM)"]
   );
 });
 

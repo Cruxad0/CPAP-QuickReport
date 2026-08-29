@@ -6,7 +6,7 @@ import { enumerateDeferredFolderEntries, pickDirectoryHandle, supportsDirectoryP
 import { savePdfArtifact } from "@/lib/pdf-save";
 import { ReportWorkerClient } from "@/lib/report-worker-client";
 import { REPORT_RANGE_OPTIONS, type ReportRangeDays } from "@/lib/report-orchestrator";
-import { formatClockMinutes } from "@/lib/sleep-inference";
+import { formatClockMinutes, formatDurationHoursAsHmm } from "@/lib/sleep-inference";
 import { OLDER_HISTORY_IMPORT_LOOKBACK_DAYS } from "@/lib/source-files";
 import { daysSinceIsoDate, staleDataAgeClassName, staleDataSeverity } from "@/lib/stale-data";
 import { ParseProgress, QuickReportMetrics, TherapySettingsPeriod } from "@/lib/types";
@@ -1136,7 +1136,9 @@ export function QuickReportApp() {
                       <em>Total sleep / therapy time: {formatTherapyShare(dashboardMetrics.expectedSleepTherapyHours, dashboardMetrics.totalTherapyHours)}</em>
                       <em>Total nap time: {formatTherapyShare(dashboardMetrics.suspectedNapTherapyHours, dashboardMetrics.totalTherapyHours)}</em>
                       {(dashboardMetrics.unclassifiedTherapyHours ?? 0) >= 0.05 ? (
-                        <em>Unclassified timing: {formatMetric(dashboardMetrics.unclassifiedTherapyHours, " hrs")}</em>
+                        <em>
+                          Therapy time not assigned to sleep: {formatDurationHoursAsHmm(dashboardMetrics.unclassifiedTherapyHours ?? 0)} (H:MM)
+                        </em>
                       ) : null}
                     </span>
                   ) : (
