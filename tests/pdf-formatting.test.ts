@@ -6,6 +6,7 @@ import {
   ahiMetricRows,
   bipapVentilationRows,
   buildPdfReport,
+  buildTherapySummaryRows,
   formatReportMetricValue,
   leakMetricRows,
   machineSettingRows,
@@ -143,11 +144,12 @@ test("inferred sleep-window rows include the confidence comment and color tone",
   }
 });
 
-test("central apnea rows state when the card does not provide them", () => {
-  assert.deepEqual(optionalEventMetricRows(reportWithMachine({ mode: "BiPAP" })), [
-    ["Avg Central apneas", "Data is not present"],
-    ["95th Central apneas", "Data is not present"]
-  ]);
+test("optional apnea and RERA rows are hidden when the card does not provide them", () => {
+  assert.deepEqual(optionalEventMetricRows(reportWithMachine({ mode: "BiPAP" })), []);
+  assert.deepEqual(optionalEventMetricRows({
+    ...reportWithMachine({ mode: "APAP" }),
+    selectedLoader: "Apex / BMC / Luna"
+  }), []);
 });
 
 test("optional central apnea and RERA rows are shown when metrics are available", () => {
@@ -163,6 +165,60 @@ test("optional central apnea and RERA rows are shown when metrics are available"
     ["95th Central apneas", "2.3"],
     ["Avg RERA index", "0.4"]
   ]);
+});
+
+test("sparse card reports omit empty metric sections and explain the missing source data", () => {
+  const report = {
+    ...reportWithMachine({
+      device: "REMstar SE",
+      mode: "CPAP",
+      pressure: "11 cmH2O",
+      pressureRelief: "Flex: 3"
+    }),
+    avgAhi: null,
+    ahi95th: null,
+    totalTherapyHours: 2,
+    avgUsageHours: 2
+  };
+  const rows = buildTherapySummaryRows(report);
+
+  assert.deepEqual(
+    rows.filter((row) => "kind" in row).map((row) => row.label),
+    ["Usage Summary", "Source Data Limits"]
+  );
+  assert.ok(rows.some((row) => Array.isArray(row) && row[0] === "Card data" &&
+    row[1] === "No measured pressure, respiratory event, or leak summaries were available in the imported files."));
+  assert.ok(rows.every((row) => !Array.isArray(row) || !/Data point not available|Data is not present|Not supported by this device/.test(row[1])));
+  assert.deepEqual(therapyPressureRows(report), []);
+  assert.deepEqual(ahiMetricRows(report), []);
+  assert.deepEqual(leakMetricRows(report), []);
+});
+
+test("partial metric sections show only measurements present in the selected window", () => {
+  const report = {
+    ...reportWithMachine({
+      device: "AirSense 11 CPAP",
+      mode: "CPAP",
+      pressure: "11 cmH2O",
+      pressureAvg: 11
+    }),
+    totalTherapyHours: 14,
+    avgAhi: 1.4,
+    ahi95th: null,
+    avgLeak: null,
+    leak95th: 16.2
+  };
+  const rows = buildTherapySummaryRows(report);
+
+  assert.deepEqual(therapyPressureRows(report), [
+    ["Avg Pressure", "11.0 cmH2O"],
+    ["Min Pressure", "11.0 cmH2O"],
+    ["Max Pressure", "11.0 cmH2O"]
+  ]);
+  assert.deepEqual(ahiMetricRows(report), [["Avg AHI", "1.4", false]]);
+  assert.deepEqual(leakMetricRows(report), [["95th Leak", "16.2 L/min"]]);
+  assert.equal(rows.some((row) => "kind" in row && row.label === "Source Data Limits"), false);
+  assert.ok(rows.every((row) => !Array.isArray(row) || !/Data point not available|Data is not present/.test(row[1])));
 });
 
 test("AHI rows are highlighted when values are above 5", () => {
@@ -311,12 +367,10 @@ test("machine settings show BiPAP Vt target when present", () => {
       })
     ),
     [
-      ["Device", "Data point not available"],
       ["Mode", "BiPAP"],
       ["IPAP", "14.0 cmH2O"],
       ["EPAP", "8.0 cmH2O"],
-      ["Tidal volume (Vt)", "500.0 mL"],
-      ["Pressure relief", "Data point not available"]
+      ["Tidal volume (Vt)", "500.0 mL"]
     ]
   );
 });
@@ -332,11 +386,9 @@ test("machine settings label auto BiPAP pressure bounds as EPAP and IPAP setting
       })
     ),
     [
-      ["Device", "Data point not available"],
       ["Mode", "VAuto"],
       ["Min EPAP", "7.0 cmH2O"],
-      ["Max IPAP", "11.0 cmH2O"],
-      ["Pressure relief", "Data point not available"]
+      ["Max IPAP", "11.0 cmH2O"]
     ]
   );
 });
@@ -353,7 +405,6 @@ test("machine settings label PS as pressure support instead of pressure relief",
       })
     ),
     [
-      ["Device", "Data point not available"],
       ["Mode", "VAuto"],
       ["Min EPAP", "7.0 cmH2O"],
       ["Max IPAP", "11.0 cmH2O"],
@@ -394,11 +445,9 @@ test("machine settings show ramp time but hide ramp pressure when ramp is off", 
       })
     ),
     [
-      ["Device", "Data point not available"],
       ["Mode", "CPAP"],
       ["Pressure", "6.0 cmH2O"],
-      ["Ramp time", "Off"],
-      ["Pressure relief", "Data point not available"]
+      ["Ramp time", "Off"]
     ]
   );
 });
@@ -414,12 +463,10 @@ test("machine settings show ramp pressure when ramp time is present", () => {
       })
     ),
     [
-      ["Device", "Data point not available"],
       ["Mode", "CPAP"],
       ["Pressure", "6.0 cmH2O"],
       ["Ramp time", "5 minutes"],
-      ["Ramp pressure", "4.0 cmH2O"],
-      ["Pressure relief", "Data point not available"]
+      ["Ramp pressure", "4.0 cmH2O"]
     ]
   );
 });
@@ -435,12 +482,10 @@ test("machine settings round backup respiratory rate to tenths", () => {
       })
     ),
     [
-      ["Device", "Data point not available"],
       ["Mode", "BiPAP"],
       ["IPAP", "14.0 cmH2O"],
       ["EPAP", "8.0 cmH2O"],
-      ["Respiratory rate (RR)", "15.0 bpm"],
-      ["Pressure relief", "Data point not available"]
+      ["Respiratory rate (RR)", "15.0 bpm"]
     ]
   );
 });

@@ -473,11 +473,7 @@ maybeLocalRemstarSeTest("REMstar SE P-Series sample parses as PRS1 CPAP history"
   assert.equal(metrics.maxLeak, null);
   assert.equal(metrics.maxLeak30m, null);
   assert.equal(metrics.maxLeak60m, null);
-  assert.deepEqual(leakMetricRows(metrics), [
-    ["Avg Leak", "Data point not available"],
-    ["95th Leak", "Data point not available"],
-    ["Longest Sustained Leak", "Data point not available"]
-  ]);
+  assert.deepEqual(leakMetricRows(metrics), []);
   assert.ok(metrics.warnings.includes("AHI metrics were not detected from the selected files."));
   assert.ok(metrics.warnings.includes("Leak metrics were not detected from the selected files."));
 });
@@ -637,6 +633,7 @@ maybeLocalAirSense11CpapTest("filtered AirSense 11 CPAP card preserves its recen
   assert.equal(metrics.daysInWindow, 7);
   assert.equal(metrics.daysWithData, 7);
   assert.equal(metrics.daysWithUsage, 7);
+  assertApprox(metrics.avgLeak, 11.4113, 0.05, "PLD-derived avg leak");
   assertApprox(metrics.avgResidualApneas, 0.0458, 0.001, "avg residual apneas");
   assertApprox(metrics.residualApneas95th, 0.1621, 0.001, "95th residual apneas");
   assert.equal(metrics.avgCentralApneas, null);

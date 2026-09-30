@@ -73,6 +73,8 @@ type EdfInfo = {
 };
 
 type ResMedLeakSignalStats = {
+  avgLeak: number;
+  sampleCount: number;
   maxLeakValue?: number;
   maxLeakMinutes?: number;
   sustainedLeakMax?: number;
@@ -717,6 +719,7 @@ function summarizeResMedLeakSignal(bytes: Uint8Array, edf: EdfInfo, signal: EdfS
       : 0;
 
   let count = 0;
+  let sum = 0;
   let currentLargeLeakSeconds = 0;
   let currentLargeLeakMax: number | null = null;
   let longestLargeLeakSeconds = 0;
@@ -755,6 +758,7 @@ function summarizeResMedLeakSignal(bytes: Uint8Array, edf: EdfInfo, signal: EdfS
       }
 
       count += 1;
+      sum += value;
 
       if (sampleSeconds > 0 && value > RESMED_LARGE_LEAK_THRESHOLD_LPM) {
         currentLargeLeakSeconds += sampleSeconds;
@@ -769,6 +773,8 @@ function summarizeResMedLeakSignal(bytes: Uint8Array, edf: EdfInfo, signal: EdfS
   if (count === 0) return null;
 
   return {
+    avgLeak: sum / count,
+    sampleCount: count,
     maxLeakValue: maxLeakEpisodeValue ?? undefined,
     maxLeakMinutes: maxLeakEpisodeSeconds > 0 ? maxLeakEpisodeSeconds / 60 : undefined,
     sustainedLeakMax: longestLargeLeakMax ?? undefined,
@@ -1059,7 +1065,10 @@ function parseResMedStrEdf(
   };
 }
 
-function parseResMedPldEdf(candidate: FamilyParserCandidate, bytes: Uint8Array): ParsedRecord | null {
+function parseResMedPldEdf(
+  candidate: FamilyParserCandidate,
+  bytes: Uint8Array
+): { record: ParsedRecord; dayIso: string; leakAvg?: number; leakSampleCount?: number } | null {
   if (!/pld\.edf(?:\.gz)?$/i.test(candidate.baseName)) return null;
 
   const edf = parseResMedEdf(bytes);
@@ -1078,29 +1087,38 @@ function parseResMedPldEdf(candidate: FamilyParserCandidate, bytes: Uint8Array):
   const sessionDurationSeconds = edf.numRecords * edf.recordDurationSeconds;
   const hasSessionTiming =
     Number.isFinite(sessionDurationSeconds) && sessionDurationSeconds > 0 && sessionDurationSeconds <= 24 * 3600;
+  const folderMatch = candidate.normalizedPath.match(/(?:^|\/)datalog\/(\d{4})(\d{2})(\d{2})(?:\/|$)/i);
+  const dayIso = folderMatch
+    ? `${folderMatch[1]}-${folderMatch[2]}-${folderMatch[3]}`
+    : new Date(edf.startDate.getTime() - 12 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
   return {
-    date: new Date(edf.startDate),
-    therapySessionStart: hasSessionTiming ? new Date(edf.startDate) : undefined,
-    therapySessionEnd: hasSessionTiming
-      ? new Date(edf.startDate.getTime() + sessionDurationSeconds * 1000)
-      : undefined,
-    maxLeakDurationValue: leakStats?.maxLeakValue,
-    maxLeakMinutes: leakStats?.maxLeakMinutes,
-    sustainedLeakMax: leakStats?.sustainedLeakMax,
-    sustainedLeakMinutes: leakStats?.sustainedLeakMinutes,
-    tidalVolumeAvg: tidalVolumeStats?.avg,
-    tidalVolumeMin: tidalVolumeStats?.min,
-    tidalVolumeMedian: tidalVolumeStats?.median,
-    tidalVolumeMax: tidalVolumeStats?.max,
-    tidalVolumeSampleCount: tidalVolumeStats?.count,
-    tidalVolumeBins: tidalVolumeStats?.bins,
-    tidalVolumeSecondsByBin: tidalVolumeStats?.secondsByBin,
-    respiratoryRateAvg: respiratoryRateStats?.avg,
-    respiratoryRate95th: respiratoryRateStats?.p95,
-    respiratoryRateSampleCount: respiratoryRateStats?.count,
-    respiratoryRateBins: respiratoryRateStats?.bins,
-    respiratoryRateMin: respiratoryRateStats?.min
+    dayIso,
+    record: {
+      date: new Date(edf.startDate),
+      therapySessionStart: hasSessionTiming ? new Date(edf.startDate) : undefined,
+      therapySessionEnd: hasSessionTiming
+        ? new Date(edf.startDate.getTime() + sessionDurationSeconds * 1000)
+        : undefined,
+      maxLeakDurationValue: leakStats?.maxLeakValue,
+      maxLeakMinutes: leakStats?.maxLeakMinutes,
+      sustainedLeakMax: leakStats?.sustainedLeakMax,
+      sustainedLeakMinutes: leakStats?.sustainedLeakMinutes,
+      tidalVolumeAvg: tidalVolumeStats?.avg,
+      tidalVolumeMin: tidalVolumeStats?.min,
+      tidalVolumeMedian: tidalVolumeStats?.median,
+      tidalVolumeMax: tidalVolumeStats?.max,
+      tidalVolumeSampleCount: tidalVolumeStats?.count,
+      tidalVolumeBins: tidalVolumeStats?.bins,
+      tidalVolumeSecondsByBin: tidalVolumeStats?.secondsByBin,
+      respiratoryRateAvg: respiratoryRateStats?.avg,
+      respiratoryRate95th: respiratoryRateStats?.p95,
+      respiratoryRateSampleCount: respiratoryRateStats?.count,
+      respiratoryRateBins: respiratoryRateStats?.bins,
+      respiratoryRateMin: respiratoryRateStats?.min
+    },
+    leakAvg: leakStats?.avgLeak,
+    leakSampleCount: leakStats?.sampleCount
   };
 }
 
@@ -1256,6 +1274,7 @@ export async function parseResMedFamily(context: FamilyParserContext, deps: Fami
   }
 
   const eventCountsByDay = new Map<string, ResMedEveEventCounts>();
+  const pldLeakByDay = new Map<string, { sum: number; count: number }>();
   let hasClassifiedApneaEvents = false;
   let hasArousalEvents = false;
   let processed = 0;
@@ -1291,9 +1310,15 @@ export async function parseResMedFamily(context: FamilyParserContext, deps: Fami
       }
 
       if (/pld\.edf(?:\.gz)?$/i.test(candidate.baseName)) {
-        const record = parseResMedPldEdf(candidate, inflated);
-        if (record) {
-          context.records.push(record);
+        const parsed = parseResMedPldEdf(candidate, inflated);
+        if (parsed) {
+          context.records.push(parsed.record);
+          if (parsed.leakAvg !== undefined && parsed.leakSampleCount && parsed.leakSampleCount > 0) {
+            const day = pldLeakByDay.get(parsed.dayIso) ?? { sum: 0, count: 0 };
+            day.sum += parsed.leakAvg * parsed.leakSampleCount;
+            day.count += parsed.leakSampleCount;
+            pldLeakByDay.set(parsed.dayIso, day);
+          }
         }
         continue;
       }
@@ -1314,6 +1339,17 @@ export async function parseResMedFamily(context: FamilyParserContext, deps: Fami
       }
     } catch {
       continue;
+    }
+  }
+
+  const summaryLeakDays = new Set(
+    context.records
+      .filter((record) => typeof record.leak === "number" && Number.isFinite(record.leak))
+      .map((record) => new Date(record.date.getTime() - 12 * 60 * 60 * 1000).toISOString().slice(0, 10))
+  );
+  for (const [dayIso, stats] of pldLeakByDay) {
+    if (!summaryLeakDays.has(dayIso) && stats.count > 0) {
+      context.records.push({ date: new Date(`${dayIso}T12:00:00Z`), leak: stats.sum / stats.count });
     }
   }
 

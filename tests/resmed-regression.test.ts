@@ -20,7 +20,7 @@ function writeAsciiField(target: Uint8Array, offset: number, length: number, val
 }
 
 function createSyntheticResMedStrEdf(
-  options: { leakUnit?: string; leakRawValues?: [number, number, number]; includeApneaSummary?: boolean } = {}
+  options: { leakUnit?: string; leakRawValues?: [number, number, number]; includeApneaSummary?: boolean; includeLeakMedian?: boolean } = {}
 ): Uint8Array {
   const leakUnit = options.leakUnit ?? "cmH2O";
   const leakRawValues = options.leakRawValues ?? [30, 90, 120];
@@ -41,7 +41,9 @@ function createSyntheticResMedStrEdf(
     { label: "S.EPR.Level", min: 0, max: 3, dmin: 0, dmax: 3, samples: 1, value: 3 },
     { label: "AHI", min: 0, max: 50, dmin: 0, dmax: 500, samples: 1, value: 15 },
     ...apneaSummarySignals,
-    { label: "Leak.50", min: 0, max: 100, dmin: 0, dmax: 1000, samples: 1, value: leakRawValues[0], unit: leakUnit },
+    ...(options.includeLeakMedian === false
+      ? []
+      : [{ label: "Leak.50", min: 0, max: 100, dmin: 0, dmax: 1000, samples: 1, value: leakRawValues[0], unit: leakUnit }]),
     { label: "Leak.95", min: 0, max: 100, dmin: 0, dmax: 1000, samples: 1, value: leakRawValues[1], unit: leakUnit },
     { label: "Leak Max", min: 0, max: 100, dmin: 0, dmax: 1000, samples: 1, value: leakRawValues[2], unit: leakUnit },
     { label: "MaskPress.50", min: 0, max: 20, dmin: 0, dmax: 200, samples: 1, value: 58 },
@@ -383,4 +385,24 @@ test("ResMed PLD leak waveform populates leak duration fields", async () => {
   assert.equal(metrics.maxLeakMinutes, null);
   assert.ok(Math.abs((metrics.sustainedLeakMax ?? 0) - 54) < 0.0001);
   assert.ok(Math.abs((metrics.sustainedLeakMinutes ?? 0) - 4 / 60) < 0.0001);
+});
+
+test("ResMed PLD leak samples fill a missing STR daily leak summary", async () => {
+  const files: SourceFile[] = [
+    createSourceFile("Identification.tgt", new TextEncoder().encode("#PNA AirSense_11_CPAP\n")),
+    createSourceFile("STR.edf", createSyntheticResMedStrEdf({ includeLeakMedian: false })),
+    createSourceFile("DATALOG/20260415/20260415_000000_PLD.edf", createSyntheticResMedPldEdf([0.1, 0.2, 0.1]))
+  ];
+
+  const prepared = await prepareQuickReportSource({ sourceKind: "folder", files, lookbackDays: 90 });
+  const metrics = buildQuickReportMetricsFromPreparedSource(prepared, {
+    patientName: "Fixture Patient",
+    dateOfBirthIso: "1970-01-01",
+    physicianName: "",
+    lookbackDays: 7,
+    windowEndClinicalDayIso: "2026-04-16"
+  });
+
+  assert.ok(Math.abs((metrics.avgLeak ?? 0) - 8) < 0.0001);
+  assert.equal(metrics.leak95th, 9);
 });

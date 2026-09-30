@@ -1,6 +1,6 @@
 # Loader Support Matrix
 
-Engineering reference for the webapp parser stack. This tracks how the current webapp maps to the local OSCAR reference copy under `/OSCAR-code-ref-2/oscar/SleepLib/loader_plugins`.
+Engineering reference for the webapp parser stack. BMC loader behavior was compared with [OSCAR-SQL](https://gitlab.com/CrimsonNape/OSCAR-SQL) at commit `5549bf0f` (2026-09-29); other rows retain their existing parity assessments.
 
 ## Column meanings
 
@@ -22,8 +22,8 @@ Engineering reference for the webapp parser stack. This tracks how the current w
 | Philips Respironics M-Series | `mseries_loader.cpp` | Yes | Yes | Metadata-only | Smartcard metadata and mode detection exist. Daily efficacy parity is not complete. |
 | Loewenstein / Prisma | `prisma_loader.cpp` | Yes | Yes | Dedicated | Includes `therapy.pdat` inner-archive extraction plus Prisma-specific parameter/event handling and prisma25S/prisma25ST identification. |
 | Weinmann / Loewenstein | `weinmann_loader.cpp` | Yes | Yes | Dedicated | Binary `WM_DATA.TDF` compliance/event parsing is present, but still lighter than full OSCAR waveform/session reconstruction. |
-| Apex / BMC / Luna legacy | `bmc_loader.cpp`, `bmcDataParsing.cpp` | Yes | Yes | Dedicated | Dedicated `.USR` / `.IDX` parsing with session history, settings extraction, and G3 B20A one-byte waveform alignment support. |
-| ReactHealth / BMC G3 / G3X | `bmcg3x_loader.cpp`, `bmcG3xDataParsing.cpp` | Yes | Yes | Dedicated | Separate G3X IDX/EVT/2 KB waveform path, including EVT-only summaries and mask-on usage detection. |
+| Apex / BMC / Luna legacy | `bmc_loader.cpp`, `bmcDataParsing.cpp` | Yes | Yes | Dedicated | `.USR` summaries survive missing waveform data; validated `.IDX` starts avoid stale circular-buffer samples. Invalid dates are rejected and implausible durations cannot produce event rates. G3 B20A one-byte waveform alignment is supported. |
+| ReactHealth / BMC G3 / G3X | `bmcg3x_loader.cpp`, `bmcG3xDataParsing.cpp` | Yes | Yes | Dedicated | IDX-only summaries and indexed EVT-only sessions load without waveforms; E5 IT event indices are ignored in favor of EVT rates when available. |
 | Yuwell YH-series | `yuwell_loader.cpp` | Yes | Yes | Dedicated | Supports YH-580 Format B, YH-820/YH-825/YH-830 Format C, and YH-680/YH-690 Format D; also preserves Format A parsing. |
 | DeVilbiss IntelliPAP | `intellipap_loader.cpp` | Yes | Yes | Dedicated | Dedicated DV5 and DV6 handling from family-specific files. |
 | Fisher & Paykel SleepStyle | `sleepstyle_loader.cpp` | Yes | Yes | Dedicated | Dedicated parser for `SUM/DET/HIS/HRD` family files. |

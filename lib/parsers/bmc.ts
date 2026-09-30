@@ -41,6 +41,21 @@ type BmcWaveformDayState = {
   window60m: RollingAverageState;
 };
 
+type BmcWaveformFile = {
+  path: string;
+  bytes: Uint8Array;
+  index: number;
+  basePath: string;
+  dataOffset: number;
+};
+
+type BmcIdxWaveformStart = {
+  dayIso: string;
+  file: BmcWaveformFile;
+  byteOffset: number;
+  timestampMs: number;
+};
+
 type RollingAverageState = {
   values: Float64Array;
   capacity: number;
@@ -139,7 +154,7 @@ function decodeBmcDate(encodedDate: number): Date | null {
   const month = (encodedDate >> 5) & 0x0f;
   const day = encodedDate & 0x1f;
   const dt = new Date(Date.UTC(year, month - 1, day, 12, 0, 0, 0));
-  return Number.isNaN(dt.getTime()) ? null : dt;
+  return dt.getUTCFullYear() === year && dt.getUTCMonth() + 1 === month && dt.getUTCDate() === day ? dt : null;
 }
 
 function toBmcClinicalDayIso(year: number, month: number, day: number, hour: number): string | null {
@@ -322,6 +337,79 @@ export function detectBmcLegacyWaveformDataOffset(bytes: Uint8Array): number {
   return bytes.length >= 0x101 && bytes[0xff] === 0xaa && bytes[0x100] === 0xaa ? 0xff : 0;
 }
 
+function readBmcWaveformTimestamp(bytes: Uint8Array, offset: number): Date | null {
+  if (offset < 0 || offset + BMC_WAVEFORM_PACKET_SIZE > bytes.length || u16(bytes, offset) !== 0xaaaa) return null;
+  const year = u16(bytes, offset + 0xf8);
+  const month = bytes[offset + 0xfa] ?? 0;
+  const day = bytes[offset + 0xfb] ?? 0;
+  const hour = bytes[offset + 0xfc] ?? 0;
+  const minute = bytes[offset + 0xfd] ?? 0;
+  const second = bytes[offset + 0xfe] ?? 0;
+  if (year < 2000 || year > 2100) return null;
+  const timestamp = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
+  if (
+    timestamp.getUTCFullYear() !== year ||
+    timestamp.getUTCMonth() + 1 !== month ||
+    timestamp.getUTCDate() !== day ||
+    timestamp.getUTCHours() !== hour ||
+    timestamp.getUTCMinutes() !== minute ||
+    timestamp.getUTCSeconds() !== second
+  ) return null;
+  return timestamp;
+}
+
+function findBmcIdxWaveformStarts(
+  idxFiles: Array<{ path: string; bytes: Uint8Array }>,
+  waveformFiles: BmcWaveformFile[],
+  validDayIsoByBase: Map<string, Set<string>>
+): BmcIdxWaveformStart[] {
+  const starts = new Map<string, BmcIdxWaveformStart>();
+  for (const idxFile of idxFiles) {
+    const basePath = idxFile.path.slice(0, -4);
+    const validDayIsoSet = validDayIsoByBase.get(basePath);
+    if (!validDayIsoSet?.size) continue;
+    const bytes = idxFile.bytes;
+    for (let offset = BMC_IDX_PACKETS_OFFSET; offset + BMC_IDX_PACKET_SIZE <= bytes.length; offset += BMC_IDX_PACKET_SIZE) {
+      if (u16(bytes, offset) !== 0xaaaa) break;
+      const idxYear = 2000 + (bytes[offset + 4] ?? 0);
+      const idxMonth = bytes[offset + 5] ?? 0;
+      const idxDay = bytes[offset + 6] ?? 0;
+      const idxDate = new Date(Date.UTC(idxYear, idxMonth - 1, idxDay));
+      if (
+        idxDate.getUTCFullYear() !== idxYear ||
+        idxDate.getUTCMonth() + 1 !== idxMonth ||
+        idxDate.getUTCDate() !== idxDay
+      ) continue;
+      const startPacket = u16(bytes, offset + 0x0d);
+      const startFileIndex = u16(bytes, offset + 0x0f);
+      const file = waveformFiles.find((candidate) => candidate.basePath === basePath && candidate.index === startFileIndex);
+      if (!file) continue;
+
+      // OSCAR's IDX start offset is a count of 256-byte waveform packets. Some
+      // legacy files have a 255-byte tail before the aligned packet stream.
+      const rawOffset = startPacket * BMC_WAVEFORM_PACKET_SIZE;
+      const offsets = file.dataOffset > 0 ? [rawOffset + file.dataOffset, rawOffset] : [rawOffset];
+      for (const byteOffset of offsets) {
+        const timestamp = readBmcWaveformTimestamp(file.bytes, byteOffset);
+        if (!timestamp) continue;
+        const packetDate = Date.UTC(timestamp.getUTCFullYear(), timestamp.getUTCMonth(), timestamp.getUTCDate());
+        if (Math.abs(packetDate - idxDate.getTime()) >= 3 * 86_400_000) continue;
+        const dayIso = toBmcClinicalDayIso(
+          timestamp.getUTCFullYear(), timestamp.getUTCMonth() + 1, timestamp.getUTCDate(), timestamp.getUTCHours()
+        );
+        if (!dayIso || !validDayIsoSet.has(dayIso)) continue;
+        const key = `${basePath}:${dayIso}`;
+        const prior = starts.get(key);
+        if (!prior || timestamp.getTime() < prior.timestampMs) {
+          starts.set(key, { dayIso, file, byteOffset, timestampMs: timestamp.getTime() });
+        }
+        break;
+      }
+    }
+  }
+  return [...starts.values()];
+}
+
 function finishBmcLargeLeakEpisode(state: BmcWaveformDayState) {
   if (state.currentLargeLeakSeconds <= 0 || state.currentLargeLeakMax === null) return;
   if (
@@ -358,87 +446,101 @@ function pushBmcLeakWindow(state: BmcWaveformDayState, leak: number) {
 }
 
 function parseBmcWaveformRecords(
-  waveformFiles: Array<{ path: string; bytes: Uint8Array }>,
-  validDayIsoSet: Set<string>
+  waveformFiles: BmcWaveformFile[],
+  idxFiles: Array<{ path: string; bytes: Uint8Array }>,
+  validDayIsoByBase: Map<string, Set<string>>
 ): ParsedRecord[] {
-  if (waveformFiles.length === 0 || validDayIsoSet.size === 0) return [];
+  if (waveformFiles.length === 0 || validDayIsoByBase.size === 0) return [];
 
   const states = new Map<string, BmcWaveformDayState>();
+  const indexedStarts = findBmcIdxWaveformStarts(idxFiles, waveformFiles, validDayIsoByBase);
+  const indexedDays = new Set(indexedStarts.map((start) => `${start.file.basePath}:${start.dayIso}`));
+  const fallbackBases = new Set(
+    waveformFiles
+      .map((file) => file.basePath)
+      .filter((basePath) => [...(validDayIsoByBase.get(basePath) ?? [])].some((dayIso) => !indexedDays.has(`${basePath}:${dayIso}`)))
+  );
 
-  for (const waveformFile of waveformFiles) {
-    const bytes = waveformFile.bytes;
-    const dataOffset = detectBmcLegacyWaveformDataOffset(bytes);
+  const consumePacket = (file: BmcWaveformFile, offset: number, timestamp: Date, expectedDayIso?: string) => {
+    const bytes = file.bytes;
+    const clinicalDayIso = toBmcClinicalDayIso(
+      timestamp.getUTCFullYear(), timestamp.getUTCMonth() + 1, timestamp.getUTCDate(), timestamp.getUTCHours()
+    );
+    if (!clinicalDayIso || !validDayIsoByBase.get(file.basePath)?.has(clinicalDayIso) || (expectedDayIso && clinicalDayIso !== expectedDayIso)) return;
+    if (!expectedDayIso && indexedDays.has(`${file.basePath}:${clinicalDayIso}`)) return;
 
-    for (let offset = dataOffset; offset + BMC_WAVEFORM_PACKET_SIZE <= bytes.length; offset += BMC_WAVEFORM_PACKET_SIZE) {
-      if (u16(bytes, offset) !== 0xaaaa) continue;
-
-      const year = u16(bytes, offset + 0xf8);
-      const month = bytes[offset + 0xfa] ?? 0;
-      const day = bytes[offset + 0xfb] ?? 0;
-      const hour = bytes[offset + 0xfc] ?? 0;
-      const minute = bytes[offset + 0xfd] ?? 0;
-      const second = bytes[offset + 0xfe] ?? 0;
-
-      if (
-        year < 2000 ||
-        year > 2100 ||
-        month < 1 ||
-        month > 12 ||
-        day < 1 ||
-        day > 31 ||
-        hour > 23 ||
-        minute > 59 ||
-        second > 59
-      ) {
-        continue;
-      }
-
-      const clinicalDayIso = toBmcClinicalDayIso(year, month, day, hour);
-      if (!clinicalDayIso || !validDayIsoSet.has(clinicalDayIso)) continue;
-
-      const timestamp = new Date(Date.UTC(year, month - 1, day, hour, minute, second, 0));
-      const timestampMs = timestamp.getTime();
-      if (!Number.isFinite(timestampMs)) continue;
-
-      const state = states.get(clinicalDayIso) ?? createBmcWaveformDayState(clinicalDayIso);
-      if (!states.has(clinicalDayIso)) states.set(clinicalDayIso, state);
-
-      if (state.lastTimestampMs !== null) {
-        const deltaMs = timestampMs - state.lastTimestampMs;
-        if (deltaMs === 0) {
-          continue;
-        }
-        if (deltaMs < 0 || deltaMs > BMC_WAVEFORM_RESET_GAP_MS) {
-          resetBmcLeakWindows(state);
-        }
-      }
-      state.lastTimestampMs = timestampMs;
-
-      const leak = u16(bytes, offset + 0xc4) / 10;
-      if (Number.isFinite(leak) && leak >= 0 && leak < 500) {
-        state.leakSum += leak;
-        state.leakCount += 1;
-        state.leakMax = state.leakMax === null ? leak : Math.max(state.leakMax, leak);
-        if (leak > LARGE_LEAK_THRESHOLD_LPM) {
-          state.currentLargeLeakSeconds += 1;
-          state.currentLargeLeakMax = state.currentLargeLeakMax === null ? leak : Math.max(state.currentLargeLeakMax, leak);
-        } else {
-          finishBmcLargeLeakEpisode(state);
-        }
-        pushBmcLeakWindow(state, leak);
-      } else {
-        resetBmcLeakWindows(state);
-      }
-
-      const rawIpap = u16(bytes, offset + 0x04);
-      const rawEpap = u16(bytes, offset + 0x06);
-      const pressure = Math.max(rawIpap, rawEpap) / 2;
-      if (Number.isFinite(pressure) && pressure >= 0 && pressure <= 80) {
-        state.pressureSum += pressure;
-        state.pressureCount += 1;
-        state.pressureSeries.push(pressure);
-      }
+    const timestampMs = timestamp.getTime();
+    const state = states.get(clinicalDayIso) ?? createBmcWaveformDayState(clinicalDayIso);
+    if (!states.has(clinicalDayIso)) states.set(clinicalDayIso, state);
+    if (state.lastTimestampMs !== null) {
+      const deltaMs = timestampMs - state.lastTimestampMs;
+      if (deltaMs === 0) return;
+      if (deltaMs < 0 || deltaMs > BMC_WAVEFORM_RESET_GAP_MS) resetBmcLeakWindows(state);
     }
+    state.lastTimestampMs = timestampMs;
+
+    const leak = u16(bytes, offset + 0xc4) / 10;
+    if (Number.isFinite(leak) && leak >= 0 && leak < 500) {
+      state.leakSum += leak;
+      state.leakCount += 1;
+      state.leakMax = state.leakMax === null ? leak : Math.max(state.leakMax, leak);
+      if (leak > LARGE_LEAK_THRESHOLD_LPM) {
+        state.currentLargeLeakSeconds += 1;
+        state.currentLargeLeakMax = state.currentLargeLeakMax === null ? leak : Math.max(state.currentLargeLeakMax, leak);
+      } else {
+        finishBmcLargeLeakEpisode(state);
+      }
+      pushBmcLeakWindow(state, leak);
+    } else {
+      resetBmcLeakWindows(state);
+    }
+
+    const pressure = Math.max(u16(bytes, offset + 0x04), u16(bytes, offset + 0x06)) / 2;
+    if (Number.isFinite(pressure) && pressure >= 0 && pressure <= 80) {
+      state.pressureSum += pressure;
+      state.pressureCount += 1;
+      state.pressureSeries.push(pressure);
+    }
+  };
+
+  // Cards without a usable IDX anchor retain their existing timestamp-based path.
+  for (const file of waveformFiles) {
+    if (!fallbackBases.has(file.basePath)) continue;
+    for (let offset = file.dataOffset; offset + BMC_WAVEFORM_PACKET_SIZE <= file.bytes.length; offset += BMC_WAVEFORM_PACKET_SIZE) {
+      const timestamp = readBmcWaveformTimestamp(file.bytes, offset);
+      if (timestamp) consumePacket(file, offset, timestamp);
+    }
+  }
+
+  // Follow the physical ring from each validated IDX start. This mirrors OSCAR's
+  // start-position fix without treating the IDX "next" pointer as an end bound.
+  for (const start of indexedStarts) {
+    const files = waveformFiles.filter((file) => file.basePath === start.file.basePath).sort((a, b) => a.index - b.index);
+    const startFileIndex = files.indexOf(start.file);
+    if (startFileIndex < 0) continue;
+    const dayEndMs = new Date(`${start.dayIso}T12:00:00Z`).getTime() + 86_400_000;
+    let lastTimestampMs: number | null = null;
+    let complete = false;
+    const scan = (file: BmcWaveformFile, from: number, to: number) => {
+      for (let offset = from; offset + BMC_WAVEFORM_PACKET_SIZE <= Math.min(to, file.bytes.length); offset += BMC_WAVEFORM_PACKET_SIZE) {
+        const timestamp = readBmcWaveformTimestamp(file.bytes, offset);
+        if (!timestamp) continue;
+        const timestampMs = timestamp.getTime();
+        if (timestampMs > dayEndMs || (lastTimestampMs !== null && timestampMs < lastTimestampMs - 7_200_000)) {
+          complete = true;
+          return;
+        }
+        lastTimestampMs = timestampMs;
+        consumePacket(file, offset, timestamp, start.dayIso);
+      }
+    };
+
+    scan(start.file, start.byteOffset, start.file.bytes.length);
+    for (let step = 1; step < files.length && !complete; step += 1) {
+      const file = files[(startFileIndex + step) % files.length];
+      scan(file, file.dataOffset, file.bytes.length);
+    }
+    if (!complete) scan(start.file, start.file.dataOffset, start.byteOffset);
   }
 
   const records: ParsedRecord[] = [];
@@ -468,7 +570,7 @@ export function parseBmcHistoricSession(sessionBytes: Uint8Array): ParsedRecord 
   if (!startDate) return null;
 
   const durationMinutes = u16(sessionBytes, 0x0f);
-  const usageHours = durationMinutes > 0 ? durationMinutes / 60 : undefined;
+  const usageHours = durationMinutes > 0 && durationMinutes <= 24 * 60 ? durationMinutes / 60 : undefined;
 
   let pos = 0x45;
   while (pos + 5 <= sessionBytes.length) {
@@ -511,7 +613,7 @@ export function parseBmcHistoricSession(sessionBytes: Uint8Array): ParsedRecord 
     hasRespiratoryEventData && usageHours && usageHours > 0 ? (obstructiveApneas + centralApneas + hypopneas) / usageHours : undefined;
   return {
     date: startDate,
-    usageHours: usageHours && usageHours > 0 && usageHours <= 24 ? usageHours : undefined,
+    usageHours,
     ahi,
     residualApneas: hasRespiratoryEventData && usageHours && usageHours > 0 ? obstructiveApneas / usageHours : undefined,
     centralApneas: hasRespiratoryEventData && usageHours && usageHours > 0 ? centralApneas / usageHours : undefined
@@ -562,12 +664,14 @@ function collectRecentBmcDayIsoSet(records: ParsedRecord[], lookbackDays: number
   return recentDays;
 }
 
-export async function parseBmcFamily(context: FamilyParserContext, deps: FamilyParserDeps): Promise<void> {
+export async function parseBmcFamily(context: FamilyParserContext, deps: Pick<FamilyParserDeps, "emit">): Promise<void> {
   const validDayIsoSet = new Set<string>();
+  const validDayIsoByBase = new Map<string, Set<string>>();
   const usrCandidates = context.candidates.filter((candidate) => candidate.normalizedPath.toLowerCase().endsWith(".usr"));
   const idxCandidates = context.candidates.filter((candidate) => candidate.normalizedPath.toLowerCase().endsWith(".idx"));
   const waveformCandidates = context.candidates.filter((candidate) => /\.\d{3}$/i.test(candidate.normalizedPath));
   const primaryCandidates = [...usrCandidates, ...idxCandidates];
+  const idxFiles: Array<{ path: string; bytes: Uint8Array }> = [];
   let processed = 0;
   const totalWork = primaryCandidates.length + waveformCandidates.length;
 
@@ -590,12 +694,18 @@ export async function parseBmcFamily(context: FamilyParserContext, deps: FamilyP
       if (lowerPath.endsWith(".usr")) {
         inferBmcMachineInfo(bytes, context.machine);
         const parsedRecords = parseBmcUsrRecords(bytes);
+        const basePath = lowerPath.slice(0, -4);
+        const baseDays = validDayIsoByBase.get(basePath) ?? new Set<string>();
         for (const record of parsedRecords) {
-          validDayIsoSet.add(toIsoDate(record.date));
+          const dayIso = toIsoDate(record.date);
+          validDayIsoSet.add(dayIso);
+          baseDays.add(dayIso);
         }
+        if (baseDays.size > 0) validDayIsoByBase.set(basePath, baseDays);
         context.records.push(...parsedRecords);
       } else if (lowerPath.endsWith(".idx")) {
         inferBmcSettingsFromIdx(bytes, context.machine);
+        idxFiles.push({ path: lowerPath, bytes });
       }
     } catch {
       continue;
@@ -610,10 +720,15 @@ export async function parseBmcFamily(context: FamilyParserContext, deps: FamilyP
   if (recentDayIsoSet.size > 0) {
     validDayIsoSet.clear();
     for (const dayIso of recentDayIsoSet) validDayIsoSet.add(dayIso);
+    for (const [basePath, days] of validDayIsoByBase) {
+      const recentBaseDays = new Set([...days].filter((dayIso) => recentDayIsoSet.has(dayIso)));
+      if (recentBaseDays.size > 0) validDayIsoByBase.set(basePath, recentBaseDays);
+      else validDayIsoByBase.delete(basePath);
+    }
   }
 
   if (waveformCandidates.length > 0 && validDayIsoSet.size > 0) {
-    const waveformFiles: Array<{ path: string; bytes: Uint8Array }> = [];
+    const waveformFiles: BmcWaveformFile[] = [];
     for (const candidate of waveformCandidates) {
       processed += 1;
       const pct =
@@ -627,9 +742,14 @@ export async function parseBmcFamily(context: FamilyParserContext, deps: FamilyP
       });
 
       try {
+        const path = candidate.normalizedPath.toLowerCase();
+        const bytes = await candidate.file.readBytes();
         waveformFiles.push({
-          path: candidate.normalizedPath.toLowerCase(),
-          bytes: await candidate.file.readBytes()
+          path,
+          bytes,
+          index: Number(path.slice(-3)),
+          basePath: path.slice(0, -4),
+          dataOffset: detectBmcLegacyWaveformDataOffset(bytes)
         });
       } catch {
         continue;
@@ -646,6 +766,6 @@ export async function parseBmcFamily(context: FamilyParserContext, deps: FamilyP
       detail: "Reading Luna II waveform and leak data...",
       percent: Math.min(context.progressEnd, context.progressStart + Math.round((context.progressEnd - context.progressStart) * 0.95))
     });
-    context.records.push(...parseBmcWaveformRecords(waveformFiles, validDayIsoSet));
+    context.records.push(...parseBmcWaveformRecords(waveformFiles, idxFiles, validDayIsoByBase));
   }
 }

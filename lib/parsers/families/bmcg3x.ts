@@ -7,17 +7,9 @@ function normalizePath(path: string): string {
 export function hasBmcG3xCandidateStructure(files: Array<{ normalizedPath: string }>): boolean {
   const normalized = files.map((file) => normalizePath(file.normalizedPath));
   if (normalized.some((path) => /(?:^|\/)[^/]+\.usr$/i.test(path))) return false;
-
-  const basesWithIdx = new Set<string>();
-  const basesWithWaveform = new Set<string>();
-  for (const path of normalized) {
-    const idx = /^(.*\/)?([^/]+)\.idx$/i.exec(path);
-    if (idx) basesWithIdx.add(`${idx[1] ?? ""}${idx[2]}`.toLowerCase());
-    const waveform = /^(.*\/)?([^/]+)\.000$/i.exec(path);
-    if (waveform) basesWithWaveform.add(`${waveform[1] ?? ""}${waveform[2]}`.toLowerCase());
-  }
-
-  return [...basesWithIdx].some((base) => basesWithWaveform.has(base));
+  // Recent G3X cards can retain IDX statistics and EVT events after waveform
+  // files have been removed. The IDX header is checked before this family runs.
+  return normalized.some((path) => /(?:^|\/)[^/]+\.idx$/i.test(path));
 }
 
 export const BMC_G3X_FAMILY: ParserFamilyDefinition = {

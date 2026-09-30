@@ -16,8 +16,10 @@ type G3xDay = {
   dateIso: string;
   waveStart: number;
   waveEnd: number;
+  waveLength: number;
   eventStart: number;
   eventEnd: number;
+  eventLength: number;
   usageHours?: number;
   ahi?: number;
   residualApneas?: number;
@@ -114,7 +116,9 @@ function decodeTimestamp(bytes: Uint8Array, offset: number): Date | null {
     date.getUTCFullYear() !== year ||
     date.getUTCMonth() + 1 !== month ||
     date.getUTCDate() !== day ||
-    date.getUTCHours() !== hour
+    date.getUTCHours() !== hour ||
+    date.getUTCMinutes() !== minute ||
+    date.getUTCSeconds() !== second
   ) {
     return null;
   }
@@ -139,6 +143,9 @@ function inferMachine(bytes: Uint8Array, machine: QuickReportMetrics["machine"])
 export function parseBmcG3xIdxDays(bytes: Uint8Array): G3xDay[] {
   if (!isBmcG3xIdx(bytes)) return [];
   const days: G3xDay[] = [];
+  // OSCAR's E5 card analysis found that IT 0xBC–0xD2 carries different fields
+  // from G3X, while duration and pressure settings remain usable.
+  const isE5Platform = /^E5\b/i.test(ascii(bytes, 0x100, 16)) || /^E5\b/i.test(ascii(bytes, 0x345, 20));
 
   for (let offset = G3X_IDX_RECORD_OFFSET; offset + G3X_IDX_RECORD_SIZE <= bytes.length; offset += G3X_IDX_RECORD_SIZE) {
     if (u16(bytes, offset) !== 0xaaaa) continue;
@@ -175,24 +182,29 @@ export function parseBmcG3xIdxDays(bytes: Uint8Array): G3xDay[] {
       return raw === 0xffff || raw === 0 ? undefined : raw / 100;
     };
     const durationSeconds = hasIt ? u32(bytes, it + 0x14) : 0;
+    const validDurationSeconds = durationSeconds > 0 && durationSeconds <= 24 * 60 * 60;
     const waveStart = u32(bytes, offset + 0x10);
     const waveEnd = u32(bytes, offset + 0x14);
+    const waveLength = u32(bytes, offset + 0x18);
     const eventStart = u32(bytes, offset + 0x1c);
     const eventEnd = u32(bytes, offset + 0x20);
-    if (durationSeconds === 0 && waveEnd <= waveStart && eventEnd <= eventStart) continue;
+    const eventLength = u32(bytes, offset + 0x24);
+    if (!validDurationSeconds && (waveLength === 0 || waveEnd <= waveStart) && (eventLength === 0 || eventEnd <= eventStart)) continue;
 
     days.push({
       date,
       dateIso: date.toISOString().slice(0, 10),
       waveStart,
       waveEnd,
+      waveLength,
       eventStart,
       eventEnd,
-      usageHours: durationSeconds > 0 ? durationSeconds / 3600 : undefined,
-      ahi: optionalIndex(0xbc),
-      residualApneas: optionalIndex(0xc2),
-      centralApneas: optionalIndex(0xc4),
-      reraIndex: optionalIndex(0xc6),
+      eventLength,
+      usageHours: validDurationSeconds ? durationSeconds / 3600 : undefined,
+      ahi: isE5Platform ? undefined : optionalIndex(0xbc),
+      residualApneas: isE5Platform ? undefined : optionalIndex(0xc2),
+      centralApneas: isE5Platform ? undefined : optionalIndex(0xc4),
+      reraIndex: isE5Platform ? undefined : optionalIndex(0xc6),
       pressure95th: optionalPressure(0x2c),
       pressureMin: tsPressure(0x0e) ?? optionalPressure(0x28),
       pressureMax: tsPressure(0x10) ?? optionalPressure(0x2a),
@@ -341,33 +353,147 @@ function parseWaveformSamples(bytes: Uint8Array, virtualFileStart: number, days:
   return samplesByDay;
 }
 
-function applyEvtFallback(bytes: Uint8Array, days: G3xDay[], records: Map<string, ParsedRecord>) {
-  const counts = new Map<string, { oa: number; ca: number; h: number; rera: number }>();
+type G3xSessionWindow = { startMs: number; endMs: number };
+type G3xPressureSnapshots = { epaps: number[]; ipaps: number[] };
+type G3xPressureUpdate = { timestampMs: number; epap: number; ipap: number };
+
+function constantPressure(values: number[]): number | undefined {
+  const first = values[0];
+  return first !== undefined && values.every((value) => value === first) ? first : undefined;
+}
+
+function g3xFileBase(path: string): string {
+  return path.replace(/\.(?:idx|evt|\d{3})$/i, "").toLowerCase();
+}
+
+function applyEvtFallback(
+  bytes: Uint8Array,
+  days: G3xDay[],
+  records: Map<string, ParsedRecord>
+): { sessionsByDay: Map<string, G3xSessionWindow[]>; pressureByDay: Map<string, G3xPressureSnapshots> } {
+  const counts = new Map<string, { ua: number; oa: number; ca: number; h: number; rera: number }>();
+  const sessionStarts = new Map<string, number[]>();
+  const sessionEnds = new Map<string, number[]>();
+  const pressureByDay = new Map<string, G3xPressureSnapshots>();
+  const unindexedPressureUpdates: G3xPressureUpdate[] = [];
   for (let offset = 0; offset + G3X_EVT_RECORD_SIZE <= bytes.length; offset += G3X_EVT_RECORD_SIZE) {
     if (bytes[offset] !== 0xae || bytes[offset + 1] !== 0xaa) continue;
     const timestamp = decodeTimestamp(bytes, offset + 0x14);
     if (!timestamp) continue;
-    const day = days.find((entry) => offset >= entry.eventStart && offset < entry.eventEnd) ??
-      days.find((entry) => entry.dateIso === timestamp.toISOString().slice(0, 10));
-    if (!day) continue;
+    const milliseconds = u16(bytes, offset + 0x1a);
+    if (milliseconds <= 999) timestamp.setUTCMilliseconds(milliseconds);
     const type = bytes[offset + 0x10] ?? 0;
-    const current = counts.get(day.dateIso) ?? { oa: 0, ca: 0, h: 0, rera: 0 };
-    if (type === 0x03) current.oa += 1;
+    let pressureUpdate: G3xPressureUpdate | null = null;
+    if (type === 0x42) {
+      const epapRaw = u16(bytes, offset + 0x1c);
+      const ipapRaw = u16(bytes, offset + 0x1e);
+      if (epapRaw >= 400 && epapRaw <= 3500) {
+        pressureUpdate = {
+          timestampMs: timestamp.getTime(),
+          epap: epapRaw / 100,
+          ipap: (ipapRaw >= 400 && ipapRaw <= 3500 ? ipapRaw : epapRaw) / 100
+        };
+      }
+    }
+    const day = days.find((entry) =>
+      entry.eventLength > 0 &&
+      offset >= Math.floor(entry.eventStart / G3X_EVT_RECORD_SIZE) * G3X_EVT_RECORD_SIZE &&
+      offset < entry.eventEnd
+    );
+    if (!day) {
+      if (pressureUpdate) unindexedPressureUpdates.push(pressureUpdate);
+      continue;
+    }
+    if (type === 0x42) {
+      // OSCAR decodes value2 as EPAP and unk1e as IPAP, in hundredths of cmH2O.
+      if (pressureUpdate) {
+        const values = pressureByDay.get(day.dateIso) ?? { epaps: [], ipaps: [] };
+        values.epaps.push(pressureUpdate.epap);
+        values.ipaps.push(pressureUpdate.ipap);
+        pressureByDay.set(day.dateIso, values);
+      }
+      continue;
+    }
+    if (type === 0x40 || type === 0x41) {
+      const markers = type === 0x40 ? sessionStarts : sessionEnds;
+      const values = markers.get(day.dateIso) ?? [];
+      values.push(timestamp.getTime());
+      markers.set(day.dateIso, values);
+      continue;
+    }
+    const current = counts.get(day.dateIso) ?? { ua: 0, oa: 0, ca: 0, h: 0, rera: 0 };
+    if (type === 0x02) current.ua += 1;
+    else if (type === 0x03) current.oa += 1;
     else if (type === 0x04) current.ca += 1;
     else if (type === 0x01 || type === 0x07 || type === 0x08) current.h += 1;
     else if (type === 0x0a) current.rera += 1;
     counts.set(day.dateIso, current);
   }
 
+  // Some G3X/E5 cards have pressure 0x42 records near the IDX day but outside
+  // its EVT byte slice. OSCAR searches those records when the slice has no
+  // pressure; keep this fallback pressure-only so stale events cannot affect AHI.
+  const fallbackDays = days.filter((day) => !pressureByDay.has(day.dateIso));
+  for (const update of unindexedPressureUpdates) {
+    let closestDay: G3xDay | null = null;
+    let closestDistanceMs = Number.POSITIVE_INFINITY;
+    const updateMidnightMs = Math.floor(update.timestampMs / 86_400_000) * 86_400_000;
+    for (const day of fallbackDays) {
+      const dateMidnightMs = day.date.getTime() - 12 * 3_600_000;
+      const endWindowMs = day.date.getTime() + (day.usageHours ?? 1) * 3_600_000 + 12 * 3_600_000;
+      if (
+        (update.timestampMs < dateMidnightMs || update.timestampMs > endWindowMs) &&
+        Math.abs(updateMidnightMs - dateMidnightMs) > 86_400_000
+      ) continue;
+      // Adjacent IDX days have overlapping fallback windows. Assign each
+      // pressure update to the nearest clinical noon-to-noon day only once.
+      const clinicalStartMs = day.date.getTime();
+      const clinicalEndMs = clinicalStartMs + 86_400_000;
+      const distanceMs = Math.max(clinicalStartMs - update.timestampMs, update.timestampMs - clinicalEndMs, 0);
+      if (distanceMs < closestDistanceMs) {
+        closestDay = day;
+        closestDistanceMs = distanceMs;
+      }
+    }
+    if (!closestDay) continue;
+    const values = pressureByDay.get(closestDay.dateIso) ?? { epaps: [], ipaps: [] };
+    values.epaps.push(update.epap);
+    values.ipaps.push(update.ipap);
+    pressureByDay.set(closestDay.dateIso, values);
+  }
+
+  const sessionsByDay = new Map<string, G3xSessionWindow[]>();
+  for (const day of days) {
+    const starts = sessionStarts.get(day.dateIso) ?? [];
+    const ends = sessionEnds.get(day.dateIso) ?? [];
+    const sessions: G3xSessionWindow[] = [];
+    for (let index = 0; index < Math.min(starts.length, ends.length); index += 1) {
+      const startMs = starts[index];
+      const endMs = ends[index];
+      if (endMs > startMs && endMs - startMs <= 24 * 60 * 60 * 1000) sessions.push({ startMs, endMs });
+    }
+    const totalSessionMs = sessions.reduce((sum, session) => sum + (session.endMs - session.startMs), 0);
+    if (totalSessionMs <= 0 || totalSessionMs > 24 * 60 * 60 * 1000) continue;
+    sessionsByDay.set(day.dateIso, sessions);
+    const record = records.get(day.dateIso);
+    if (record && record.usageHours === undefined) {
+      record.usageHours = totalSessionMs / 3_600_000;
+    }
+  }
+
   for (const [dayIso, dayCounts] of counts) {
     const record = records.get(dayIso);
     if (!record?.usageHours) continue;
-    const total = dayCounts.oa + dayCounts.ca + dayCounts.h;
+    const total = dayCounts.ua + dayCounts.oa + dayCounts.ca + dayCounts.h;
     if (record.ahi === undefined && total > 0) record.ahi = total / record.usageHours;
-    if (record.residualApneas === undefined && dayCounts.oa > 0) record.residualApneas = dayCounts.oa / record.usageHours;
+    if (record.residualApneas === undefined && dayCounts.ua + dayCounts.oa > 0) {
+      record.residualApneas = (dayCounts.ua + dayCounts.oa) / record.usageHours;
+    }
     if (record.centralApneas === undefined && dayCounts.ca > 0) record.centralApneas = dayCounts.ca / record.usageHours;
     if (record.reraIndex === undefined && dayCounts.rera > 0) record.reraIndex = dayCounts.rera / record.usageHours;
   }
+
+  return { sessionsByDay, pressureByDay };
 }
 
 export async function parseBmcG3xFamily(context: FamilyParserContext, deps: FamilyParserDeps): Promise<void> {
@@ -376,6 +502,7 @@ export async function parseBmcG3xFamily(context: FamilyParserContext, deps: Fami
   const waveformCandidates = context.candidates.filter((candidate) => /\.\d{3}$/i.test(candidate.normalizedPath));
   const records = new Map<string, ParsedRecord>();
   const days: G3xDay[] = [];
+  const daysByBase = new Map<string, G3xDay[]>();
   let processed = 0;
   const total = idxCandidates.length + evtCandidates.length + waveformCandidates.length;
 
@@ -391,6 +518,7 @@ export async function parseBmcG3xFamily(context: FamilyParserContext, deps: Fami
     inferMachine(bytes, context.machine);
     const parsedDays = parseBmcG3xIdxDays(bytes);
     days.push(...parsedDays);
+    daysByBase.set(g3xFileBase(candidate.normalizedPath), parsedDays);
     applyLatestSettings(parsedDays, context.machine);
     for (const day of parsedDays) {
       records.set(day.dateIso, {
@@ -405,10 +533,23 @@ export async function parseBmcG3xFamily(context: FamilyParserContext, deps: Fami
     }
   }
 
+  const evtSessionsByDay = new Map<string, G3xSessionWindow[]>();
+  const evtPressureByDay = new Map<string, G3xPressureSnapshots>();
   for (const candidate of evtCandidates) {
     processed += 1;
     try {
-      applyEvtFallback(await candidate.file.readBytes(), days, records);
+      const matchingDays = daysByBase.get(g3xFileBase(candidate.normalizedPath));
+      if (!matchingDays) continue;
+      const evt = applyEvtFallback(await candidate.file.readBytes(), matchingDays, records);
+      for (const [dayIso, windows] of evt.sessionsByDay) {
+        evtSessionsByDay.set(dayIso, [...(evtSessionsByDay.get(dayIso) ?? []), ...windows]);
+      }
+      for (const [dayIso, values] of evt.pressureByDay) {
+        const existing = evtPressureByDay.get(dayIso) ?? { epaps: [], ipaps: [] };
+        existing.epaps.push(...values.epaps);
+        existing.ipaps.push(...values.ipaps);
+        evtPressureByDay.set(dayIso, existing);
+      }
     } catch {
       context.warnings.push(`Could not read ${candidate.normalizedPath}`);
     }
@@ -423,8 +564,10 @@ export async function parseBmcG3xFamily(context: FamilyParserContext, deps: Fami
       percent: context.progressStart + Math.round((processed / Math.max(1, total)) * (context.progressEnd - context.progressStart))
     });
     try {
+      const matchingDays = daysByBase.get(g3xFileBase(candidate.normalizedPath));
+      if (!matchingDays) continue;
       const extension = Number(candidate.normalizedPath.match(/\.(\d{3})$/)?.[1] ?? "0");
-      const parsed = parseWaveformSamples(await candidate.file.readBytes(), extension * G3X_WAVEFORM_FILE_SPAN, days);
+      const parsed = parseWaveformSamples(await candidate.file.readBytes(), extension * G3X_WAVEFORM_FILE_SPAN, matchingDays);
       for (const [dayIso, values] of parsed) {
         const existing = samplesByDay.get(dayIso) ?? [];
         existing.push(...values);
@@ -436,6 +579,33 @@ export async function parseBmcG3xFamily(context: FamilyParserContext, deps: Fami
   }
 
   const timingRecords: ParsedRecord[] = [];
+  for (const [dayIso, values] of evtPressureByDay) {
+    if (samplesByDay.has(dayIso)) continue;
+    const record = records.get(dayIso);
+    if (!record) continue;
+    // EVT 0x42 records are pressure changes, not evenly spaced samples. A
+    // constant value is safe to summarize without waveform/session weighting.
+    const epap = constantPressure(values.epaps);
+    const ipap = constantPressure(values.ipaps);
+    record.pressureAvg ??= ipap;
+    record.pressure95th ??= ipap;
+    record.epapAvg ??= epap;
+    record.epap95th ??= epap;
+    record.ipapAvg ??= ipap;
+    record.ipap95th ??= ipap;
+  }
+  for (const [dayIso, sessions] of evtSessionsByDay) {
+    if (samplesByDay.has(dayIso)) continue;
+    const day = days.find((entry) => entry.dateIso === dayIso);
+    if (!day) continue;
+    for (const session of sessions) {
+      timingRecords.push({
+        date: day.date,
+        therapySessionStart: new Date(session.startMs),
+        therapySessionEnd: new Date(session.endMs)
+      });
+    }
+  }
   for (const [dayIso, samples] of samplesByDay) {
     const record = records.get(dayIso);
     if (!record) continue;
