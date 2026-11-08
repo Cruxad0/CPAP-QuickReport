@@ -196,7 +196,7 @@ test("PRS1 root selection still respects LAST.TXT when it points to a valid smal
   assert.equal(selected, "ACTIVEROOT");
 });
 
-test("PRS1 leak samples populate leak duration fields for CPAP, APAP, and BiPAP modes", async () => {
+test("PRS1 retains recorded total leak without inferring mask-dependent leak episodes", async () => {
   const sessionDate = Date.UTC(2026, 3, 15, 12, 0, 0) / 1000;
   const modeCases: Array<{ mode: "CPAP" | "APAP" | "BiPAP"; model: string }> = [
     { mode: "CPAP", model: "450P" },
@@ -235,8 +235,39 @@ test("PRS1 leak samples populate leak duration fields for CPAP, APAP, and BiPAP 
     assert.equal(metrics.avgReraIndex, null);
     assert.equal(metrics.avgLeak, 42.5);
     assert.equal(metrics.maxLeak, 45);
-    assert.ok(Math.abs((metrics.maxLeakMinutes ?? 0) - 20) < 0.0001);
-    assert.equal(metrics.sustainedLeakMax, 45);
-    assert.ok(Math.abs((metrics.sustainedLeakMinutes ?? 0) - 20) < 0.0001);
+    assert.equal(metrics.maxLeakMinutes, null);
+    assert.equal(metrics.sustainedLeakMax, null);
+    assert.equal(metrics.sustainedLeakMinutes, null);
   }
+});
+
+test("PRS1 counts apnea separately from hypopnea and keeps the recorded total leak", async () => {
+  const timestamp = Date.UTC(2026, 3, 15, 12) / 1000;
+  const events = prs1Chunk(new Uint8Array([
+    0x06, 0, 0, 0, 0x07, 0, 0, 0, 0x0a, 0, 0, 0,
+    0x11, 0, 0, 40, 0, 100, 0
+  ]), timestamp);
+  events[6] = 2;
+  const orphan = prs1Chunk(new Uint8Array([0x11, 0, 0, 0, 0, 100, 0]), timestamp);
+  orphan[6] = 2;
+  writeLe32(orphan, 7, 0x12345679);
+  const properties = "ModelNumber=550P\nMode=APAP";
+  const prepared = await prepareQuickReportSource({ sourceKind: "folder", lookbackDays: 7, files: [
+    createSourceFile("P-SERIES/PRSROOT/P0/12345678.000", prs1Chunk(prs1SummaryPayloadWithLeaks([40], 3600), timestamp)),
+    createSourceFile("P-SERIES/PRSROOT/P0/12345679.000", (() => { const bytes = prs1Chunk(prs1SummaryPayloadWithLeaks([0], 0), timestamp); writeLe32(bytes, 7, 0x12345679); return bytes; })()),
+    createSourceFile("P-SERIES/PRSROOT/P0/12345678.002", events),
+    createSourceFile("P-SERIES/PRSROOT/P0/12345679.002", orphan),
+    createSourceFile("P-SERIES/PRSROOT/P0/12345679.B01", new Uint8Array(450)),
+    createSourceFile("P-SERIES/PRSROOT/properties.txt", new TextEncoder().encode(properties), properties)
+  ] });
+  const metrics = buildQuickReportMetricsFromPreparedSource(prepared, {
+    patientName: "Fixture", dateOfBirthIso: "1970-01-01", physicianName: "", lookbackDays: 7,
+    windowEndClinicalDayIso: "2026-04-16"
+  });
+  assert.equal(metrics.avgAhi, 3);
+  assert.equal(metrics.avgResidualApneas, 2);
+  assert.equal(metrics.avgCentralApneas, 1);
+  assert.equal(metrics.avgLeak, 40);
+  assert.ok(metrics.warnings.includes("Some Philips encrypted records could not be read; report data may be incomplete."));
+  assert.ok(metrics.warnings.includes("Some Philips leak samples lack a usable session duration and were excluded from report summaries."));
 });

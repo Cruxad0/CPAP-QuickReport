@@ -248,7 +248,7 @@ test("ResMed preparation retains root STR/settings metadata when DATALOG EDF vol
   assert.equal(prepared.latestClinicalDayIso, "2026-04-15");
 });
 
-test("ResMed STR, EVE, and PLD parsing expose leak summaries, EPR, and correctly aggregated RERA", async () => {
+test("ResMed generic arousals do not invent RERA metrics", async () => {
   const files: SourceFile[] = [
     createSourceFile("Identification.tgt", new TextEncoder().encode("#PNA AirSense_10_AutoSet\n")),
     createSourceFile("STR.edf", createSyntheticResMedStrEdf()),
@@ -272,12 +272,29 @@ test("ResMed STR, EVE, and PLD parsing expose leak summaries, EPR, and correctly
   assert.equal(prepared.machine.pressureRelief, "EPR: On 3");
   assert.equal(metrics.avgLeak, 3);
   assert.equal(metrics.leak95th, 9);
-  assert.equal(metrics.maxLeak, 12);
-  assert.equal(metrics.avgReraIndex, 0.5);
-  assert.equal(metrics.rera95th, 0.5);
+  assert.equal(metrics.maxLeak, 36);
+  assert.equal(metrics.avgReraIndex, null);
+  assert.equal(metrics.rera95th, null);
 });
 
-test("ResMed EVE events fill missing STR residual and central apnea indexes", async () => {
+test("ResMed current JSON overrides older STR EPR, ramp, and pressure settings", async () => {
+  const current = JSON.stringify({ FlowGenerator: { SettingProfiles: {
+    ActiveProfiles: { TherapyProfile: "CpapProfile" },
+    TherapyProfiles: { CpapProfile: { TherapyMode: "CPAP", SetPressure: 8, StartPressure: 5 } },
+    FeatureProfiles: { EprFeature: { EprEnable: "Off", EprPressure: 3 }, AutoRampFeature: { RampEnable: "On", RampTime: 20 } }
+  } } });
+  const prepared = await prepareQuickReportSource({ sourceKind: "folder", lookbackDays: 7, files: [
+    createSourceFile("Identification.json", new TextEncoder().encode('{"ProductName":"AirSense 11 AutoSet"}')),
+    createSourceFile("STR.edf", createSyntheticResMedStrEdf()),
+    createSourceFile("SETTINGS/CurrentSettings.json", new TextEncoder().encode(current))
+  ] });
+  assert.equal(prepared.machine.pressure, "Fixed 8 cmH2O");
+  assert.equal(prepared.machine.pressureRelief, "EPR: Off");
+  assert.equal(prepared.machine.rampTime, "20 minutes");
+  assert.equal(prepared.machine.rampPressure, "5 cmH2O");
+});
+
+test("ResMed mixed generic and classified apnea events do not invent a central index", async () => {
   const files: SourceFile[] = [
     createSourceFile("Identification.json", new TextEncoder().encode('{"ProductName":"AirSense 11 AutoSet"}')),
     createSourceFile("STR.edf", createSyntheticResMedStrEdf({ includeApneaSummary: false })),
@@ -302,8 +319,18 @@ test("ResMed EVE events fill missing STR residual and central apnea indexes", as
 
   assert.equal(metrics.avgResidualApneas, 0.5);
   assert.equal(metrics.residualApneas95th, 0.5);
+  assert.equal(metrics.avgCentralApneas, null);
+  assert.equal(metrics.centralApneas95th, null);
+});
+
+test("ResMed fully classified EVE apneas support a central apnea index", async () => {
+  const prepared = await prepareQuickReportSource({ sourceKind: "folder", lookbackDays: 7, files: [
+    createSourceFile("Identification.json", new TextEncoder().encode('{"ProductName":"AirSense 11 AutoSet"}')),
+    createSourceFile("STR.edf", createSyntheticResMedStrEdf({ includeApneaSummary: false })),
+    createSourceFile("DATALOG/20260415/20260415_000000_EVE.edf", createSyntheticResMedEveEdf(0, ["Obstructive Apnea", "Central Apnea"]))
+  ] });
+  const metrics = buildQuickReportMetricsFromPreparedSource(prepared, { patientName: "Fixture", dateOfBirthIso: "1970-01-01", physicianName: "", lookbackDays: 7, windowEndClinicalDayIso: "2026-04-16" });
   assert.ok(Math.abs((metrics.avgCentralApneas ?? 0) - 1 / 6) < 0.0001);
-  assert.ok(Math.abs((metrics.centralApneas95th ?? 0) - 1 / 6) < 0.0001);
 });
 
 test("ResMed generic EVE apnea events do not invent a central apnea index", async () => {
@@ -381,8 +408,8 @@ test("ResMed PLD leak waveform populates leak duration fields", async () => {
 
   assert.equal(metrics.avgLeak, 3);
   assert.equal(metrics.leak95th, 9);
-  assert.equal(metrics.maxLeak, 12);
-  assert.equal(metrics.maxLeakMinutes, null);
+  assert.equal(metrics.maxLeak, 54);
+  assert.ok(Math.abs((metrics.maxLeakMinutes ?? 0) - 4 / 60) < 0.0001);
   assert.ok(Math.abs((metrics.sustainedLeakMax ?? 0) - 54) < 0.0001);
   assert.ok(Math.abs((metrics.sustainedLeakMinutes ?? 0) - 4 / 60) < 0.0001);
 });

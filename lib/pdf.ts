@@ -799,11 +799,11 @@ function respiratoryRateMetricText(value: number | null | undefined): string {
   return typeof value === "number" && Number.isFinite(value) ? `${formatReportMetricValue(value)} bpm` : NO_DATA_FALLBACK;
 }
 
-function tidalVolumeMetricText(value: number | null | undefined, sustainedMinutes?: number | null): string {
+function tidalVolumeMetricText(value: number | null | undefined, sampledMinutes?: number | null): string {
   if (typeof value !== "number" || !Number.isFinite(value)) return NO_DATA_FALLBACK;
   const text = `${formatReportMetricValue(value * 1000)} mL`;
-  return typeof sustainedMinutes === "number" && Number.isFinite(sustainedMinutes)
-    ? `${text} for ${formatReportMetricValue(sustainedMinutes)} min`
+  return typeof sampledMinutes === "number" && Number.isFinite(sampledMinutes)
+    ? `${text}; ${formatReportMetricValue(sampledMinutes)} sampled min total`
     : text;
 }
 
@@ -863,8 +863,12 @@ export function machineSettingRows(report: QuickReportMetrics): TableRow[] {
   if (isBiPap && isAutoBiPap) {
     const minEpap = report.machine.pressureMin ?? derivedRange?.min;
     const maxIpap = report.machine.pressureMax ?? derivedRange?.max;
-    if (hasReportText(minEpap)) rows.push(["Min EPAP", normalizePressureDisplay(minEpap)]);
-    if (hasReportText(maxIpap)) rows.push(["Max IPAP", normalizePressureDisplay(maxIpap)]);
+    const resvent = /^Resvent\s*\/\s*Hoffrichter$/i.test(report.selectedLoader.trim());
+    if (hasReportText(minEpap)) rows.push([resvent ? "Config PMin" : "Min EPAP", normalizePressureDisplay(minEpap)]);
+    if (hasReportText(maxIpap)) rows.push([resvent ? "Config PMax" : "Max IPAP", normalizePressureDisplay(maxIpap)]);
+    if (hasReportText(report.machine.configEpapMin)) rows.push(["Config EPAPMin", normalizePressureDisplay(report.machine.configEpapMin)]);
+    if (hasReportText(report.machine.configIpapMax)) rows.push(["Config IPAPMax", normalizePressureDisplay(report.machine.configIpapMax)]);
+    if (hasReportText(report.machine.configPressureSupport)) rows.push(["Config PS", normalizePressureDisplay(report.machine.configPressureSupport)]);
     if (shouldDisplayRespiratoryRate(report.machine)) {
       rows.push(["Respiratory rate (RR)", normalizeRespiratoryRateDisplay(report.machine.respiratoryRate)]);
     }
@@ -911,6 +915,13 @@ function hasAnyPressureSummaryValue(report: QuickReportMetrics): boolean {
   );
 }
 
+function pressurePercentileLabel(name: string, method: NonNullable<QuickReportMetrics["summaryMethods"]>["pressure95"] | undefined): string {
+  if (method === "mean-daily-95") return `Avg daily 95th ${name}`;
+  if (method === "95-daily-95") return `95th of daily 95th ${name}`;
+  if (method === "95-daily-summary") return `95th daily ${name} summary`;
+  return `95th ${name}`;
+}
+
 export function therapyPressureRows(report: QuickReportMetrics): TableRow[] {
   const mode = report.machine.mode?.trim() ?? "";
   const therapyMode = classifyTherapyMode(report.machine);
@@ -926,32 +937,35 @@ export function therapyPressureRows(report: QuickReportMetrics): TableRow[] {
   const minimumPressureSetting = numericSettingValue(minPressure);
   const rows: TableRow[] = [];
   if (isBiPap) {
-    const autoBilevelMinimumSetting = numericSettingValue(report.machine.pressureMin ?? report.machine.epap ?? derivedRange?.min);
+    const autoBilevelMinimumSetting = report.warnings.includes("Resvent PMin and EPAPMin configuration fields differ; confirm which bound is active on the device.")
+      ? null
+      : numericSettingValue(report.machine.pressureMin ?? report.machine.epap ?? derivedRange?.min);
     const ipapMinimumSetting = isAutoBiPap ? autoBilevelMinimumSetting : numericSettingValue(report.machine.ipap);
     const epapMinimumSetting = isAutoBiPap ? autoBilevelMinimumSetting : numericSettingValue(report.machine.epap);
     if (hasMetricValue(report.machine.ipap95th)) {
-      rows.push(metricRow("95th IPAP", pressureMetricText(report.machine.ipap95th), isPressureMetricBelowSetting(report.machine.ipap95th, ipapMinimumSetting)));
+      rows.push(metricRow(pressurePercentileLabel("IPAP", report.summaryMethods?.ipap95), pressureMetricText(report.machine.ipap95th), isPressureMetricBelowSetting(report.machine.ipap95th, ipapMinimumSetting)));
     }
     if (hasMetricValue(report.machine.ipapAvg)) {
-      rows.push(metricRow("Avg IPAP", pressureMetricText(report.machine.ipapAvg), isPressureMetricBelowSetting(report.machine.ipapAvg, ipapMinimumSetting)));
+      rows.push(metricRow(report.summaryMethods ? "Avg daily IPAP summary" : "Avg IPAP", pressureMetricText(report.machine.ipapAvg), isPressureMetricBelowSetting(report.machine.ipapAvg, ipapMinimumSetting)));
     }
     if (hasMetricValue(report.machine.epap95th)) {
-      rows.push(metricRow("95th EPAP", pressureMetricText(report.machine.epap95th), isPressureMetricBelowSetting(report.machine.epap95th, epapMinimumSetting)));
+      rows.push(metricRow(pressurePercentileLabel("EPAP", report.summaryMethods?.epap95), pressureMetricText(report.machine.epap95th), isPressureMetricBelowSetting(report.machine.epap95th, epapMinimumSetting)));
     }
     if (hasMetricValue(report.machine.epapAvg)) {
-      rows.push(metricRow("Avg EPAP", pressureMetricText(report.machine.epapAvg), isPressureMetricBelowSetting(report.machine.epapAvg, epapMinimumSetting)));
+      rows.push(metricRow(report.summaryMethods ? "Avg daily EPAP summary" : "Avg EPAP", pressureMetricText(report.machine.epapAvg), isPressureMetricBelowSetting(report.machine.epapAvg, epapMinimumSetting)));
     }
   } else {
     if (hasMetricValue(report.machine.pressure95th)) {
-      rows.push(metricRow("95th Pressure", pressureMetricText(report.machine.pressure95th), isPressureMetricBelowSetting(report.machine.pressure95th, minimumPressureSetting)));
+      rows.push(metricRow(pressurePercentileLabel("Pressure", report.summaryMethods?.pressure95), pressureMetricText(report.machine.pressure95th), isPressureMetricBelowSetting(report.machine.pressure95th, minimumPressureSetting)));
     }
     if (hasMetricValue(report.machine.pressureAvg)) {
-      rows.push(metricRow("Avg Pressure", pressureMetricText(report.machine.pressureAvg), isPressureMetricBelowSetting(report.machine.pressureAvg, minimumPressureSetting)));
+      rows.push(metricRow(report.summaryMethods ? "Avg daily pressure summary" : "Avg Pressure", pressureMetricText(report.machine.pressureAvg), isPressureMetricBelowSetting(report.machine.pressureAvg, minimumPressureSetting)));
     }
   }
   if (!isBiPap || isAutoBiPap) {
-    if (hasReportText(minPressure)) rows.push([isBiPap ? "Min EPAP" : "Min Pressure", pressureSettingText(minPressure)]);
-    if (hasReportText(maxPressure)) rows.push([isBiPap ? "Max IPAP" : "Max Pressure", pressureSettingText(maxPressure)]);
+    const resvent = isBiPap && /^Resvent\s*\/\s*Hoffrichter$/i.test(report.selectedLoader.trim());
+    if (hasReportText(minPressure)) rows.push([resvent ? "Config PMin" : isBiPap ? "Min EPAP" : "Min Pressure", pressureSettingText(minPressure)]);
+    if (hasReportText(maxPressure)) rows.push([resvent ? "Config PMax" : isBiPap ? "Max IPAP" : "Max Pressure", pressureSettingText(maxPressure)]);
   }
   return rows;
 }
@@ -982,7 +996,7 @@ export function bipapVentilationRows(report: QuickReportMetrics): TableRow[] {
   if (hasMetricValue(report.machine.tidalVolumeAvg)) {
     rows.push(
       metricRow(
-        "Avg Vt (tidal volume)",
+        report.summaryMethods ? "Avg daily Vt (tidal volume)" : "Avg Vt (tidal volume)",
         tidalVolumeMetricText(report.machine.tidalVolumeAvg),
         isTidalVolumeMetricBelowSetting(report.machine.tidalVolumeAvg, tidalVolumeSetting)
       )
@@ -1030,19 +1044,21 @@ export function bipapVentilationRows(report: QuickReportMetrics): TableRow[] {
 export function ahiMetricRows(report: QuickReportMetrics): TableRow[] {
   const rows: TableRow[] = [];
   if (hasMetricValue(report.avgAhi)) {
-    rows.push(["Avg AHI", formatReportMetricValue(report.avgAhi), isAhiAboveThreshold(report.avgAhi)]);
+    rows.push([report.summaryMethods ? (report.summaryMethods.ahiAverage === "usage-weighted" ? "Usage-weighted AHI" : "Avg daily AHI") : "Avg AHI", formatReportMetricValue(report.avgAhi), isAhiAboveThreshold(report.avgAhi)]);
   }
   if (hasMetricValue(report.ahi95th)) {
-    rows.push(["95th AHI", formatReportMetricValue(report.ahi95th), isAhiAboveThreshold(report.ahi95th)]);
+    rows.push([report.summaryMethods ? "95th daily AHI" : "95th AHI", formatReportMetricValue(report.ahi95th), isAhiAboveThreshold(report.ahi95th)]);
   }
   return rows;
 }
 
 export function optionalEventMetricRows(report: QuickReportMetrics): TableRow[] {
   const rows: TableRow[] = [];
-  if (hasMetricValue(report.avgCentralApneas)) rows.push(["Avg Central apneas", formatReportMetricValue(report.avgCentralApneas)]);
-  if (hasMetricValue(report.centralApneas95th)) rows.push(["95th Central apneas", formatReportMetricValue(report.centralApneas95th)]);
-  if (hasMetricValue(report.avgReraIndex)) rows.push(["Avg RERA index", formatReportMetricValue(report.avgReraIndex)]);
+  const centralLabel = report.summaryMethods?.centralAverage === "usage-weighted" ? "Usage-weighted" : "Avg daily";
+  const reraLabel = report.summaryMethods?.reraAverage === "usage-weighted" ? "Usage-weighted" : "Avg daily";
+  if (hasMetricValue(report.avgCentralApneas)) rows.push([report.summaryMethods ? `${centralLabel} central apnea index` : "Avg Central apneas", formatReportMetricValue(report.avgCentralApneas)]);
+  if (hasMetricValue(report.centralApneas95th)) rows.push([report.summaryMethods ? "95th daily central apnea index" : "95th Central apneas", formatReportMetricValue(report.centralApneas95th)]);
+  if (hasMetricValue(report.avgReraIndex)) rows.push([report.summaryMethods ? `${reraLabel} RERA index` : "Avg RERA index", formatReportMetricValue(report.avgReraIndex)]);
 
   return rows;
 }
@@ -1052,37 +1068,29 @@ function leakMetricText(value: number | null | undefined, minutes?: number | nul
   const valueText = `${formatReportMetricValue(value)} L/min`;
   if (typeof minutes === "number" && Number.isFinite(minutes) && minutes > 0) {
     const minutesText = minutes < 0.1 ? "<0.1" : formatReportMetricValue(minutes);
-    return `${valueText} for ${minutesText} min`;
+    return `${valueText}; episode ${minutesText} min`;
   }
   return valueText;
 }
 
-function leakRow(label: string, value: number | null | undefined, minutes?: number | null): TableRow {
+function leakRow(label: string, value: number | null | undefined, minutes?: number | null, highlight = true): TableRow {
   if (typeof value !== "number" || !Number.isFinite(value)) return [label, NO_DATA_FALLBACK];
-  return metricRow(label, leakMetricText(value, minutes), value > 30);
+  return metricRow(label, leakMetricText(value, minutes), highlight && value > 30);
+}
+
+function isPhilipsReport(report: QuickReportMetrics): boolean {
+  return /^Philips Respironics System One \/ DreamStation$/i.test(report.selectedLoader.trim());
 }
 
 function maxLeakRow(report: QuickReportMetrics): TableRow | null {
   if (typeof report.maxLeak !== "number" || !Number.isFinite(report.maxLeak)) return null;
 
-  if (typeof report.maxLeakMinutes === "number" && Number.isFinite(report.maxLeakMinutes) && report.maxLeakMinutes < 1) {
-    if (
-      typeof report.maxLeakAtLeastOneMinute !== "number" ||
-      !Number.isFinite(report.maxLeakAtLeastOneMinute) ||
-      typeof report.maxLeakAtLeastOneMinuteMinutes !== "number" ||
-      !Number.isFinite(report.maxLeakAtLeastOneMinuteMinutes) ||
-      report.maxLeakAtLeastOneMinuteMinutes < 1
-    ) {
-      return null;
-    }
-
-    return leakRow("Max Leak", report.maxLeakAtLeastOneMinute, report.maxLeakAtLeastOneMinuteMinutes);
-  }
-
-  return leakRow("Max Leak", report.maxLeak, report.maxLeakMinutes);
+  return leakRow(isPhilipsReport(report) ? "Max Total Leak" : "Max Leak", report.maxLeak, report.maxLeakMinutes, !isPhilipsReport(report));
 }
 
 function primaryLeakLabel(report: QuickReportMetrics): string {
+  if (isPhilipsReport(report)) return "Avg daily total leak summary";
+  if (report.summaryMethods) return "Avg daily leak summary";
   if (/^resvent\s*\/\s*hoffrichter$/i.test(report.selectedLoader.trim())) return "Median Leak";
   return "Avg Leak";
 }
@@ -1093,11 +1101,17 @@ function sectionRows(label: string, rows: TableRow[]): TableRow[] {
 
 export function leakMetricRows(report: QuickReportMetrics): TableRow[] {
   const reportableMaxLeakRow = maxLeakRow(report);
+  const totalLeak = isPhilipsReport(report);
+  const leak95Label = report.summaryMethods?.leak95 === "mean-daily-95"
+    ? `Avg daily 95th ${totalLeak ? "total leak" : "leak"}`
+    : report.summaryMethods?.leak95 === "95-daily-summary"
+      ? `95th daily ${totalLeak ? "total leak" : "leak"} summary`
+      : "95th Leak";
   return [
-    ...(hasMetricValue(report.avgLeak) ? [leakRow(primaryLeakLabel(report), report.avgLeak)] : []),
-    ...(hasMetricValue(report.leak95th) ? [leakRow("95th Leak", report.leak95th)] : []),
-    ...(hasMetricValue(report.sustainedLeakMax ?? report.maxLeak60m)
-      ? [leakRow("Longest Sustained Leak", report.sustainedLeakMax ?? report.maxLeak60m, report.sustainedLeakMinutes)]
+    ...(hasMetricValue(report.avgLeak) ? [leakRow(primaryLeakLabel(report), report.avgLeak, undefined, !totalLeak)] : []),
+    ...(hasMetricValue(report.leak95th) ? [leakRow(leak95Label, report.leak95th, undefined, !totalLeak)] : []),
+    ...(hasMetricValue(report.sustainedLeakMax) && hasMetricValue(report.sustainedLeakMinutes)
+      ? [leakRow("Peak in Longest Leak Episode", report.sustainedLeakMax, report.sustainedLeakMinutes, !totalLeak)]
       : []),
     ...(reportableMaxLeakRow ? [reportableMaxLeakRow] : [])
   ];
@@ -1178,10 +1192,10 @@ export function buildTherapySummaryRows(report: QuickReportMetrics): TableRow[] 
   const eventRows: TableRow[] = [
     ...ahiMetricRows(report),
     ...(hasMetricValue(report.avgResidualApneas)
-      ? [["Avg Residual apneas", formatReportMetricValue(report.avgResidualApneas)] as TableRow]
+      ? [[report.summaryMethods ? `${report.summaryMethods.residualAverage === "usage-weighted" ? "Usage-weighted" : "Avg daily"} apnea index` : "Avg Residual apneas", formatReportMetricValue(report.avgResidualApneas)] as TableRow]
       : []),
     ...(hasMetricValue(report.residualApneas95th)
-      ? [["95th Residual apneas", formatReportMetricValue(report.residualApneas95th)] as TableRow]
+      ? [[report.summaryMethods ? "95th daily apnea index" : "95th Residual apneas", formatReportMetricValue(report.residualApneas95th)] as TableRow]
       : []),
     ...optionalEventMetricRows(report)
   ];
@@ -1197,6 +1211,24 @@ export function buildTherapySummaryRows(report: QuickReportMetrics): TableRow[] 
   const sourceLimitRows: TableRow[] = absentSummaries.length > 0
     ? [["Card data", `No ${absentSummaryText} summaries were available in the imported files.`]]
     : [];
+  if (report.warnings.includes("Some Philips encrypted records could not be read; report data may be incomplete.")) {
+    sourceLimitRows.push(["Card data", "Some Philips encrypted records could not be read; report data may be incomplete."]);
+  }
+  if (report.warnings.includes("Some Philips leak samples lack a usable session duration and were excluded from report summaries.")) {
+    sourceLimitRows.push(["Card data", "Some Philips leak samples lack a usable session duration and were excluded from report summaries."]);
+  }
+  if (report.warnings.includes("BMC waveform samples could not be matched to confirmed mask-on intervals; pressure and leak summaries may include non-therapy periods.")) {
+    sourceLimitRows.push(["Card data", "BMC waveform samples could not be matched to confirmed mask-on intervals; pressure and leak summaries may include non-therapy periods."]);
+  }
+  if (report.warnings.includes("The latest BMC settings record is dated after the last therapy day; settings shown may not describe the report period.")) {
+    sourceLimitRows.push(["Card data", "The latest BMC settings record is dated after the last therapy day; settings shown may not describe the report period."]);
+  }
+  if (report.warnings.includes("The latest Philips settings record is dated after the last therapy session; settings shown may not describe the report period.")) {
+    sourceLimitRows.push(["Card data", "The latest Philips settings record is dated after the last therapy session; settings shown may not describe the report period."]);
+  }
+  if (report.warnings.includes("Resvent PMin and EPAPMin configuration fields differ; confirm which bound is active on the device.")) {
+    sourceLimitRows.push(["Card data", "Resvent PMin and EPAPMin configuration fields differ; confirm which bound is active on the device."]);
+  }
 
   return [
     ...sectionRows("Usage Summary", usageRows),
@@ -1761,43 +1793,57 @@ export async function buildPdfReport(report: QuickReportMetrics, headerDataUrl?:
     const firstPageRows = secondPageStart > 0 ? therapyRows.slice(0, secondPageStart) : therapyRows;
     const secondPageRows = secondPageStart > 0 ? therapyRows.slice(secondPageStart) : [];
 
-    state.y = drawCompactTableAt(
+    state.y = drawCompactTableFlow(
+      pdfDoc,
       state,
+      report.daysInWindow,
+      report.machine.mode,
       PAGE_MARGIN,
-      state.y,
       fullWidth,
       therapyTitle,
       firstPageRows,
       layoutChoice.therapyStyle,
+      FOOTER_BLOCK_HEIGHT,
+      headerImage,
       fontRegular,
       fontBold,
       rgbFn,
       theme
     );
 
-    startNewPage(pdfDoc, state, report.daysInWindow, report.machine.mode, headerImage, fontBold, rgbFn, theme);
-    state.y = drawCompactTableAt(
-      state,
-      PAGE_MARGIN,
-      state.y,
-      fullWidth,
-      `${therapyTitle} (continued)`,
-      secondPageRows,
-      layoutChoice.therapyStyle,
-      fontRegular,
-      fontBold,
-      rgbFn,
-      theme
-    );
+    if (secondPageRows.length > 0) {
+      startNewPage(pdfDoc, state, report.daysInWindow, report.machine.mode, headerImage, fontBold, rgbFn, theme);
+      state.y = drawCompactTableFlow(
+        pdfDoc,
+        state,
+        report.daysInWindow,
+        report.machine.mode,
+        PAGE_MARGIN,
+        fullWidth,
+        `${therapyTitle} (continued)`,
+        secondPageRows,
+        layoutChoice.therapyStyle,
+        FOOTER_BLOCK_HEIGHT,
+        headerImage,
+        fontRegular,
+        fontBold,
+        rgbFn,
+        theme
+      );
+    }
   } else {
-    state.y = drawCompactTableAt(
+    state.y = drawCompactTableFlow(
+      pdfDoc,
       state,
+      report.daysInWindow,
+      report.machine.mode,
       PAGE_MARGIN,
-      state.y,
       fullWidth,
       therapyTitle,
       therapyRows,
       layoutChoice.therapyStyle,
+      FOOTER_BLOCK_HEIGHT,
+      headerImage,
       fontRegular,
       fontBold,
       rgbFn,

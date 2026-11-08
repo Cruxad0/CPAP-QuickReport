@@ -284,7 +284,7 @@ function applyBmcSettingsPacket(packet: BmcIdxSettingsPacket, machine: QuickRepo
   }
 }
 
-function inferBmcSettingsFromIdx(bytes: Uint8Array, machine: QuickReportMetrics["machine"]) {
+function inferBmcSettingsFromIdx(bytes: Uint8Array, machine: QuickReportMetrics["machine"]): Date | null {
   let latestPacket: BmcIdxSettingsPacket | null = null;
 
   for (let offset = BMC_IDX_PACKETS_OFFSET; offset + BMC_IDX_PACKET_SIZE <= bytes.length; offset += BMC_IDX_PACKET_SIZE) {
@@ -301,7 +301,9 @@ function inferBmcSettingsFromIdx(bytes: Uint8Array, machine: QuickReportMetrics[
 
   if (latestPacket) {
     applyBmcSettingsPacket(latestPacket, machine);
+    return latestPacket.timestamp;
   }
+  return null;
 }
 
 function createBmcWaveformDayState(dayIso: string): BmcWaveformDayState {
@@ -615,7 +617,7 @@ export function parseBmcHistoricSession(sessionBytes: Uint8Array): ParsedRecord 
     date: startDate,
     usageHours,
     ahi,
-    residualApneas: hasRespiratoryEventData && usageHours && usageHours > 0 ? obstructiveApneas / usageHours : undefined,
+    residualApneas: hasRespiratoryEventData && usageHours && usageHours > 0 ? (obstructiveApneas + centralApneas) / usageHours : undefined,
     centralApneas: hasRespiratoryEventData && usageHours && usageHours > 0 ? centralApneas / usageHours : undefined
   };
 }
@@ -672,6 +674,7 @@ export async function parseBmcFamily(context: FamilyParserContext, deps: Pick<Fa
   const waveformCandidates = context.candidates.filter((candidate) => /\.\d{3}$/i.test(candidate.normalizedPath));
   const primaryCandidates = [...usrCandidates, ...idxCandidates];
   const idxFiles: Array<{ path: string; bytes: Uint8Array }> = [];
+  let latestSettingsDate: Date | null = null;
   let processed = 0;
   const totalWork = primaryCandidates.length + waveformCandidates.length;
 
@@ -704,7 +707,8 @@ export async function parseBmcFamily(context: FamilyParserContext, deps: Pick<Fa
         if (baseDays.size > 0) validDayIsoByBase.set(basePath, baseDays);
         context.records.push(...parsedRecords);
       } else if (lowerPath.endsWith(".idx")) {
-        inferBmcSettingsFromIdx(bytes, context.machine);
+        const settingsDate = inferBmcSettingsFromIdx(bytes, context.machine);
+        if (settingsDate && (!latestSettingsDate || settingsDate > latestSettingsDate)) latestSettingsDate = settingsDate;
         idxFiles.push({ path: lowerPath, bytes });
       }
     } catch {
@@ -713,6 +717,14 @@ export async function parseBmcFamily(context: FamilyParserContext, deps: Pick<Fa
 
     if (processed % 4 === 0) {
       await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+  }
+
+  const latestTherapyDay = [...validDayIsoSet].sort().at(-1);
+  if (latestSettingsDate && latestTherapyDay) {
+    const lastTherapy = new Date(`${latestTherapyDay}T12:00:00Z`);
+    if (latestSettingsDate.getTime() - lastTherapy.getTime() > 24 * 3600 * 1000) {
+      context.warnings.push("The latest BMC settings record is dated after the last therapy day; settings shown may not describe the report period.");
     }
   }
 

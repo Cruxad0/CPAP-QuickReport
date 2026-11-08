@@ -1471,7 +1471,7 @@ function parseResventStatText(text: string, fallbackDate: Date): ParsedRecord | 
   const recordDate = createUtcDateNoon(fallbackDate.getUTCFullYear(), fallbackDate.getUTCMonth() + 1, fallbackDate.getUTCDate());
   if (Number.isNaN(recordDate.getTime())) return null;
 
-  const usageHours = secUsed !== undefined ? secUsed / 3600 : undefined;
+  const usageHours = secUsed !== undefined && secUsed >= 0 && secUsed <= 24 * 3600 ? secUsed / 3600 : undefined;
   const therapySessionStart =
     secStart !== undefined && secStart > 0 ? new Date(secStart * 1000) : undefined;
   const hasValidTherapySessionStart =
@@ -1490,27 +1490,24 @@ function parseResventStatText(text: string, fallbackDate: Date): ParsedRecord | 
   let eventCount: number | undefined;
   if (cntAI !== undefined && cntHI !== undefined) {
     eventCount = cntAI + cntHI;
-  } else if (cntOAI !== undefined || cntCAI !== undefined || cntHI !== undefined) {
-    eventCount = (cntOAI ?? 0) + (cntCAI ?? 0) + (cntHI ?? 0);
   } else if (cntAHI !== undefined) {
     eventCount = cntAHI;
+  } else if (cntOAI !== undefined && cntCAI !== undefined && cntHI !== undefined) {
+    eventCount = cntOAI + cntCAI + cntHI;
   }
 
   if (usageHours !== undefined && usageHours > 0 && eventCount !== undefined) {
     ahi = eventCount / usageHours;
-  } else if (cntAHI !== undefined) {
-    // Fallback if only a scalar was supplied.
-    ahi = cntAHI;
   }
 
-  if (cntAI !== undefined) {
-    residualApneas = usageHours !== undefined && usageHours > 0 ? cntAI / usageHours : cntAI;
+  if (cntAI !== undefined && usageHours !== undefined && usageHours > 0) {
+    residualApneas = cntAI / usageHours;
   }
-  if (cntCAI !== undefined) {
-    centralApneas = usageHours !== undefined && usageHours > 0 ? cntCAI / usageHours : cntCAI;
+  if (cntCAI !== undefined && usageHours !== undefined && usageHours > 0) {
+    centralApneas = cntCAI / usageHours;
   }
-  if (cntRERA !== undefined) {
-    reraIndex = usageHours !== undefined && usageHours > 0 ? cntRERA / usageHours : cntRERA;
+  if (cntRERA !== undefined && usageHours !== undefined && usageHours > 0) {
+    reraIndex = cntRERA / usageHours;
   }
 
   for (const [key, value] of kvLower.entries()) {
@@ -2482,13 +2479,6 @@ function cloneMachineSettings(machine: QuickReportMetrics["machine"]): QuickRepo
   return { ...machine };
 }
 
-function isAutoBiPapReportMachine(machine: QuickReportMetrics["machine"]): boolean {
-  return (
-    classifyTherapyMode(machine) === "BiPAP" &&
-    (machine.pressureIsAuto === true || isAutoBiPapLikeMode(machine.mode) || Boolean(machine.pressureMin || machine.pressureMax))
-  );
-}
-
 function buildDayBucketsFromRecordsAndLeaks(
   dedupedRecords: ParsedRecord[],
   leakStatsByDay: Map<string, LeakStats>,
@@ -2610,10 +2600,6 @@ function buildDayBucketsFromRecordsAndLeaks(
     if (typeof record.leak === "number" && record.leak >= 0 && record.leak < 500) {
       bucket.leakSum += record.leak;
       bucket.leakCount += 1;
-      if (bucket.leakMax === null || record.leak > bucket.leakMax) {
-        bucket.leakMax = record.leak;
-        bucket.maxLeakMinutes = null;
-      }
     }
 
     if (typeof record.leak95th === "number" && record.leak95th >= 0 && record.leak95th < 500) {
@@ -3297,6 +3283,18 @@ async function prepareQuickReportSourceInternal(request: PrepareQuickReportSourc
       }
 
       inferMachineSettingsFromConfigMap(mergedResventConfig, machine);
+      if (resolveExplicitTherapyMode(machine.mode) === "BiPAP") {
+        const epapMin = formatCmH2O(mergedResventConfig.get("EPAPMin"));
+        const ipapMax = formatCmH2O(mergedResventConfig.get("IPAPMax"));
+        const ps = formatCmH2O(mergedResventConfig.get("PS"));
+        if (epapMin !== null) machine.configEpapMin = `${epapMin} cmH2O`;
+        if (ipapMax !== null) machine.configIpapMax = `${ipapMax} cmH2O`;
+        if (ps !== null) machine.configPressureSupport = `${ps} cmH2O`;
+        const pmin = formatCmH2O(mergedResventConfig.get("PMin"));
+        if (epapMin !== null && pmin !== null && epapMin !== pmin) {
+          warnings.push("Resvent PMin and EPAPMin configuration fields differ; confirm which bound is active on the device.");
+        }
+      }
 
       if (selected.summaryStatFiles.length > 0 && selected.summaryStatFiles !== selected.statFiles) {
         for (const statFile of selected.summaryStatFiles) {
@@ -3553,6 +3551,13 @@ async function prepareQuickReportSourceInternal(request: PrepareQuickReportSourc
   }
 
   const therapySettingsPeriods = buildTherapySettingsPeriods(dayMap);
+  if (
+    selectedFamily.id === "bmc" &&
+    therapySessions.length === 0 &&
+    [...dayMap.values()].some((day) => day.leakCount > 0 || day.pressureAvgCount > 0)
+  ) {
+    warnings.push("BMC waveform samples could not be matched to confirmed mask-on intervals; pressure and leak summaries may include non-therapy periods.");
+  }
   const currentTherapyPeriod = therapySettingsPeriods.find((period) => period.kind === "current");
   const currentTherapySessions = currentTherapyPeriod
     ? therapySessions.filter((session) => {
@@ -3616,6 +3621,16 @@ export function buildQuickReportMetricsFromPreparedSource(
           ...cloneMachineSettings(selectedTherapyPeriod.machine)
         }
       : cloneMachineSettings(prepared.machine);
+  // These are measurements, not settings. They must come from the selected
+  // report window, never from the most recently imported session.
+  for (const key of [
+    "pressureAvg", "pressure95th", "ipapAvg", "ipap95th", "epapAvg", "epap95th",
+    "tidalVolumeAvg", "tidalVolumeMin", "tidalVolumeMinMinutes", "tidalVolumeMedian",
+    "tidalVolumeMax", "tidalVolumeMaxMinutes", "respiratoryRateAvg", "respiratoryRateMin",
+    "respiratoryRate95th"
+  ] as const) {
+    machine[key] = undefined;
+  }
   const sourceTimeZoneOffsetMinutes = prepared.sourceTimeZoneOffsetMinutes ?? null;
 
   emit(onProgress, { phase: "compute", detail: `Computing ${normalizedLookbackDays}-day metrics...`, percent: 82 });
@@ -3984,43 +3999,23 @@ export function buildQuickReportMetricsFromPreparedSource(
       : leakValues.length > 0
         ? percentile(leakValues, 95)
         : null;
-  const rawMaxLeak = leakMaxValues.length > 0 ? Math.max(...leakMaxValues) : leakValues.length > 0 ? Math.max(...leakValues) : null;
-  const maxLeak30m = leakMax30mValues.length > 0 ? Math.max(...leakMax30mValues) : rawMaxLeak;
-  const maxLeak60m = leakMax60mValues.length > 0 ? Math.max(...leakMax60mValues) : rawMaxLeak;
+  const rawMaxLeak = leakMaxValues.length > 0 ? Math.max(...leakMaxValues) : null;
+  const maxLeak30m = leakMax30mValues.length > 0 ? Math.max(...leakMax30mValues) : null;
+  const maxLeak60m = leakMax60mValues.length > 0 ? Math.max(...leakMax60mValues) : null;
   const maxLeak = rawMaxLeak;
-  const isAutoBiPapReport = isAutoBiPapReportMachine(machine);
   const observedMaxLeakMinutes =
     maxLeak === null
       ? null
       : (maxLeakMinuteCandidates
           .filter((entry) => sameLeakMetricValue(entry.leak, maxLeak))
           .sort((a, b) => b.minutes - a.minutes)[0]?.minutes ?? null);
-  const maxLeakWindowMinutes =
-    maxLeak !== null && maxLeak60m !== null && leakMax60mValues.length > 0 && sameLeakMetricValue(maxLeak, maxLeak60m)
-      ? 60
-      : maxLeak !== null && maxLeak30m !== null && leakMax30mValues.length > 0 && sameLeakMetricValue(maxLeak, maxLeak30m)
-        ? 30
-        : isAutoBiPapReport && maxLeak !== null && maxLeak60m !== null && sameLeakMetricValue(maxLeak, maxLeak60m)
-          ? 60
-          : isAutoBiPapReport && maxLeak !== null && maxLeak30m !== null && sameLeakMetricValue(maxLeak, maxLeak30m)
-            ? 30
-            : null;
-  const maxLeakMinutes = observedMaxLeakMinutes ?? maxLeakWindowMinutes;
+  const maxLeakMinutes = observedMaxLeakMinutes;
   const maxLeakAtLeastOneMinuteCandidate = [...maxLeakMinuteCandidates, ...sustainedLeakCandidates]
     .filter((entry) => entry.minutes >= MIN_REPORTABLE_MAX_LEAK_MINUTES)
     .sort((a, b) => b.leak - a.leak || b.minutes - a.minutes)[0] ?? null;
   const observedSustainedLeakCandidate =
     sustainedLeakCandidates.sort((a, b) => b.minutes - a.minutes || b.leak - a.leak)[0] ?? null;
-  const sustainedLeakWindowCandidate =
-    maxLeak60m !== null && leakMax60mValues.length > 0
-      ? { leak: maxLeak60m, minutes: 60 }
-      : maxLeak30m !== null && leakMax30mValues.length > 0
-        ? { leak: maxLeak30m, minutes: 30 }
-        : null;
-  const sustainedLeakCandidate =
-    [observedSustainedLeakCandidate, sustainedLeakWindowCandidate]
-      .filter((entry): entry is { leak: number; minutes: number } => entry !== null)
-      .sort((a, b) => b.minutes - a.minutes || b.leak - a.leak)[0] ?? null;
+  const sustainedLeakCandidate = observedSustainedLeakCandidate;
   const sustainedLeakMax = sustainedLeakCandidate?.leak ?? null;
   const sustainedLeakMinutes = sustainedLeakCandidate?.minutes ?? null;
   const avgPressure =
@@ -4169,6 +4164,22 @@ export function buildQuickReportMetricsFromPreparedSource(
       avgSuspectedNapTherapyHours === null ? null : finite(avgSuspectedNapTherapyHours),
     sleepTimingAnalysis,
     avgAhi: avgAhi === null ? null : finite(avgAhi),
+    summaryMethods: {
+      ahiAverage: summaryAggregationPolicy.averageRateMetricsByUsage && ahiWeightHoursAcrossWindow > 0 ? "usage-weighted" : "daily-mean",
+      residualAverage: summaryAggregationPolicy.averageRateMetricsByUsage && dayBuckets.some((d) => d.usageSum > 0 && d.residualApneaCount > 0) ? "usage-weighted" : "daily-mean",
+      centralAverage: summaryAggregationPolicy.averageRateMetricsByUsage && dayBuckets.some((d) => d.usageSum > 0 && d.centralApneaCount > 0) ? "usage-weighted" : "daily-mean",
+      reraAverage: summaryAggregationPolicy.averageRateMetricsByUsage && dayBuckets.some((d) => d.usageSum > 0 && d.reraCount > 0) ? "usage-weighted" : "daily-mean",
+      leak95: leak95Values.length > 0 ? "mean-daily-95" : leakValues.length > 0 ? "95-daily-summary" : null,
+      pressure95: pressure95Values.length > 0
+        ? summaryAggregationPolicy.pressure95Aggregation === "daily-summary-mean" ? "mean-daily-95" : "95-daily-95"
+        : pressureAvgValues.length > 0 ? "95-daily-summary" : null,
+      ipap95: ipap95Values.length > 0
+        ? summaryAggregationPolicy.pressure95Aggregation === "daily-summary-mean" ? "mean-daily-95" : "95-daily-95"
+        : ipapAvgValues.length > 0 ? "95-daily-summary" : null,
+      epap95: epap95Values.length > 0
+        ? summaryAggregationPolicy.pressure95Aggregation === "daily-summary-mean" ? "mean-daily-95" : "95-daily-95"
+        : epapAvgValues.length > 0 ? "95-daily-summary" : null
+    },
     avgResidualApneas: avgResidualApneas === null ? null : finite(avgResidualApneas),
     avgCentralApneas: avgCentralApneas === null ? null : finite(avgCentralApneas),
     avgReraIndex: avgReraIndex === null ? null : finite(avgReraIndex),

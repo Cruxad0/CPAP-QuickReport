@@ -46,14 +46,10 @@ type Prs1SessionAccumulator = {
   leakSum: number;
   leakCount: number;
   leakMax: number | null;
-  leakSeries: number[];
   seenSummaryKeys: Set<string>;
   seenEventKeys: Set<string>;
 };
 
-const PRS1_LARGE_LEAK_THRESHOLD_LPM = 30;
-const PRS1_MASK_LEAK_AT_4_CM = 20.167;
-const PRS1_MASK_LEAK_AT_20_CM = 48.333;
 
 const PRS1_EXACT_MODELS = new Map<string, { label: string; mode: CanonicalMode }>([
   ["220P", { label: "REMstar SE", mode: "CPAP" }],
@@ -213,34 +209,9 @@ function formatPressureRange(minValue: number | undefined, maxValue: number | un
   return formatPressure(minValue ?? maxValue);
 }
 
-function expectedMaskLeakAtPressure(pressure: number | undefined): number | undefined {
-  if (pressure === undefined || !Number.isFinite(pressure)) return undefined;
-  const slope = (PRS1_MASK_LEAK_AT_20_CM - PRS1_MASK_LEAK_AT_4_CM) / 16;
-  return (pressure - 4) * slope + PRS1_MASK_LEAK_AT_4_CM;
-}
-
-function convertPrs1TotalLeakToExcessLeak(totalLeak: number | undefined, pressure: number | undefined): number | undefined {
+function readPrs1TotalLeak(totalLeak: number | undefined): number | undefined {
   if (totalLeak === undefined || !Number.isFinite(totalLeak) || totalLeak < 0) return undefined;
-  const expectedMaskLeak = expectedMaskLeakAtPressure(pressure);
-  if (expectedMaskLeak === undefined || !Number.isFinite(expectedMaskLeak)) return totalLeak;
-  return Math.max(0, totalLeak - expectedMaskLeak);
-}
-
-function sessionLeakPressureHint(session: Prs1SessionAccumulator): number | undefined {
-  if (session.pressureAvgCount > 0) {
-    return session.pressureAvgSum / session.pressureAvgCount;
-  }
-  if (session.pressure95th !== undefined && session.pressure95th > 0) return session.pressure95th / 10;
-  if (session.pressure !== undefined) return session.pressure / 10;
-  if (session.ipap !== undefined) return session.ipap / 10;
-  if (session.epap !== undefined) return session.epap / 10;
-  if (session.pressureMax !== undefined) return session.pressureMax / 10;
-  if (session.pressureMin !== undefined) return session.pressureMin / 10;
-  if (session.ipapMax !== undefined) return session.ipapMax / 10;
-  if (session.ipapMin !== undefined) return session.ipapMin / 10;
-  if (session.epapMax !== undefined) return session.epapMax / 10;
-  if (session.epapMin !== undefined) return session.epapMin / 10;
-  return undefined;
+  return totalLeak;
 }
 
 function asDateFromUnix(timestamp: number): Date | null {
@@ -546,7 +517,6 @@ function getOrCreateSession(
     leakSum: 0,
     leakCount: 0,
     leakMax: null,
-    leakSeries: [],
     seenSummaryKeys: new Set<string>(),
     seenEventKeys: new Set<string>()
   };
@@ -564,7 +534,8 @@ function parseFlexModeF0V2345(flex: number, mode: CanonicalMode): { mode?: strin
   const riseTime = (flex & 0x10) !== 0;
   const plusMode = (flex & 0x08) !== 0;
   const level = flex & 0x03;
-  if (!enabled || level <= 0) return {};
+  if (!enabled) return { mode: "Flex: Off" };
+  if (level <= 0) return {};
 
   if (riseTime) return { mode: "Rise Time", level };
   if (plusMode) {
@@ -578,6 +549,8 @@ function parseFlexModeF0V2345(flex: number, mode: CanonicalMode): { mode?: strin
 
 function parseFlexModeF0V6(modeByte: number, therapyMode: CanonicalMode | undefined): string | undefined {
   switch (modeByte) {
+    case 0:
+      return "Flex: Off";
     case 0x80:
       return therapyMode === "BiPAP" ? "Bi-Flex" : "C-Flex";
     case 0x90:
@@ -830,17 +803,17 @@ function parseSummaryF0V4(chunk: Prs1Chunk, session: Prs1SessionAccumulator) {
       case 3: {
         totalTime += u16(data, pos);
         maskOnStartedAt = addUsageSlice(session, totalTime, maskOnStartedAt);
-        let pressureForLeak: number | undefined;
+        let summaryPressure: number | undefined;
         if (session.mode === "APAP") {
           if (data[pos + 7] > 0) session.pressure95th = data[pos + 7];
           if (data[pos + 8] > 0) {
-            pressureForLeak = data[pos + 8] / 10;
-            session.pressureAvgSum += pressureForLeak;
+            summaryPressure = data[pos + 8] / 10;
+            session.pressureAvgSum += summaryPressure;
             session.pressureAvgCount += 1;
           }
         }
         if (data[pos + 0x22] > 0) {
-          addLeakSample(session, data[pos + 0x22], pressureForLeak ?? sessionLeakPressureHint(session));
+          addLeakSample(session, data[pos + 0x22]);
         }
         break;
       }
@@ -884,20 +857,20 @@ function parseSummaryF0V5(chunk: Prs1Chunk, session: Prs1SessionAccumulator) {
       case 3: {
         totalTime += u16(data, pos);
         maskOnStartedAt = addUsageSlice(session, totalTime, maskOnStartedAt);
-        let pressureForLeak: number | undefined;
+        let summaryPressure: number | undefined;
         if (session.mode === "APAP") {
           if (data[pos + 4] > 0) session.pressure95th = data[pos + 4];
           if (data[pos + 5] > 0) {
-            pressureForLeak = data[pos + 5] / 10;
-            session.pressureAvgSum += pressureForLeak;
+            summaryPressure = data[pos + 5] / 10;
+            session.pressureAvgSum += summaryPressure;
             session.pressureAvgCount += 1;
           }
         }
         if (data[pos + 13] > 0) {
-          addLeakSample(session, data[pos + 13], pressureForLeak ?? sessionLeakPressureHint(session));
+          addLeakSample(session, data[pos + 13]);
         }
         if (data[pos + 14] > 0) {
-          const maxLeak = convertPrs1TotalLeakToExcessLeak(data[pos + 14], session.pressure95th !== undefined ? session.pressure95th / 10 : pressureForLeak ?? sessionLeakPressureHint(session));
+          const maxLeak = readPrs1TotalLeak(data[pos + 14]);
           if (typeof maxLeak === "number" && Number.isFinite(maxLeak)) {
             session.leakMax = session.leakMax === null ? maxLeak : Math.max(session.leakMax, maxLeak);
           }
@@ -947,17 +920,17 @@ function parseSummaryF0V6(chunk: Prs1Chunk, session: Prs1SessionAccumulator) {
         maskOnStartedAt = addUsageSlice(session, totalTime, maskOnStartedAt);
         break;
       case 5: {
-        let pressureForLeak: number | undefined;
+        let summaryPressure: number | undefined;
         if (session.mode === "APAP" && size >= 4) {
           if (data[pos + 2] > 0) session.pressure95th = data[pos + 2];
           if (data[pos + 3] > 0) {
-            pressureForLeak = data[pos + 3] / 10;
-            session.pressureAvgSum += pressureForLeak;
+            summaryPressure = data[pos + 3] / 10;
+            session.pressureAvgSum += summaryPressure;
             session.pressureAvgCount += 1;
           }
         }
         if (size >= 5 && data[pos] > 0) {
-          addLeakSample(session, data[pos], pressureForLeak ?? sessionLeakPressureHint(session));
+          addLeakSample(session, data[pos]);
         }
         break;
       }
@@ -973,53 +946,12 @@ function parseSummaryF0V6(chunk: Prs1Chunk, session: Prs1SessionAccumulator) {
   }
 }
 
-function addLeakSample(session: Prs1SessionAccumulator, totalLeak: number | undefined, pressure: number | undefined) {
-  const leak = convertPrs1TotalLeakToExcessLeak(totalLeak, pressure);
+function addLeakSample(session: Prs1SessionAccumulator, totalLeak: number | undefined) {
+  const leak = readPrs1TotalLeak(totalLeak);
   if (leak === undefined || !Number.isFinite(leak) || leak < 0 || leak >= 500) return;
   session.leakSum += leak;
   session.leakCount += 1;
   session.leakMax = session.leakMax === null ? leak : Math.max(session.leakMax, leak);
-  session.leakSeries.push(leak);
-}
-
-function summarizeLargeLeakEpisodes(values: number[], sampleMinutes: number) {
-  let currentMinutes = 0;
-  let currentMax: number | null = null;
-  let longestMinutes = 0;
-  let longestMax: number | null = null;
-  let maxLeakValue: number | null = null;
-  let maxLeakMinutes = 0;
-
-  const finishEpisode = () => {
-    if (currentMinutes <= 0 || currentMax === null) return;
-    if (currentMinutes > longestMinutes || (currentMinutes === longestMinutes && (longestMax === null || currentMax > longestMax))) {
-      longestMinutes = currentMinutes;
-      longestMax = currentMax;
-    }
-    if (maxLeakValue === null || currentMax > maxLeakValue || (currentMax === maxLeakValue && currentMinutes > maxLeakMinutes)) {
-      maxLeakValue = currentMax;
-      maxLeakMinutes = currentMinutes;
-    }
-    currentMinutes = 0;
-    currentMax = null;
-  };
-
-  for (const value of values) {
-    if (Number.isFinite(value) && value > PRS1_LARGE_LEAK_THRESHOLD_LPM) {
-      currentMinutes += sampleMinutes;
-      currentMax = currentMax === null ? value : Math.max(currentMax, value);
-    } else {
-      finishEpisode();
-    }
-  }
-  finishEpisode();
-
-  return {
-    maxLeakValue,
-    maxLeakMinutes: maxLeakMinutes > 0 ? maxLeakMinutes : undefined,
-    sustainedLeakMax: longestMax ?? undefined,
-    sustainedLeakMinutes: longestMinutes > 0 ? longestMinutes : undefined
-  };
 }
 
 function parseEventsF0V23(chunk: Prs1Chunk, session: Prs1SessionAccumulator) {
@@ -1063,8 +995,7 @@ function parseEventsF0V23(chunk: Prs1Chunk, session: Prs1SessionAccumulator) {
         session.hypopneaCount += 1;
         break;
       case 0x11: {
-        const pressure = data[pos + 2] > 0 ? data[pos + 2] / 10 : sessionLeakPressureHint(session);
-        addLeakSample(session, data[pos], pressure);
+        addLeakSample(session, data[pos]);
         if (data[pos + 2] > 0) {
           session.pressureAvgSum += data[pos + 2] / 10;
           session.pressureAvgCount += 1;
@@ -1119,8 +1050,7 @@ function parseEventsF0V4(chunk: Prs1Chunk, session: Prs1SessionAccumulator) {
         session.hypopneaCount += 1;
         break;
       case 0x11: {
-        const pressure = data[pos + 2] > 0 ? data[pos + 2] / 10 : sessionLeakPressureHint(session);
-        addLeakSample(session, data[pos], pressure);
+        addLeakSample(session, data[pos]);
         if (data[pos + 2] > 0) {
           session.pressureAvgSum += data[pos + 2] / 10;
           session.pressureAvgCount += 1;
@@ -1161,8 +1091,7 @@ function parseEventsF0V6(chunk: Prs1Chunk, session: Prs1SessionAccumulator) {
         session.hypopneaCount += 1;
         break;
       case 0x11: {
-        const pressure = data[pos + 2] > 0 ? data[pos + 2] / 10 : sessionLeakPressureHint(session);
-        addLeakSample(session, data[pos], pressure);
+        addLeakSample(session, data[pos]);
         if (data[pos + 2] > 0) {
           session.pressureAvgSum += data[pos + 2] / 10;
           session.pressureAvgCount += 1;
@@ -1373,8 +1302,6 @@ function applySessionSettingsToMachine(session: Prs1SessionAccumulator, machine:
       typeof session.pressureReliefLevel === "number"
         ? `${session.pressureReliefMode}: ${session.pressureReliefLevel}`
         : session.pressureReliefMode;
-  } else if (!machine.pressureRelief) {
-    machine.pressureRelief = "Flex: Off";
   }
 }
 
@@ -1383,29 +1310,17 @@ function toParsedRecord(session: Prs1SessionAccumulator): ParsedRecord | null {
   if (!date) return null;
 
   const usageHours = session.usageSeconds > 0 ? session.usageSeconds / 3600 : undefined;
-  const obstructiveLikeCount = session.obstructiveApneaCount + session.hypopneaCount;
-  const totalAhiCount = obstructiveLikeCount + session.centralApneaCount;
+  const totalApneaCount = session.obstructiveApneaCount + session.centralApneaCount;
+  const totalAhiCount = totalApneaCount + session.hypopneaCount;
 
   const ahi = session.hasEventData && usageHours && usageHours > 0 ? totalAhiCount / usageHours : undefined;
-  const residualApneas = session.hasEventData && usageHours && usageHours > 0 ? obstructiveLikeCount / usageHours : undefined;
+  const residualApneas = session.hasEventData && usageHours && usageHours > 0 ? totalApneaCount / usageHours : undefined;
   const centralApneas = session.hasEventData && usageHours && usageHours > 0 ? session.centralApneaCount / usageHours : undefined;
   const reraIndex = session.hasEventData && usageHours && usageHours > 0 ? session.reraCount / usageHours : undefined;
-  const leak = session.leakCount > 0 ? session.leakSum / session.leakCount : undefined;
-  const leakSampleMinutes =
-    session.usageSeconds > 0 && session.leakSeries.length > 0 ? session.usageSeconds / 60 / session.leakSeries.length : undefined;
-  const largeLeakSummary =
-    leakSampleMinutes !== undefined && leakSampleMinutes > 0
-      ? summarizeLargeLeakEpisodes(session.leakSeries, leakSampleMinutes)
-      : null;
-  const maxLeakMinutes =
-    largeLeakSummary?.maxLeakValue !== null &&
-    largeLeakSummary?.maxLeakValue !== undefined &&
-    session.leakMax !== null &&
-    Math.abs(session.leakMax - largeLeakSummary.maxLeakValue) < 0.001
-      ? largeLeakSummary.maxLeakMinutes
-      : undefined;
-  const pressureAvg = session.pressureAvgCount > 0 ? session.pressureAvgSum / session.pressureAvgCount : undefined;
-  const pressure95th = session.pressure95th !== undefined ? session.pressure95th / 10 : undefined;
+  const leak = usageHours && session.leakCount > 0 ? session.leakSum / session.leakCount : undefined;
+  const pressureAvg = usageHours && session.pressureAvgCount > 0 ? session.pressureAvgSum / session.pressureAvgCount : undefined;
+  const pressure95th = usageHours && session.pressure95th !== undefined ? session.pressure95th / 10 : undefined;
+  const leakMax = usageHours ? session.leakMax ?? undefined : undefined;
   const pressureRelief = session.pressureReliefMode
     ? typeof session.pressureReliefLevel === "number"
       ? `${session.pressureReliefMode}: ${session.pressureReliefLevel}`
@@ -1428,7 +1343,7 @@ function toParsedRecord(session: Prs1SessionAccumulator): ParsedRecord | null {
     centralApneas !== undefined ||
     reraIndex !== undefined ||
     leak !== undefined ||
-    session.leakMax !== null ||
+    leakMax !== undefined ||
     pressureAvg !== undefined ||
     pressure95th !== undefined;
   if (!hasSignal) return null;
@@ -1441,10 +1356,7 @@ function toParsedRecord(session: Prs1SessionAccumulator): ParsedRecord | null {
     centralApneas,
     reraIndex,
     leak,
-    leakMax: session.leakMax ?? undefined,
-    maxLeakMinutes,
-    sustainedLeakMax: largeLeakSummary?.sustainedLeakMax,
-    sustainedLeakMinutes: largeLeakSummary?.sustainedLeakMinutes,
+    leakMax,
     pressureAvg,
     pressure95th,
     therapySettingsSignature: therapySettings?.signature,
@@ -1565,7 +1477,11 @@ async function parsePrs1BinaryCandidateBatch(
       const ext = normalizePrs1BinaryExtension(candidate.normalizedPath);
       if (ext.startsWith("b")) {
         const decrypted = await decryptPrs1WrappedBytes(bytes, wrappedKeyCache);
-        if (!decrypted) continue;
+        if (!decrypted) {
+          const warning = "Some Philips encrypted records could not be read; report data may be incomplete.";
+          if (!context.warnings.includes(warning)) context.warnings.push(warning);
+          continue;
+        }
         bytes = decrypted;
       }
       const chunks = parsePrs1Chunks(bytes, candidate.normalizedPath);
@@ -1632,7 +1548,14 @@ async function parsePrs1BinaryCandidates(context: FamilyParserContext, deps: Fam
   }
 
   const orderedSessions = [...sessions.values()].sort((a, b) => a.timestamp - b.timestamp);
+  if (orderedSessions.some((session) => session.leakCount > 0 && session.usageSeconds <= 0)) {
+    context.warnings.push("Some Philips leak samples lack a usable session duration and were excluded from report summaries.");
+  }
   const latestSettingsSession = orderedSessions.filter((session) => session.mode || session.pressure || session.pressureMin || session.epap || session.ipap).at(-1);
+  const latestUsageSession = orderedSessions.filter((session) => session.usageSeconds > 0).at(-1);
+  if (latestSettingsSession && latestUsageSession && latestSettingsSession.timestamp - latestUsageSession.timestamp > 48 * 3600) {
+    context.warnings.push("The latest Philips settings record is dated after the last therapy session; settings shown may not describe the report period.");
+  }
   if (latestSettingsSession) {
     applySessionSettingsToMachine(latestSettingsSession, context.machine);
   }

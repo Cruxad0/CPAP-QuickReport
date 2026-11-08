@@ -94,6 +94,9 @@ export interface MachineSettings {
   tidalVolumeMax?: number | null;
   tidalVolumeMaxMinutes?: number | null;
   pressureRelief?: string;
+  configEpapMin?: string;
+  configIpapMax?: string;
+  configPressureSupport?: string;
   rampTime?: string;
   rampPressure?: string;
 }
@@ -123,6 +126,16 @@ export interface QuickReportMetrics {
   avgSuspectedNapTherapyHours?: number | null;
   sleepTimingAnalysis?: SleepTimingAnalysis | null;
   avgAhi: number | null;
+  summaryMethods?: {
+    ahiAverage: "usage-weighted" | "daily-mean";
+    residualAverage: "usage-weighted" | "daily-mean";
+    centralAverage: "usage-weighted" | "daily-mean";
+    reraAverage: "usage-weighted" | "daily-mean";
+    leak95: "mean-daily-95" | "95-daily-summary" | null;
+    pressure95: "mean-daily-95" | "95-daily-95" | "95-daily-summary" | null;
+    ipap95: "mean-daily-95" | "95-daily-95" | "95-daily-summary" | null;
+    epap95: "mean-daily-95" | "95-daily-95" | "95-daily-summary" | null;
+  };
   avgResidualApneas: number | null;
   avgCentralApneas: number | null;
   avgReraIndex: number | null;

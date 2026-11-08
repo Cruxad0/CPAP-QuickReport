@@ -90,7 +90,7 @@ type ResMedEveEventCounts = {
   dayIso: string;
   apneaCount: number;
   centralApneaCount: number;
-  arousalCount: number;
+  obstructiveApneaCount: number;
   hasClassifiedApneaEvents: boolean;
 };
 
@@ -249,8 +249,12 @@ export function applyResMedCurrentSettingsJson(
     asNumber(profile.TidalVolume) ??
     asNumber(profile.TargetTidalVolume) ??
     asNumber(profile.TidalVolumeTarget);
-  const rampEnable = asNumber(profile.RampEnable) ?? asNumber(profile.RampEnabled);
-  const rampTime = asNumber(profile.RampTime) ?? asNumber(profile.RampTimeMinutes);
+  const rampFeature = asObject(featureProfiles?.AutoRampFeature);
+  const rampToggle = rampFeature?.RampEnable;
+  const rampEnable = typeof rampToggle === "string"
+    ? /^on$/i.test(rampToggle) ? 1 : /^off$/i.test(rampToggle) ? 0 : undefined
+    : asNumber(rampToggle) ?? asNumber(profile.RampEnable) ?? asNumber(profile.RampEnabled);
+  const rampTime = asNumber(rampFeature?.RampTime) ?? asNumber(profile.RampTime) ?? asNumber(profile.RampTimeMinutes);
   const rampPressure =
     asNumber(profile.RampPressure) ??
     asNumber(profile.StartPressure) ??
@@ -296,7 +300,22 @@ export function applyResMedCurrentSettingsJson(
     if (targetTidalVolumeText) machine.tidalVolume = targetTidalVolumeText;
   }
 
-  applyResMedRampSettings(machine, rampEnable, rampTime, rampPressure);
+  if (resolvedMode !== "BiPAP") {
+    const eprFeature = asObject(featureProfiles?.EprFeature);
+    const eprEnable = eprFeature?.EprEnable;
+    const eprLevel = asNumber(eprFeature?.EprPressure);
+    const eprType = asString(eprFeature?.EprType);
+    if (typeof eprEnable === "string" && /^off$/i.test(eprEnable)) {
+      machine.pressureRelief = "EPR: Off";
+    } else if (typeof eprEnable === "string" && /^on$/i.test(eprEnable)) {
+      const level = eprLevel !== undefined && eprLevel > 0 ? ` ${Number(eprLevel.toFixed(2)).toString()}` : "";
+      const type = /^fulltime$/i.test(eprType ?? "") ? " (full time)" : /^ramponly$/i.test(eprType ?? "") ? " (ramp only)" : "";
+      machine.pressureRelief = `EPR: On${level}${type}`;
+    }
+  }
+  if (rampEnable !== undefined || rampTime !== undefined || rampPressure !== undefined) {
+    applyResMedRampSettings(machine, rampEnable, rampTime, rampPressure, true);
+  }
 
   return resolvedMode !== null;
 }
@@ -1100,6 +1119,7 @@ function parseResMedPldEdf(
       therapySessionEnd: hasSessionTiming
         ? new Date(edf.startDate.getTime() + sessionDurationSeconds * 1000)
         : undefined,
+      leakMax: leakStats?.maxLeakValue,
       maxLeakDurationValue: leakStats?.maxLeakValue,
       maxLeakMinutes: leakStats?.maxLeakMinutes,
       sustainedLeakMax: leakStats?.sustainedLeakMax,
@@ -1137,22 +1157,21 @@ function parseResMedEveEventCounts(candidate: FamilyParserCandidate, bytes: Uint
 
   const payload = bytes.subarray(edf.headerBytes);
   const centralApneaCount = countAsciiOccurrences(payload, "Central Apnea");
+  const obstructiveApneaCount = countAsciiOccurrences(payload, "Obstructive Apnea");
 
   return {
     dayIso: resMedEveClinicalDayIso(candidate, edf),
     apneaCount: countAsciiOccurrences(payload, "Apnea"),
     centralApneaCount,
-    arousalCount: countAsciiOccurrences(payload, "Arousal"),
+    obstructiveApneaCount,
     hasClassifiedApneaEvents:
-      centralApneaCount > 0 || countAsciiOccurrences(payload, "Obstructive Apnea") > 0
+      centralApneaCount > 0 || obstructiveApneaCount > 0
   };
 }
 
 function mergeResMedEveEventCounts(
   records: ParsedRecord[],
-  eventCountsByDay: Map<string, ResMedEveEventCounts>,
-  hasClassifiedApneaEvents: boolean,
-  hasArousalEvents: boolean
+  eventCountsByDay: Map<string, ResMedEveEventCounts>
 ) {
   for (const record of records) {
     if (typeof record.usageHours !== "number" || record.usageHours <= 0 || record.usageHours > 24) continue;
@@ -1164,11 +1183,9 @@ function mergeResMedEveEventCounts(
     if (record.residualApneas === undefined) {
       record.residualApneas = eventCounts.apneaCount / record.usageHours;
     }
-    if (record.centralApneas === undefined && hasClassifiedApneaEvents) {
+    if (record.centralApneas === undefined && eventCounts.hasClassifiedApneaEvents &&
+        eventCounts.apneaCount === eventCounts.centralApneaCount + eventCounts.obstructiveApneaCount) {
       record.centralApneas = eventCounts.centralApneaCount / record.usageHours;
-    }
-    if (record.reraIndex === undefined && hasArousalEvents) {
-      record.reraIndex = eventCounts.arousalCount / record.usageHours;
     }
   }
 }
@@ -1275,8 +1292,6 @@ export async function parseResMedFamily(context: FamilyParserContext, deps: Fami
 
   const eventCountsByDay = new Map<string, ResMedEveEventCounts>();
   const pldLeakByDay = new Map<string, { sum: number; count: number }>();
-  let hasClassifiedApneaEvents = false;
-  let hasArousalEvents = false;
   let processed = 0;
   for (const candidate of context.candidates) {
     if (!/(?:str|eve|pld)\.edf(?:\.gz)?$/i.test(candidate.baseName)) continue;
@@ -1329,13 +1344,11 @@ export async function parseResMedFamily(context: FamilyParserContext, deps: Fami
         if (existing) {
           existing.apneaCount += eventCounts.apneaCount;
           existing.centralApneaCount += eventCounts.centralApneaCount;
-          existing.arousalCount += eventCounts.arousalCount;
+          existing.obstructiveApneaCount += eventCounts.obstructiveApneaCount;
           existing.hasClassifiedApneaEvents ||= eventCounts.hasClassifiedApneaEvents;
         } else {
           eventCountsByDay.set(eventCounts.dayIso, eventCounts);
         }
-        hasClassifiedApneaEvents ||= eventCounts.hasClassifiedApneaEvents;
-        hasArousalEvents ||= eventCounts.arousalCount > 0;
       }
     } catch {
       continue;
@@ -1354,6 +1367,15 @@ export async function parseResMedFamily(context: FamilyParserContext, deps: Fami
   }
 
   if (eventCountsByDay.size > 0 && context.records.length > 0) {
-    mergeResMedEveEventCounts(context.records, eventCountsByDay, hasClassifiedApneaEvents, hasArousalEvents);
+    mergeResMedEveEventCounts(context.records, eventCountsByDay);
+  }
+  // STR records describe therapy days; the active settings file is the
+  // authoritative source for current settings when it is present.
+  for (const candidate of textCandidates.filter((entry) => /^currentsettings\.json$/i.test(entry.baseName))) {
+    try {
+      applyResMedCurrentSettingsJson(await candidate.file.readText(), context.machine, context);
+    } catch {
+      context.warnings.push("ResMed current settings could not be read; displayed settings may come from older summaries.");
+    }
   }
 }

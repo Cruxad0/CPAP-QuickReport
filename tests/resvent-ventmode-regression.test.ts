@@ -88,6 +88,29 @@ async function loadSyntheticResventFixture(files: SourceFile[]) {
   return { prepared, metrics };
 }
 
+test("Resvent event counts are not reported as hourly rates without valid usage", async () => {
+  for (const secUsed of [undefined, "0", "90000"]) {
+    const fields = ["VentMode=3", "cntAHI=10", "cntAI=6", "cntCAI=2", "cntHI=4", "cntRERA=3", "medLeak=1"];
+    if (secUsed !== undefined) fields.push(`secUsed=${secUsed}`);
+    const { metrics } = await loadSyntheticResventFixture([
+      createResventTextFile("THERAPY/CONFIG/SYSCFG", "models=iBreeze 20A"),
+      createResventTextFile("THERAPY/RECORD/202604/26/STAT", fields.join("\n"))
+    ]);
+    assert.equal(metrics.avgAhi, null);
+    assert.equal(metrics.avgResidualApneas, null);
+    assert.equal(metrics.avgCentralApneas, null);
+    assert.equal(metrics.avgReraIndex, null);
+  }
+});
+
+test("Resvent incomplete event components do not fabricate AHI", async () => {
+  const { metrics } = await loadSyntheticResventFixture([
+    createResventTextFile("THERAPY/CONFIG/SYSCFG", "models=iBreeze 20A"),
+    createResventTextFile("THERAPY/RECORD/202604/26/STAT", "VentMode=3\nsecUsed=3600\ncntOAI=2\nmedLeak=1")
+  ]);
+  assert.equal(metrics.avgAhi, null);
+});
+
 test("report finalization preserves explicit parser-reported mode labels", () => {
   const prepared: PreparedQuickReportSource = {
     selectedLoader: "Fixture Loader",
@@ -161,7 +184,7 @@ test("Resvent latest STAT VentMode confirms active Auto S30 bilevel mode", async
     createResventTextFile("THERAPY/CONFIG/TCTRL", "VentMode=11\n"),
     createResventTextFile(
       "THERAPY/CONFIG/N_AS30",
-      ["PMin=400", "PMax=1200", "EPAP=600", "IPAP=1000", "PS=200"].join("\n")
+      ["PMin=400", "PMax=1200", "EPAP=600", "IPAP=1000", "EPAPMin=850", "IPAPMax=1300", "PS=300"].join("\n")
     ),
     createResventTextFile(
       "THERAPY/RECORD/202603/23/STAT",
@@ -187,6 +210,10 @@ test("Resvent latest STAT VentMode confirms active Auto S30 bilevel mode", async
   assert.equal(prepared.machine.mode, "Auto S30");
   assert.equal(prepared.machine.epap, "6 cmH2O");
   assert.equal(prepared.machine.ipap, "10 cmH2O");
+  assert.equal(prepared.machine.configEpapMin, "8.5 cmH2O");
+  assert.equal(prepared.machine.configIpapMax, "13 cmH2O");
+  assert.equal(prepared.machine.configPressureSupport, "3 cmH2O");
+  assert.ok(metrics.warnings.some((warning) => warning.includes("PMin and EPAPMin configuration fields differ")));
   assert.equal(prepared.latestClinicalDayIso, "2026-03-23");
   assert.equal(metrics.machine.mode, "Auto S30");
   assert.equal(metrics.daysWithData, 1);

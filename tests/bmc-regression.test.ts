@@ -105,7 +105,7 @@ test("BMC historic session consumes the sentinel payload before parsing event bl
   assert.ok(record);
   assert.equal(record.usageHours, 2);
   assert.equal(record.ahi, 1.5);
-  assert.equal(record.residualApneas, 0.5);
+  assert.equal(record.residualApneas, 1.5);
   assert.equal(record.centralApneas, 1);
 });
 

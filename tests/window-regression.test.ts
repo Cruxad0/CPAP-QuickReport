@@ -53,6 +53,25 @@ function bucket(usageHours: number): PreparedDayBucket {
   };
 }
 
+test("measurements from another window are not inherited from machine metadata", () => {
+  const prepared: PreparedQuickReportSource = {
+    selectedLoader: "Fixture Loader",
+    machine: { mode: "BiPAP", epap: "5 cmH2O", ipap: "12 cmH2O", pressureAvg: 9, pressure95th: 10,
+      ipapAvg: 12, epapAvg: 5, tidalVolumeAvg: 0.5, respiratoryRateAvg: 16 },
+    warnings: [], latestClinicalDayIso: "2026-03-25", maxLookbackDays: 90,
+    dayBuckets: { "2026-03-25": bucket(7) }
+  };
+  const result = buildQuickReportMetricsFromPreparedSource(prepared, {
+    patientName: "Fixture", dateOfBirthIso: "1970-01-01", physicianName: "", lookbackDays: 7,
+    windowEndClinicalDayIso: "2026-03-26"
+  });
+  assert.equal(result.machine.epap, "5 cmH2O");
+  assert.equal(result.machine.ipap, "12 cmH2O");
+  for (const key of ["pressureAvg", "pressure95th", "ipapAvg", "epapAvg", "tidalVolumeAvg", "respiratoryRateAvg"] as const) {
+    assert.equal(result.machine[key], undefined);
+  }
+});
+
 function bucketWithTherapy(
   usageHours: number,
   signature: string,
@@ -268,7 +287,7 @@ test("explicit clinical end day label is included in noon-to-noon report windows
   assert.equal(metrics.avgUsageHours, 7);
 });
 
-test("auto BiPAP summary max leak gets a fallback duration when it matches the 60-minute leak value", () => {
+test("a summary maximum does not invent a rolling value or a leak duration", () => {
   const leakBucket = {
     ...bucket(7),
     leakMax: 54
@@ -300,8 +319,11 @@ test("auto BiPAP summary max leak gets a fallback duration when it matches the 6
   });
 
   assert.equal(metrics.maxLeak, 54);
-  assert.equal(metrics.maxLeak60m, 54);
-  assert.equal(metrics.maxLeakMinutes, 60);
+  assert.equal(metrics.maxLeak30m, null);
+  assert.equal(metrics.maxLeak60m, null);
+  assert.equal(metrics.maxLeakMinutes, null);
+  assert.equal(metrics.sustainedLeakMax, null);
+  assert.equal(metrics.sustainedLeakMinutes, null);
 });
 
 test("latest completed noon-to-noon day does not look skipped in displayed range", () => {

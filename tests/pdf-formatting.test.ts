@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { PDFDocument } from "pdf-lib";
+import { execFileSync } from "node:child_process";
 
 import {
   ahiMetricRows,
@@ -52,6 +53,43 @@ function reportWithMachine(machine: QuickReportMetrics["machine"]): QuickReportM
     warnings: []
   };
 }
+
+test("a rolling leak average is not displayed as a sustained leak episode", () => {
+  const report = {
+    ...reportWithMachine({ mode: "APAP" }),
+    maxLeak60m: 40,
+    sustainedLeakMax: null,
+    sustainedLeakMinutes: null
+  };
+  assert.ok(!leakMetricRows(report).some((row) => Array.isArray(row) && row[0] === "Longest Sustained Leak"));
+});
+
+test("Philips total leak is identified and not flagged using an excess-leak threshold", () => {
+  const report = { ...reportWithMachine({ mode: "APAP" }),
+    selectedLoader: "Philips Respironics System One / DreamStation", avgLeak: 42, maxLeak: 50 };
+  assert.deepEqual(leakMetricRows(report), [["Avg daily total leak summary", "42.0 L/min"], ["Max Total Leak", "50.0 L/min"]]);
+});
+
+test("the report discloses unreadable Philips encrypted records", () => {
+  const report = { ...reportWithMachine({ mode: "APAP" }),
+    warnings: ["Some Philips encrypted records could not be read; report data may be incomplete."] };
+  assert.ok(buildTherapySummaryRows(report).some((row) => Array.isArray(row) && row[1].includes("encrypted records could not be read")));
+});
+
+test("the report discloses BMC waveform timing limitations", () => {
+  const report = { ...reportWithMachine({ mode: "APAP" }),
+    warnings: ["BMC waveform samples could not be matched to confirmed mask-on intervals; pressure and leak summaries may include non-therapy periods."] };
+  assert.ok(buildTherapySummaryRows(report).some((row) => Array.isArray(row) && row[1].includes("could not be matched to confirmed mask-on intervals")));
+});
+
+test("conflicting Resvent bounds do not trigger comparisons against an unconfirmed minimum", () => {
+  const report = { ...reportWithMachine({ mode: "Auto S30", pressureIsAuto: true,
+    pressureMin: "4 cmH2O", pressureMax: "12 cmH2O", epapAvg: 2 }),
+    selectedLoader: "Resvent / Hoffrichter",
+    warnings: ["Resvent PMin and EPAPMin configuration fields differ; confirm which bound is active on the device."] };
+  const row = therapyPressureRows(report).find((entry) => Array.isArray(entry) && entry[0] === "Avg EPAP");
+  assert.deepEqual(row, ["Avg EPAP", "2.0 cmH2O"]);
+});
 
 async function pageCountForReport(report: QuickReportMetrics): Promise<number> {
   const { blob } = await buildPdfReport(report);
@@ -251,13 +289,13 @@ test("leak rows show sustained and max leak durations when available", () => {
     [
       ["Median Leak", "18.6 L/min"],
       ["95th Leak", "77.6 L/min", true],
-      ["Longest Sustained Leak", "88.4 L/min for 63.5 min", true],
-      ["Max Leak", "120.0 L/min for 42.3 min", true]
+      ["Peak in Longest Leak Episode", "88.4 L/min; episode 63.5 min", true],
+      ["Max Leak", "120.0 L/min; episode 42.3 min", true]
     ]
   );
 });
 
-test("a Max Leak lasting under one minute is treated as an auto-off transient", () => {
+test("short leak episodes retain the measured peak without assuming their cause", () => {
   const baseReport = {
     ...reportWithMachine({ mode: "APAP" }),
     maxLeak: 120
@@ -267,7 +305,7 @@ test("a Max Leak lasting under one minute is treated as an auto-off transient", 
     leakMetricRows({ ...baseReport, maxLeakMinutes: 0.2 }).some(
       (row) => Array.isArray(row) && row[0] === "Max Leak"
     ),
-    false
+    true
   );
   assert.deepEqual(leakMetricRows({
     ...baseReport,
@@ -276,12 +314,12 @@ test("a Max Leak lasting under one minute is treated as an auto-off transient", 
     maxLeakAtLeastOneMinuteMinutes: 1
   }).at(-1), [
     "Max Leak",
-    "74.2 L/min for 1.0 min",
+    "120.0 L/min; episode 0.2 min",
     true
   ]);
   assert.deepEqual(leakMetricRows({ ...baseReport, maxLeakMinutes: 1 }).at(-1), [
     "Max Leak",
-    "120.0 L/min for 1.0 min",
+    "120.0 L/min; episode 1.0 min",
     true
   ]);
 });
@@ -305,10 +343,10 @@ test("BiPAP ventilation rows show Vt and RR metrics when available", () => {
       })
     ),
     [
-      ["Min Vt (tidal volume)", "310.0 mL for 12.2 min", true],
+      ["Min Vt (tidal volume)", "310.0 mL; 12.2 sampled min total", true],
       ["Median Vt (tidal volume)", "440.0 mL", true],
       ["Avg Vt (tidal volume)", "460.0 mL", true],
-      ["Max Vt (tidal volume)", "890.0 mL for 2.0 min"],
+      ["Max Vt (tidal volume)", "890.0 mL; 2.0 sampled min total"],
       ["Min RR", "8.2 bpm", true],
       ["Avg RR", "13.3 bpm"],
       ["95th RR", "22.0 bpm"]
@@ -711,4 +749,21 @@ test("BiPAP reports use two pages", async () => {
   );
 
   assert.equal(pages, 2);
+});
+
+test("long BiPAP reports keep later leak rows in the PDF", async (t) => {
+  try { execFileSync("pdftotext", ["-v"], { stdio: "ignore" }); }
+  catch { t.skip("pdftotext is not installed"); return; }
+  const report = {
+    ...reportWithMachine({ mode: "BiPAP", epap: "5 cmH2O", ipap: "12 cmH2O",
+      tidalVolumeMin: 0.2, tidalVolumeMedian: 0.5, tidalVolumeAvg: 0.6, tidalVolumeMax: 1,
+      respiratoryRateMin: 8, respiratoryRateAvg: 16, respiratoryRate95th: 24 }),
+    avgCentralApneas: 0.3, centralApneas95th: 1, avgReraIndex: 0.5,
+    avgLeak: 4, leak95th: 8, maxLeak: 45, sustainedLeakMax: 40, sustainedLeakMinutes: 5
+  };
+  const { blob } = await buildPdfReport(report);
+  const text = execFileSync("pdftotext", ["-layout", "-", "-"], { input: Buffer.from(await blob.arrayBuffer()), encoding: "utf8" });
+  assert.ok(text.includes("Peak in Longest Leak Episode"));
+  assert.ok(text.includes("Max Leak"));
+  assert.ok(text.includes("45.0 L/min"));
 });
